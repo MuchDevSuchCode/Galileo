@@ -36,6 +36,8 @@ Windows Photos is capable but cluttered and increasingly cloud-driven. PhotosPlu
 
 **Organize & act** — Favorites (★) with a "Favorites only" filter; per-photo metadata panel (dimensions, size, dates, camera); delete to Recycle Bin; reveal in Explorer.
 
+**Right-click menu** (on the viewer image *and* gallery thumbnails) — Copy (image to clipboard), Copy as file, Copy file path, Open with…, Print…, Set as desktop background, Favorite, Hide, Rename…, Show in Explorer, Delete, and the native Windows **Properties** dialog.
+
 **Collage** — a **Collage** button builds an auto-arranged collage that fills the screen.
 - **Layout presets:** **Justified** (aspect-preserving rows, fit to screen), **Grid** (uniform cropped cells), **Hero** (one big image + the rest justified beside/below).
 - **Choose what's in it:** *Select photos* in the gallery's More menu to hand-pick images, or **drag-and-drop** image files onto an open collage to add them.
@@ -132,6 +134,16 @@ PhotosPlus opens a file or folder passed on the command line (`PhotosPlus.App.ex
 2. **Make it the default.** Windows 10/11 doesn't let an app silently take over defaults, so do it once:
    - **Settings → Apps → Default apps** → pick PhotosPlus per file type, **or**
    - right-click a photo → **Open with → Choose another app → PhotosPlus → Always**.
+
+**Keep the default always on your latest build (dev mode).** Point the registration at the
+`bin\Debug` exe instead of the published copy — then a normal `dotnet build` updates the very
+exe Windows launches, with no re-publish/re-register:
+```powershell
+.\tools\register-default.ps1 -ExePath "src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\PhotosPlus.App.exe"
+```
+Trade-offs: the repo must stay in place (the path is registered), and the Debug exe needs the
+.NET 8 Desktop Runtime installed (fine on a dev machine). To go back to the stable, fully
+self-contained copy, just run `.\tools\install.ps1` again.
 
 **Undo:** `.\tools\unregister-default.ps1` removes the registration (Windows reverts to the previous app).
 

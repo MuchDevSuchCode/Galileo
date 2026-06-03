@@ -31,6 +31,10 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 **Other** — favorites + filter, metadata panel, delete-to-Recycle-Bin, reveal in Explorer; JSON persistence in `%LocalAppData%\PhotosPlus`.
 
+**Right-click context menu** (viewer + gallery) — copy image / copy as file / copy path, Open with…, Print…, set as desktop background, favorite, hide, rename, show in Explorer, delete, native Windows Properties dialog.
+
+**Crash logging** — global exception handlers write to `%LocalAppData%\PhotosPlus\logs\error.log`; viewer caps decode size (8000px) to avoid GPU-texture-limit crashes on huge images.
+
 **Build notes (csproj / project):**
 - `<WindowsSdkPackageVersion>10.0.19041.38</WindowsSdkPackageVersion>` — WindowsAppSDK 1.6 needs SDK.NET.Ref ≥ `.38`; .NET 8.0.300 ships `.31`.
 - `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` — CsWinRT AOT generator emits unsafe code for generic WinRT calls (drag-drop's `GetStorageItemsAsync`).

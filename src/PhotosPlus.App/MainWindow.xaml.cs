@@ -17,6 +17,7 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Pickers;
+using Windows.Storage.Streams;
 using Windows.System;
 
 namespace PhotosPlus;
@@ -562,14 +563,7 @@ public sealed partial class MainWindow : Window
 
     private void Favorite_Click(object sender, RoutedEventArgs e)
     {
-        var item = Current;
-        if (item is null) return;
-        item.IsFavorite = !item.IsFavorite;
-        if (item.IsFavorite) _state.FavoritePaths.Add(item.Path);
-        else _state.FavoritePaths.Remove(item.Path);
-        _state.Save();
-        UpdateFavoriteIcon();
-        if (_favoritesOnly) RefreshView();
+        if (Current is { } item) FavoriteItem(item);
     }
 
     private void UpdateFavoriteIcon()
@@ -612,24 +606,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Permanently flag the current photo as hidden (Hidden album); never deletes the file.</summary>
     private void EyeHidePermanent_Click(object sender, RoutedEventArgs e)
     {
-        var item = Current;
-        if (item is null) return;
-
-        item.IsHidden = true;
-        _state.HiddenPaths.Add(item.Path);
-        _state.Save();
-        _obscured.Remove(item.Path);
-
-        StatusText.Text = $"{item.FileName} moved to Hidden album";
-
-        // If we're not viewing the Hidden album, it should leave the current view.
-        if (!_showHiddenAlbum)
-        {
-            RefreshView();
-            if (_view.Count == 0) { ShowGallery(); return; }
-            _currentIndex = Math.Min(_currentIndex, _view.Count - 1);
-            _ = LoadCurrentAsync();
-        }
+        if (Current is { } item) HideItemPermanently(item);
     }
 
     private void HiddenAlbum_Click(object sender, RoutedEventArgs e)
@@ -704,7 +681,7 @@ public sealed partial class MainWindow : Window
             if (img.DateTaken.Year > 1601) lines.Add($"Taken: {img.DateTaken.LocalDateTime}");
             if (!string.IsNullOrWhiteSpace(img.CameraManufacturer) || !string.IsNullOrWhiteSpace(img.CameraModel))
                 lines.Add($"Camera: {img.CameraManufacturer} {img.CameraModel}".Trim());
-            lines.Add($"Favorite: {(item.IsFavorite ? "yes" : "no")}");
+            lines.Add($"Favorite: {(item.IsFavorite ? "" : "")}");
             lines.Add($"Hidden: {(item.IsHidden ? "yes" : "no")}");
 
             InfoText.Text = string.Join(Environment.NewLine, lines);
@@ -718,50 +695,12 @@ public sealed partial class MainWindow : Window
     private void Reveal_Click(object sender, RoutedEventArgs e)
     {
         var item = Current ?? (_view.Count > 0 ? _view[0] : null);
-        if (item is null) return;
-        try
-        {
-            System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{item.Path}\"");
-        }
-        catch (Exception ex) { StatusText.Text = ex.Message; }
+        if (item is not null) RevealItem(item);
     }
 
     private async void Delete_Click(object sender, RoutedEventArgs e)
     {
-        var item = Current;
-        if (item is null) return;
-
-        var dialog = new ContentDialog
-        {
-            Title = "Delete photo",
-            Content = $"Move \"{item.FileName}\" to the Recycle Bin?",
-            PrimaryButtonText = "Delete",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = RootGrid.XamlRoot
-        };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-
-        try
-        {
-            var file = await StorageFile.GetFileFromPathAsync(item.Path);
-            await file.DeleteAsync(StorageDeleteOption.Default); // to Recycle Bin
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = $"Delete failed: {ex.Message}";
-            return;
-        }
-
-        _state.HiddenPaths.Remove(item.Path);
-        _state.FavoritePaths.Remove(item.Path);
-        _state.Save();
-        _allPhotos.Remove(item);
-        RefreshView();
-
-        if (_view.Count == 0) { ShowGallery(); return; }
-        _currentIndex = Math.Min(_currentIndex, _view.Count - 1);
-        await LoadCurrentAsync();
+        if (Current is { } item) await DeleteItemAsync(item);
     }
 
     // ===================== Full screen =====================
@@ -973,6 +912,222 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             StatusText.Text = $"Save failed: {ex.Message}";
+        }
+    }
+
+    // ===================== Right-click context menu =====================
+
+    private PhotoItem? _contextItem;
+
+    private void ImageHost_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        if (Current is null) return;
+        _contextItem = Current;
+        ShowImageMenu(ImageHost, e.GetPosition(ImageHost));
+        e.Handled = true;
+    }
+
+    private void PhotoGrid_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        if ((e.OriginalSource as FrameworkElement)?.DataContext is not PhotoItem item) return;
+        _contextItem = item;
+        ShowImageMenu(PhotoGrid, e.GetPosition(PhotoGrid));
+        e.Handled = true;
+    }
+
+    private void ShowImageMenu(FrameworkElement target, Windows.Foundation.Point position)
+    {
+        var item = _contextItem;
+        if (item is null) return;
+
+        var seg = new FontFamily("Segoe MDL2 Assets");
+        MenuFlyoutItem MI(string text, string glyph, RoutedEventHandler click)
+        {
+            var i = new MenuFlyoutItem { Text = text, Icon = new FontIcon { Glyph = glyph, FontFamily = seg } };
+            i.Click += click;
+            return i;
+        }
+
+        var menu = new MenuFlyout();
+        menu.Items.Add(MI("Copy", "", async (_, _) => await CopyImageAsync(item)));
+        menu.Items.Add(MI("Copy as file", "", async (_, _) => await CopyFileAsync(item)));
+        menu.Items.Add(MI("Copy file path", "", (_, _) => CopyPath(item)));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(MI("Open with…", "", (_, _) => RunVerb(item, "openas")));
+        menu.Items.Add(MI("Print…", "", (_, _) => RunVerb(item, "print")));
+        menu.Items.Add(MI("Set as desktop background", "", (_, _) => SetWallpaper(item)));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(MI(item.IsFavorite ? "" : "", item.IsFavorite ? "" : "", (_, _) => FavoriteItem(item)));
+        if (!item.IsHidden)
+            menu.Items.Add(MI("Hide (Hidden album)", "", (_, _) => HideItemPermanently(item)));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(MI("Rename…", "", async (_, _) => await RenameItemAsync(item)));
+        menu.Items.Add(MI("Show in Explorer", "", (_, _) => RevealItem(item)));
+        menu.Items.Add(MI("Delete", "", async (_, _) => await DeleteItemAsync(item)));
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(MI("Properties", "", (_, _) => ShowProperties(item)));
+
+        menu.ShowAt(target, new FlyoutShowOptions { Position = position });
+    }
+
+    // ---- Core operations (shared by toolbar buttons and the context menu) ----
+
+    private async System.Threading.Tasks.Task CopyImageAsync(PhotoItem item)
+    {
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(item.Path);
+            var data = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+            data.SetBitmap(RandomAccessStreamReference.CreateFromFile(file));
+            Clipboard.SetContent(data);
+            StatusText.Text = "Image copied to clipboard";
+        }
+        catch (Exception ex) { StatusText.Text = $"Copy failed: {ex.Message}"; App.Log("CopyImage", ex); }
+    }
+
+    private async System.Threading.Tasks.Task CopyFileAsync(PhotoItem item)
+    {
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(item.Path);
+            var data = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+            data.SetStorageItems(new IStorageItem[] { file });
+            Clipboard.SetContent(data);
+            StatusText.Text = "File copied to clipboard";
+        }
+        catch (Exception ex) { StatusText.Text = $"Copy failed: {ex.Message}"; }
+    }
+
+    private void CopyPath(PhotoItem item)
+    {
+        var data = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+        data.SetText(item.Path);
+        Clipboard.SetContent(data);
+        StatusText.Text = "Path copied";
+    }
+
+    private void RunVerb(PhotoItem item, string verb)
+    {
+        try { ShellOps.InvokeVerb(item.Path, verb); }
+        catch (Exception ex) { StatusText.Text = ex.Message; }
+    }
+
+    private void SetWallpaper(PhotoItem item)
+    {
+        StatusText.Text = ShellOps.SetWallpaper(item.Path)
+            ? "Set as desktop background"
+            : "Couldn't set the background for this image";
+    }
+
+    private void ShowProperties(PhotoItem item)
+    {
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        ShellOps.ShowProperties(hwnd, item.Path);
+    }
+
+    private void FavoriteItem(PhotoItem item)
+    {
+        item.IsFavorite = !item.IsFavorite;
+        if (item.IsFavorite) _state.FavoritePaths.Add(item.Path);
+        else _state.FavoritePaths.Remove(item.Path);
+        _state.Save();
+        if (ReferenceEquals(item, Current)) UpdateFavoriteIcon();
+        if (_favoritesOnly) RefreshView();
+    }
+
+    private void HideItemPermanently(PhotoItem item)
+    {
+        item.IsHidden = true;
+        _state.HiddenPaths.Add(item.Path);
+        _state.Save();
+        _obscured.Remove(item.Path);
+        StatusText.Text = $"{item.FileName} moved to Hidden album";
+
+        if (_showHiddenAlbum) return;
+        var wasCurrent = ReferenceEquals(item, Current);
+        RefreshView();
+        if (InViewer && wasCurrent)
+        {
+            if (_view.Count == 0) { ShowGallery(); return; }
+            _currentIndex = Math.Min(_currentIndex, _view.Count - 1);
+            _ = LoadCurrentAsync();
+        }
+    }
+
+    private void RevealItem(PhotoItem item)
+    {
+        try { System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{item.Path}\""); }
+        catch (Exception ex) { StatusText.Text = ex.Message; }
+    }
+
+    private async System.Threading.Tasks.Task DeleteItemAsync(PhotoItem item)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Delete photo",
+            Content = $"Move \"{item.FileName}\" to the Recycle Bin?",
+            PrimaryButtonText = "Delete",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = RootGrid.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(item.Path);
+            await file.DeleteAsync(StorageDeleteOption.Default); // to Recycle Bin
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Delete failed: {ex.Message}";
+            return;
+        }
+
+        _state.HiddenPaths.Remove(item.Path);
+        _state.FavoritePaths.Remove(item.Path);
+        _state.Save();
+        var wasCurrent = ReferenceEquals(item, Current);
+        _allPhotos.Remove(item);
+        RefreshView();
+
+        if (InViewer && wasCurrent)
+        {
+            if (_view.Count == 0) { ShowGallery(); return; }
+            _currentIndex = Math.Min(_currentIndex, _view.Count - 1);
+            await LoadCurrentAsync();
+        }
+    }
+
+    private async System.Threading.Tasks.Task RenameItemAsync(PhotoItem item)
+    {
+        var box = new TextBox { Text = item.FileName };
+        box.Loaded += (_, _) => box.SelectAll();
+        var dialog = new ContentDialog
+        {
+            Title = "Rename",
+            Content = box,
+            PrimaryButtonText = "Rename",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = RootGrid.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var newName = box.Text.Trim();
+        if (string.IsNullOrEmpty(newName) || string.Equals(newName, item.FileName, StringComparison.Ordinal)) return;
+
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(item.Path);
+            await file.RenameAsync(newName, NameCollisionOption.FailIfExists);
+            StatusText.Text = $"Renamed to {newName}";
+            var dir = System.IO.Path.GetDirectoryName(item.Path);
+            if (dir is not null) await LoadFolderAsync(dir); // reload so paths refresh
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Rename failed: {ex.Message}";
         }
     }
 

@@ -226,31 +226,39 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
         
         private void InitTypeTables()
         {
-            _typeNameTable = new string[11];
+            _typeNameTable = new string[15];
             _typeNameTable[0] = "Microsoft.UI.Xaml.Controls.XamlControlsResources";
             _typeNameTable[1] = "Microsoft.UI.Xaml.ResourceDictionary";
             _typeNameTable[2] = "Object";
             _typeNameTable[3] = "Boolean";
-            _typeNameTable[4] = "PhotosPlus.MainWindow";
-            _typeNameTable[5] = "Microsoft.UI.Xaml.Window";
-            _typeNameTable[6] = "PhotosPlus.SlideshowWindow";
-            _typeNameTable[7] = "Microsoft.UI.Xaml.Controls.TreeViewNode";
-            _typeNameTable[8] = "Microsoft.UI.Xaml.DependencyObject";
-            _typeNameTable[9] = "System.Collections.Generic.IList`1<Microsoft.UI.Xaml.Controls.TreeViewNode>";
-            _typeNameTable[10] = "Int32";
+            _typeNameTable[4] = "Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem";
+            _typeNameTable[5] = "Microsoft.UI.Xaml.Controls.MenuFlyoutItem";
+            _typeNameTable[6] = "String";
+            _typeNameTable[7] = "Microsoft.UI.Xaml.Controls.MenuFlyoutSubItem";
+            _typeNameTable[8] = "PhotosPlus.MainWindow";
+            _typeNameTable[9] = "Microsoft.UI.Xaml.Window";
+            _typeNameTable[10] = "PhotosPlus.SlideshowWindow";
+            _typeNameTable[11] = "Microsoft.UI.Xaml.Controls.TreeViewNode";
+            _typeNameTable[12] = "Microsoft.UI.Xaml.DependencyObject";
+            _typeNameTable[13] = "System.Collections.Generic.IList`1<Microsoft.UI.Xaml.Controls.TreeViewNode>";
+            _typeNameTable[14] = "Int32";
 
-            _typeTable = new global::System.Type[11];
+            _typeTable = new global::System.Type[15];
             _typeTable[0] = typeof(global::Microsoft.UI.Xaml.Controls.XamlControlsResources);
             _typeTable[1] = typeof(global::Microsoft.UI.Xaml.ResourceDictionary);
             _typeTable[2] = typeof(global::System.Object);
             _typeTable[3] = typeof(global::System.Boolean);
-            _typeTable[4] = typeof(global::PhotosPlus.MainWindow);
-            _typeTable[5] = typeof(global::Microsoft.UI.Xaml.Window);
-            _typeTable[6] = typeof(global::PhotosPlus.SlideshowWindow);
-            _typeTable[7] = typeof(global::Microsoft.UI.Xaml.Controls.TreeViewNode);
-            _typeTable[8] = typeof(global::Microsoft.UI.Xaml.DependencyObject);
-            _typeTable[9] = typeof(global::System.Collections.Generic.IList<global::Microsoft.UI.Xaml.Controls.TreeViewNode>);
-            _typeTable[10] = typeof(global::System.Int32);
+            _typeTable[4] = typeof(global::Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem);
+            _typeTable[5] = typeof(global::Microsoft.UI.Xaml.Controls.MenuFlyoutItem);
+            _typeTable[6] = typeof(global::System.String);
+            _typeTable[7] = typeof(global::Microsoft.UI.Xaml.Controls.MenuFlyoutSubItem);
+            _typeTable[8] = typeof(global::PhotosPlus.MainWindow);
+            _typeTable[9] = typeof(global::Microsoft.UI.Xaml.Window);
+            _typeTable[10] = typeof(global::PhotosPlus.SlideshowWindow);
+            _typeTable[11] = typeof(global::Microsoft.UI.Xaml.Controls.TreeViewNode);
+            _typeTable[12] = typeof(global::Microsoft.UI.Xaml.DependencyObject);
+            _typeTable[13] = typeof(global::System.Collections.Generic.IList<global::Microsoft.UI.Xaml.Controls.TreeViewNode>);
+            _typeTable[14] = typeof(global::System.Int32);
         }
 
         private int LookupTypeIndexByName(string typeName)
@@ -286,12 +294,14 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
         }
 
         private object Activate_0_XamlControlsResources() { return new global::Microsoft.UI.Xaml.Controls.XamlControlsResources(); }
-        private object Activate_7_TreeViewNode() { return new global::Microsoft.UI.Xaml.Controls.TreeViewNode(); }
+        private object Activate_4_RadioMenuFlyoutItem() { return new global::Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem(); }
+        private object Activate_11_TreeViewNode() { return new global::Microsoft.UI.Xaml.Controls.TreeViewNode(); }
         private void StaticInitializer_0_XamlControlsResources() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::Microsoft.UI.Xaml.Controls.XamlControlsResources).TypeHandle);
-        private void StaticInitializer_4_MainWindow() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::PhotosPlus.MainWindow).TypeHandle);
-        private void StaticInitializer_6_SlideshowWindow() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::PhotosPlus.SlideshowWindow).TypeHandle);
-        private void StaticInitializer_7_TreeViewNode() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::Microsoft.UI.Xaml.Controls.TreeViewNode).TypeHandle);
-        private void StaticInitializer_9_IList() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::System.Collections.Generic.IList<global::Microsoft.UI.Xaml.Controls.TreeViewNode>).TypeHandle);
+        private void StaticInitializer_4_RadioMenuFlyoutItem() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem).TypeHandle);
+        private void StaticInitializer_8_MainWindow() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::PhotosPlus.MainWindow).TypeHandle);
+        private void StaticInitializer_10_SlideshowWindow() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::PhotosPlus.SlideshowWindow).TypeHandle);
+        private void StaticInitializer_11_TreeViewNode() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::Microsoft.UI.Xaml.Controls.TreeViewNode).TypeHandle);
+        private void StaticInitializer_13_IList() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::System.Collections.Generic.IList<global::Microsoft.UI.Xaml.Controls.TreeViewNode>).TypeHandle);
         private void MapAdd_0_XamlControlsResources(object instance, object key, object item)
         {
             var collection = (global::System.Collections.Generic.IDictionary<global::System.Object, global::System.Object>)instance;
@@ -299,7 +309,7 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
             var newItem = (global::System.Object)item;
             collection.Add(newKey, newItem);
         }
-        private void VectorAdd_9_IList(object instance, object item)
+        private void VectorAdd_13_IList(object instance, object item)
         {
             var collection = (global::System.Collections.Generic.ICollection<global::Microsoft.UI.Xaml.Controls.TreeViewNode>)instance;
             var newItem = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)item;
@@ -337,28 +347,50 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
                 xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
                 break;
 
-            case 4:   //  PhotosPlus.MainWindow
-                userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("Microsoft.UI.Xaml.Window"));
-                userType.StaticInitializer = StaticInitializer_4_MainWindow;
-                userType.SetIsLocalType();
+            case 4:   //  Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem
+                userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("Microsoft.UI.Xaml.Controls.MenuFlyoutItem"));
+                userType.Activator = Activate_4_RadioMenuFlyoutItem;
+                userType.StaticInitializer = StaticInitializer_4_RadioMenuFlyoutItem;
+                userType.AddMemberName("GroupName");
+                userType.AddMemberName("IsChecked");
+                userType.AddMemberName("AreCheckStatesEnabled");
                 xamlType = userType;
                 break;
 
-            case 5:   //  Microsoft.UI.Xaml.Window
+            case 5:   //  Microsoft.UI.Xaml.Controls.MenuFlyoutItem
                 xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
                 break;
 
-            case 6:   //  PhotosPlus.SlideshowWindow
+            case 6:   //  String
+                xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
+                break;
+
+            case 7:   //  Microsoft.UI.Xaml.Controls.MenuFlyoutSubItem
+                xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
+                break;
+
+            case 8:   //  PhotosPlus.MainWindow
                 userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("Microsoft.UI.Xaml.Window"));
-                userType.StaticInitializer = StaticInitializer_6_SlideshowWindow;
+                userType.StaticInitializer = StaticInitializer_8_MainWindow;
                 userType.SetIsLocalType();
                 xamlType = userType;
                 break;
 
-            case 7:   //  Microsoft.UI.Xaml.Controls.TreeViewNode
+            case 9:   //  Microsoft.UI.Xaml.Window
+                xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
+                break;
+
+            case 10:   //  PhotosPlus.SlideshowWindow
+                userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("Microsoft.UI.Xaml.Window"));
+                userType.StaticInitializer = StaticInitializer_10_SlideshowWindow;
+                userType.SetIsLocalType();
+                xamlType = userType;
+                break;
+
+            case 11:   //  Microsoft.UI.Xaml.Controls.TreeViewNode
                 userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("Microsoft.UI.Xaml.DependencyObject"));
-                userType.Activator = Activate_7_TreeViewNode;
-                userType.StaticInitializer = StaticInitializer_7_TreeViewNode;
+                userType.Activator = Activate_11_TreeViewNode;
+                userType.StaticInitializer = StaticInitializer_11_TreeViewNode;
                 userType.AddMemberName("Children");
                 userType.AddMemberName("Content");
                 userType.AddMemberName("Depth");
@@ -370,19 +402,19 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
                 xamlType = userType;
                 break;
 
-            case 8:   //  Microsoft.UI.Xaml.DependencyObject
+            case 12:   //  Microsoft.UI.Xaml.DependencyObject
                 xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
                 break;
 
-            case 9:   //  System.Collections.Generic.IList`1<Microsoft.UI.Xaml.Controls.TreeViewNode>
+            case 13:   //  System.Collections.Generic.IList`1<Microsoft.UI.Xaml.Controls.TreeViewNode>
                 userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, null);
-                userType.StaticInitializer = StaticInitializer_9_IList;
-                userType.CollectionAdd = VectorAdd_9_IList;
+                userType.StaticInitializer = StaticInitializer_13_IList;
+                userType.CollectionAdd = VectorAdd_13_IList;
                 userType.SetIsReturnTypeStub();
                 xamlType = userType;
                 break;
 
-            case 10:   //  Int32
+            case 14:   //  Int32
                 xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
                 break;
             }
@@ -454,52 +486,80 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
             var that = (global::Microsoft.UI.Xaml.Controls.XamlControlsResources)instance;
             that.UseCompactResources = (global::System.Boolean)Value;
         }
-        private object get_1_TreeViewNode_Children(object instance)
+        private object get_1_RadioMenuFlyoutItem_GroupName(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem)instance;
+            return that.GroupName;
+        }
+        private void set_1_RadioMenuFlyoutItem_GroupName(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem)instance;
+            that.GroupName = (global::System.String)Value;
+        }
+        private object get_2_RadioMenuFlyoutItem_IsChecked(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem)instance;
+            return that.IsChecked;
+        }
+        private void set_2_RadioMenuFlyoutItem_IsChecked(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem)instance;
+            that.IsChecked = (global::System.Boolean)Value;
+        }
+        private object get_3_RadioMenuFlyoutItem_AreCheckStatesEnabled(object instance)
+        {
+            return global::Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem.GetAreCheckStatesEnabled((global::Microsoft.UI.Xaml.Controls.MenuFlyoutSubItem)instance);
+        }
+        private void set_3_RadioMenuFlyoutItem_AreCheckStatesEnabled(object instance, object Value)
+        {
+            global::Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem.SetAreCheckStatesEnabled((global::Microsoft.UI.Xaml.Controls.MenuFlyoutSubItem)instance, (global::System.Boolean)Value);
+        }
+        private object get_4_TreeViewNode_Children(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.Children;
         }
-        private object get_2_TreeViewNode_Content(object instance)
+        private object get_5_TreeViewNode_Content(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.Content;
         }
-        private void set_2_TreeViewNode_Content(object instance, object Value)
+        private void set_5_TreeViewNode_Content(object instance, object Value)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             that.Content = (global::System.Object)Value;
         }
-        private object get_3_TreeViewNode_Depth(object instance)
+        private object get_6_TreeViewNode_Depth(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.Depth;
         }
-        private object get_4_TreeViewNode_HasChildren(object instance)
+        private object get_7_TreeViewNode_HasChildren(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.HasChildren;
         }
-        private object get_5_TreeViewNode_HasUnrealizedChildren(object instance)
+        private object get_8_TreeViewNode_HasUnrealizedChildren(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.HasUnrealizedChildren;
         }
-        private void set_5_TreeViewNode_HasUnrealizedChildren(object instance, object Value)
+        private void set_8_TreeViewNode_HasUnrealizedChildren(object instance, object Value)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             that.HasUnrealizedChildren = (global::System.Boolean)Value;
         }
-        private object get_6_TreeViewNode_IsExpanded(object instance)
+        private object get_9_TreeViewNode_IsExpanded(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.IsExpanded;
         }
-        private void set_6_TreeViewNode_IsExpanded(object instance, object Value)
+        private void set_9_TreeViewNode_IsExpanded(object instance, object Value)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             that.IsExpanded = (global::System.Boolean)Value;
         }
-        private object get_7_TreeViewNode_Parent(object instance)
+        private object get_10_TreeViewNode_Parent(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.Parent;
@@ -519,50 +579,73 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
                 xamlMember.Getter = get_0_XamlControlsResources_UseCompactResources;
                 xamlMember.Setter = set_0_XamlControlsResources_UseCompactResources;
                 break;
+            case "Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem.GroupName":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "GroupName", "String");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_1_RadioMenuFlyoutItem_GroupName;
+                xamlMember.Setter = set_1_RadioMenuFlyoutItem_GroupName;
+                break;
+            case "Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem.IsChecked":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "IsChecked", "Boolean");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_2_RadioMenuFlyoutItem_IsChecked;
+                xamlMember.Setter = set_2_RadioMenuFlyoutItem_IsChecked;
+                break;
+            case "Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem.AreCheckStatesEnabled":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "AreCheckStatesEnabled", "Boolean");
+                xamlMember.SetTargetTypeName("Microsoft.UI.Xaml.Controls.MenuFlyoutSubItem");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.SetIsAttachable();
+                xamlMember.Getter = get_3_RadioMenuFlyoutItem_AreCheckStatesEnabled;
+                xamlMember.Setter = set_3_RadioMenuFlyoutItem_AreCheckStatesEnabled;
+                break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.Children":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "Children", "System.Collections.Generic.IList`1<Microsoft.UI.Xaml.Controls.TreeViewNode>");
-                xamlMember.Getter = get_1_TreeViewNode_Children;
+                xamlMember.Getter = get_4_TreeViewNode_Children;
                 xamlMember.SetIsReadOnly();
                 break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.Content":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "Content", "Object");
                 xamlMember.SetIsDependencyProperty();
-                xamlMember.Getter = get_2_TreeViewNode_Content;
-                xamlMember.Setter = set_2_TreeViewNode_Content;
+                xamlMember.Getter = get_5_TreeViewNode_Content;
+                xamlMember.Setter = set_5_TreeViewNode_Content;
                 break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.Depth":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "Depth", "Int32");
                 xamlMember.SetIsDependencyProperty();
-                xamlMember.Getter = get_3_TreeViewNode_Depth;
+                xamlMember.Getter = get_6_TreeViewNode_Depth;
                 xamlMember.SetIsReadOnly();
                 break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.HasChildren":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "HasChildren", "Boolean");
                 xamlMember.SetIsDependencyProperty();
-                xamlMember.Getter = get_4_TreeViewNode_HasChildren;
+                xamlMember.Getter = get_7_TreeViewNode_HasChildren;
                 xamlMember.SetIsReadOnly();
                 break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.HasUnrealizedChildren":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "HasUnrealizedChildren", "Boolean");
-                xamlMember.Getter = get_5_TreeViewNode_HasUnrealizedChildren;
-                xamlMember.Setter = set_5_TreeViewNode_HasUnrealizedChildren;
+                xamlMember.Getter = get_8_TreeViewNode_HasUnrealizedChildren;
+                xamlMember.Setter = set_8_TreeViewNode_HasUnrealizedChildren;
                 break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.IsExpanded":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "IsExpanded", "Boolean");
                 xamlMember.SetIsDependencyProperty();
-                xamlMember.Getter = get_6_TreeViewNode_IsExpanded;
-                xamlMember.Setter = set_6_TreeViewNode_IsExpanded;
+                xamlMember.Getter = get_9_TreeViewNode_IsExpanded;
+                xamlMember.Setter = set_9_TreeViewNode_IsExpanded;
                 break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.Parent":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "Parent", "Microsoft.UI.Xaml.Controls.TreeViewNode");
-                xamlMember.Getter = get_7_TreeViewNode_Parent;
+                xamlMember.Getter = get_10_TreeViewNode_Parent;
                 xamlMember.SetIsReadOnly();
                 break;
             }

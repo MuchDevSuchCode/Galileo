@@ -15,6 +15,7 @@
                       IsItemClickEnabled="True"
                                                      
                                                                    
+                                                         
                                                                                    >
                 <GridView.ItemTemplate>
                     <DataTemplate>
@@ -112,7 +113,8 @@
                                                            
                                                        
                                                              
-                                                       >
+                                                       
+                                                     >
                 <Image x:ConnectionId='50' x:Name="ViewerImage" Stretch="Uniform"
                        HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                        RenderTransformOrigin="0.5,0.5"

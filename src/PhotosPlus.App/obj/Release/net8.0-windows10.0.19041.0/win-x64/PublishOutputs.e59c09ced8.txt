@@ -409,7 +409,7 @@ C:\Users\engineer\AppData\Local\PhotosPlus\app\createdump.exe
 C:\Users\engineer\AppData\Local\PhotosPlus\app\hostfxr.dll
 C:\Users\engineer\AppData\Local\PhotosPlus\app\hostpolicy.dll
 C:\Users\engineer\AppData\Local\PhotosPlus\app\mscordaccore.dll
-C:\Users\engineer\AppData\Local\PhotosPlus\app\mscordaccore_amd64_amd64_8.0.2225.52707.dll
+C:\Users\engineer\AppData\Local\PhotosPlus\app\mscordaccore_amd64_amd64_8.0.524.21615.dll
 C:\Users\engineer\AppData\Local\PhotosPlus\app\mscordbi.dll
 C:\Users\engineer\AppData\Local\PhotosPlus\app\mscorrc.dll
 C:\Users\engineer\AppData\Local\PhotosPlus\app\msquic.dll

@@ -15,6 +15,7 @@
                       IsItemClickEnabled="True"
                       ItemClick="PhotoGrid_ItemClick"
                       SelectionChanged="PhotoGrid_SelectionChanged"
+                      RightTapped="PhotoGrid_RightTapped"
                       ContainerContentChanging="PhotoGrid_ContainerContentChanging">
                 <GridView.ItemTemplate>
                     <DataTemplate>
@@ -112,7 +113,8 @@
                   PointerPressed="ImageHost_PointerPressed"
                   PointerMoved="ImageHost_PointerMoved"
                   PointerReleased="ImageHost_PointerReleased"
-                  DoubleTapped="ImageHost_DoubleTapped">
+                  DoubleTapped="ImageHost_DoubleTapped"
+                  RightTapped="ImageHost_RightTapped">
                 <Image x:Name="ViewerImage" Stretch="Uniform"
                        HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                        RenderTransformOrigin="0.5,0.5"

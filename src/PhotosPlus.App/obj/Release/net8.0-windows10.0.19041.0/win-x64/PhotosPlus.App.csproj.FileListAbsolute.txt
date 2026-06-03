@@ -433,7 +433,6 @@ C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Release\net8.0-windows1
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Release\net8.0-windows10.0.19041.0\win-x64\hostfxr.dll
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Release\net8.0-windows10.0.19041.0\win-x64\hostpolicy.dll
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Release\net8.0-windows10.0.19041.0\win-x64\mscordaccore.dll
-C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Release\net8.0-windows10.0.19041.0\win-x64\mscordaccore_amd64_amd64_8.0.2225.52707.dll
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Release\net8.0-windows10.0.19041.0\win-x64\mscordbi.dll
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Release\net8.0-windows10.0.19041.0\win-x64\mscorrc.dll
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Release\net8.0-windows10.0.19041.0\win-x64\msquic.dll
@@ -483,3 +482,4 @@ C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Release\net8.0-windows1
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Release\net8.0-windows10.0.19041.0\win-x64\qualifiers.txt
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Release\net8.0-windows10.0.19041.0\win-x64\qualifiers.txt.intermediate
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Release\net8.0-windows10.0.19041.0\win-x64\MultipleQualifiersPerDimensionFound.txt
+C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Release\net8.0-windows10.0.19041.0\win-x64\mscordaccore_amd64_amd64_8.0.524.21615.dll
