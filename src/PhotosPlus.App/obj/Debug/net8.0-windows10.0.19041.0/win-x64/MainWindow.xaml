@@ -156,20 +156,23 @@
 
             <!-- Viewer -->
             <Grid x:ConnectionId='6' x:Name="ViewerView" Visibility="Collapsed" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
-                <ScrollViewer x:ConnectionId='7' x:Name="ImageScroller"
-                              ZoomMode="Enabled"
-                              HorizontalScrollMode="Enabled" VerticalScrollMode="Enabled"
-                              HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
-                              MinZoomFactor="0.1" MaxZoomFactor="8"
-                                                                       
-                                                                                     
-                                                                     >
-                    <Image x:ConnectionId='13' x:Name="ViewerImage" Stretch="Uniform" RenderTransformOrigin="0.5,0.5">
+                <!-- Transform-based image host: the Image fills the host and Uniform stretch
+                     scales the photo up/down to fit; we control zoom/pan/rotate via the transform. -->
+                <Grid x:ConnectionId='7' x:Name="ImageHost" Background="Transparent"
+                                                         
+                                                                         
+                                                               
+                                                           
+                                                                 
+                                                           >
+                    <Image x:ConnectionId='13' x:Name="ViewerImage" Stretch="Uniform"
+                           HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                           RenderTransformOrigin="0,0">
                         <Image.RenderTransform>
-                            <RotateTransform x:ConnectionId='14' x:Name="ViewerRotate" />
+                            <CompositeTransform x:ConnectionId='14' x:Name="ViewerTransform" />
                         </Image.RenderTransform>
                     </Image>
-                </ScrollViewer>
+                </Grid>
 
                 <!-- Eye obscure: plain black curtain over the current photo -->
                 <Grid x:ConnectionId='8' x:Name="ObscureOverlay" Visibility="Collapsed" Background="Black" />

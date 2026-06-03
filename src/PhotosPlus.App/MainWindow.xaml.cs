@@ -294,9 +294,6 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _rotation = 0;
-        ViewerRotate.Angle = 0;
-
         try
         {
             var file = await StorageFile.GetFileFromPathAsync(item.Path);
@@ -311,8 +308,7 @@ public sealed partial class MainWindow : Window
             ViewerImage.Source = null;
         }
 
-        FitImageToViewport();
-        ImageScroller.ChangeView(0, 0, 1, true);
+        ResetView();
         UpdateFavoriteIcon();
         UpdateEyeState();
         ModeLabel.Text = $"· {item.FileName}  ({_currentIndex + 1}/{_view.Count})";
@@ -329,59 +325,123 @@ public sealed partial class MainWindow : Window
         _ = LoadCurrentAsync();
     }
 
-    // ===================== Zoom / rotate =====================
+    // ===================== Zoom / pan / rotate =====================
+    //
+    // The Image fills ImageHost and uses Stretch=Uniform, so at scale 1 the photo is
+    // fully visible (scaled up or down to fit). We apply zoom (scale), pan (translate)
+    // and rotation through a single CompositeTransform that we drive directly — no
+    // ScrollViewer, so the mouse wheel zooms instead of scrolling.
 
-    private void ZoomIn_Click(object sender, RoutedEventArgs e) => Zoom(1.25f);
-    private void ZoomOut_Click(object sender, RoutedEventArgs e) => Zoom(0.8f);
+    private const double MinScale = 1.0;   // 1.0 == fit-to-window
+    private const double MaxScale = 8.0;
 
-    private void Zoom(float factor)
+    private double _scale = 1.0;
+    private double _tx;
+    private double _ty;
+
+    private bool _panning;
+    private Windows.Foundation.Point _panStart;
+    private double _panStartTx;
+    private double _panStartTy;
+
+    private void ApplyTransform()
     {
-        var target = Math.Clamp(ImageScroller.ZoomFactor * factor,
-            ImageScroller.MinZoomFactor, ImageScroller.MaxZoomFactor);
-        ImageScroller.ChangeView(null, null, target);
+        ViewerTransform.ScaleX = _scale;
+        ViewerTransform.ScaleY = _scale;
+        ViewerTransform.TranslateX = _tx;
+        ViewerTransform.TranslateY = _ty;
+        ViewerTransform.Rotation = _rotation;
     }
 
-    private void Fit_Click(object sender, RoutedEventArgs e)
+    /// <summary>Resets zoom/pan/rotation to the default fit view.</summary>
+    private void ResetView()
     {
-        FitImageToViewport();
-        ImageScroller.ChangeView(0, 0, 1, false);
+        _scale = 1.0;
+        _tx = 0;
+        _ty = 0;
+        _rotation = 0;
+        ApplyTransform();
     }
 
-    private void ImageScroller_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    /// <summary>Zoom about a focal point (in ImageHost coordinates) so it stays put.</summary>
+    private void ZoomAt(double factor, Windows.Foundation.Point focus)
     {
-        var target = ImageScroller.ZoomFactor > 1.05f ? 1f : 2.5f;
-        ImageScroller.ChangeView(null, null, target);
+        var newScale = Math.Clamp(_scale * factor, MinScale, MaxScale);
+        var ratio = newScale / _scale;
+        _tx = focus.X - ratio * (focus.X - _tx);
+        _ty = focus.Y - ratio * (focus.Y - _ty);
+        _scale = newScale;
+        if (_scale <= MinScale + 0.001) { _tx = 0; _ty = 0; } // snap back to centered fit
+        ApplyTransform();
     }
 
-    /// <summary>Mouse wheel zooms in/out (no modifier needed).</summary>
-    private void ImageScroller_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    private Windows.Foundation.Point HostCenter() =>
+        new(ImageHost.ActualWidth / 2, ImageHost.ActualHeight / 2);
+
+    private void ZoomIn_Click(object sender, RoutedEventArgs e) => ZoomAt(1.25, HostCenter());
+    private void ZoomOut_Click(object sender, RoutedEventArgs e) => ZoomAt(0.8, HostCenter());
+    private void Fit_Click(object sender, RoutedEventArgs e) => ResetView();
+
+    private void ImageHost_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
-        var delta = e.GetCurrentPoint(ImageScroller).Properties.MouseWheelDelta;
+        if (_scale > MinScale + 0.001) ResetView();
+        else ZoomAt(2.5, e.GetPosition(ImageHost));
+    }
+
+    /// <summary>Mouse wheel zooms in/out toward the cursor (no modifier needed).</summary>
+    private void ImageHost_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(ImageHost);
+        var delta = point.Properties.MouseWheelDelta;
         if (delta == 0) return;
-        var target = Math.Clamp(ImageScroller.ZoomFactor * (delta > 0 ? 1.15f : 1f / 1.15f),
-            ImageScroller.MinZoomFactor, ImageScroller.MaxZoomFactor);
-        ImageScroller.ChangeView(null, null, target);
-        e.Handled = true; // stop the ScrollViewer from scrolling instead of zooming
+        ZoomAt(delta > 0 ? 1.15 : 1.0 / 1.15, point.Position);
+        e.Handled = true;
     }
 
-    private void ImageScroller_SizeChanged(object sender, SizeChangedEventArgs e) => FitImageToViewport();
+    // --- Drag to pan when zoomed in ---
 
-    /// <summary>
-    /// Sizes the image box to the viewport so Uniform stretch scales the photo up or down
-    /// to be fully visible by default. Zoom (wheel / buttons) then scales on top of this.
-    /// </summary>
-    private void FitImageToViewport()
+    private void ImageHost_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        if (ViewerImage.Source is null) return;
-        if (ImageScroller.ViewportWidth <= 0 || ImageScroller.ViewportHeight <= 0) return;
-        ViewerImage.Width = ImageScroller.ViewportWidth;
-        ViewerImage.Height = ImageScroller.ViewportHeight;
+        if (_scale <= MinScale + 0.001) return; // nothing to pan at fit
+        var point = e.GetCurrentPoint(ImageHost);
+        if (!point.Properties.IsLeftButtonPressed) return;
+
+        _panning = true;
+        _panStart = point.Position;
+        _panStartTx = _tx;
+        _panStartTy = _ty;
+        ImageHost.CapturePointer(e.Pointer);
+    }
+
+    private void ImageHost_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_panning) return;
+        var p = e.GetCurrentPoint(ImageHost).Position;
+        _tx = _panStartTx + (p.X - _panStart.X);
+        _ty = _panStartTy + (p.Y - _panStart.Y);
+        ApplyTransform();
+    }
+
+    private void ImageHost_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_panning) return;
+        _panning = false;
+        ImageHost.ReleasePointerCapture(e.Pointer);
+    }
+
+    /// <summary>Keeps the image clipped to the host so a zoomed photo can't overlap the chrome.</summary>
+    private void ImageHost_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        ImageHost.Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry
+        {
+            Rect = new Windows.Foundation.Rect(0, 0, ImageHost.ActualWidth, ImageHost.ActualHeight)
+        };
     }
 
     private void Rotate_Click(object sender, RoutedEventArgs e)
     {
         _rotation = (_rotation + 90) % 360;
-        ViewerRotate.Angle = _rotation;
+        ApplyTransform();
     }
 
     // ===================== Favorites =====================
@@ -614,12 +674,12 @@ public sealed partial class MainWindow : Window
                 ToggleFullScreen(); e.Handled = true; break;
             case VirtualKey.Add when InViewer:
             case (VirtualKey)187 when InViewer: // '='/'+'
-                Zoom(1.25f); e.Handled = true; break;
+                ZoomAt(1.25, HostCenter()); e.Handled = true; break;
             case VirtualKey.Subtract when InViewer:
             case (VirtualKey)189 when InViewer: // '-'
-                Zoom(0.8f); e.Handled = true; break;
+                ZoomAt(0.8, HostCenter()); e.Handled = true; break;
             case VirtualKey.Number0 when InViewer:
-                ImageScroller.ChangeView(0, 0, 1, false); e.Handled = true; break;
+                ResetView(); e.Handled = true; break;
             case VirtualKey.R when InViewer:
                 Rotate_Click(sender, e); e.Handled = true; break;
             case VirtualKey.Delete when InViewer:
