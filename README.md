@@ -36,7 +36,10 @@ Windows Photos is capable but cluttered and increasingly cloud-driven. PhotosPlu
 
 **Organize & act** — Favorites (★) with a "Favorites only" filter; per-photo metadata panel (dimensions, size, dates, camera); delete to Recycle Bin; reveal in Explorer.
 
-**Collage** — a **Collage** button builds an auto-arranged collage from the visible photos. A *justified-rows, fit-to-screen* layout keeps every photo's aspect ratio, fills the width, and binary-searches the row height so the whole thing fills the screen with even gutters (no distortion, no big gaps). **Shuffle** re-arranges to a fresh fit, a **− N +** stepper sets how many photos, **Save** exports the collage to PNG, and clicking a tile opens it in the viewer.
+**Collage** — a **Collage** button builds an auto-arranged collage that fills the screen.
+- **Layout presets:** **Justified** (aspect-preserving rows, fit to screen), **Grid** (uniform cropped cells), **Hero** (one big image + the rest justified beside/below).
+- **Choose what's in it:** *Select photos* in the gallery's More menu to hand-pick images, or **drag-and-drop** image files onto an open collage to add them.
+- **Shuffle** re-arranges to a fresh fit; a **− N +** stepper sets how many photos; **Save** exports to PNG; clicking a tile opens it in the viewer. Re-fits on window resize.
 
 **Settings** — a Settings panel to configure the slideshow (seconds per photo, shuffle, loop, transition). Persisted across sessions.
 

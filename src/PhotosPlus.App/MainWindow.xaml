@@ -14,6 +14,7 @@
                       SelectionMode="None"
                       IsItemClickEnabled="True"
                       ItemClick="PhotoGrid_ItemClick"
+                      SelectionChanged="PhotoGrid_SelectionChanged"
                       ContainerContentChanging="PhotoGrid_ContainerContentChanging">
                 <GridView.ItemTemplate>
                     <DataTemplate>
@@ -87,6 +88,7 @@
                         <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" />
                         <Button.Flyout>
                             <MenuFlyout>
+                                <ToggleMenuFlyoutItem x:Name="SelectModeButton" Text="Select photos" Click="SelectMode_Click" />
                                 <ToggleMenuFlyoutItem x:Name="HiddenAlbumButton" Text="Show Hidden album" Click="HiddenAlbum_Click" />
                                 <ToggleMenuFlyoutItem x:Name="FavoritesFilterButton" Text="Favorites only" Click="FavoritesFilter_Click" />
                                 <MenuFlyoutSeparator />
@@ -114,7 +116,8 @@
                 <Image x:Name="ViewerImage" Stretch="Uniform"
                        HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                        RenderTransformOrigin="0.5,0.5"
-                       ImageOpened="ViewerImage_ImageOpened">
+                       ImageOpened="ViewerImage_ImageOpened"
+                       ImageFailed="ViewerImage_ImageFailed">
                     <Image.RenderTransform>
                         <CompositeTransform x:Name="ViewerTransform" />
                     </Image.RenderTransform>
@@ -251,6 +254,19 @@
                         <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" />
                     </Button>
                     <Border Width="1" Margin="6,8" Background="#33FFFFFF" />
+                    <Button Style="{StaticResource GlyphButton}" Foreground="White" ToolTipService.ToolTip="Layout">
+                        <FontIcon Glyph="&#xE71D;" FontFamily="Segoe MDL2 Assets" />
+                        <Button.Flyout>
+                            <MenuFlyout>
+                                <RadioMenuFlyoutItem x:Name="PresetJustified" Text="Justified" GroupName="preset"
+                                                     IsChecked="True" Click="CollagePreset_Click" Tag="Justified" />
+                                <RadioMenuFlyoutItem x:Name="PresetGrid" Text="Grid" GroupName="preset"
+                                                     Click="CollagePreset_Click" Tag="Grid" />
+                                <RadioMenuFlyoutItem x:Name="PresetHero" Text="Hero" GroupName="preset"
+                                                     Click="CollagePreset_Click" Tag="Hero" />
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
                     <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="CollageShuffle_Click"
                             ToolTipService.ToolTip="Shuffle">
                         <FontIcon Glyph="&#xE8B1;" FontFamily="Segoe MDL2 Assets" />

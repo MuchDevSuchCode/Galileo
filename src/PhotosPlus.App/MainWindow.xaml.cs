@@ -51,6 +51,7 @@ public sealed partial class MainWindow : Window
     private List<PhotoItem> _collageSource = new();
     private List<PhotoItem> _collageItems = new();
     private int _collageCount;
+    private CollagePreset _collagePreset = CollagePreset.Justified;
 
     public MainWindow(string? initialPath = null)
     {
@@ -195,6 +196,16 @@ public sealed partial class MainWindow : Window
         {
             var dropped = await e.DataView.GetStorageItemsAsync();
 
+            // Dropping onto an open collage adds the images to it.
+            if (InCollage)
+            {
+                var dropFiles = dropped.OfType<StorageFile>()
+                    .Select(f => f.Path).Where(PhotoLibrary.IsSupported).ToList();
+                if (dropFiles.Count > 0) await AddToCollageAsync(dropFiles);
+                else StatusText.Text = "No supported images in the dropped items.";
+                return;
+            }
+
             // A dropped folder wins: load it as the gallery.
             var folder = dropped.OfType<StorageFolder>().FirstOrDefault();
             if (folder is not null)
@@ -337,8 +348,22 @@ public sealed partial class MainWindow : Window
         try
         {
             var file = await StorageFile.GetFileFromPathAsync(item.Path);
+
+            // Cap the decoded size on the longer side. Decoding at full resolution can exceed the
+            // GPU's max texture size on large images (panoramas/huge screenshots) and crash the
+            // render thread — a failure the try/catch here can't see. 8000px is well under the
+            // ~16384 D3D limit and still sharp for screen + zoom.
+            const int maxSide = 8000;
+            var props = await file.Properties.GetImagePropertiesAsync();
+            uint w = props.Width, h = props.Height;
+
             using var stream = await file.OpenReadAsync();
-            var bmp = new BitmapImage();
+            var bmp = new BitmapImage { DecodePixelType = DecodePixelType.Logical };
+            if (w > 0 && h > 0 && Math.Max(w, h) > maxSide)
+            {
+                if (w >= h) bmp.DecodePixelWidth = maxSide;
+                else bmp.DecodePixelHeight = maxSide;
+            }
             await bmp.SetSourceAsync(stream);
             ViewerImage.Source = bmp;
             _bmpW = bmp.PixelWidth;
@@ -346,6 +371,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            App.Log("LoadCurrent", ex);
             StatusText.Text = $"Could not open {item.FileName}: {ex.Message}";
             ViewerImage.Source = null;
         }
@@ -508,6 +534,13 @@ public sealed partial class MainWindow : Window
         if (IsAtFit) ResetView(); // keep the photo fitted as the window resizes
     }
 
+    private void ViewerImage_ImageFailed(object sender, ExceptionRoutedEventArgs e)
+    {
+        App.Log("ImageFailed", new Exception(e.ErrorMessage));
+        var name = Current?.FileName ?? "image";
+        StatusText.Text = $"Could not display {name}: {e.ErrorMessage}";
+    }
+
     /// <summary>Once decoded we know the true pixel size; re-fit if the user hasn't zoomed.</summary>
     private void ViewerImage_ImageOpened(object sender, RoutedEventArgs e)
     {
@@ -613,6 +646,31 @@ public sealed partial class MainWindow : Window
     {
         _favoritesOnly = FavoritesFilterButton.IsChecked == true;
         RefreshView();
+    }
+
+    // ===================== Selection =====================
+
+    private void SelectMode_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectModeButton.IsChecked == true)
+        {
+            PhotoGrid.SelectionMode = ListViewSelectionMode.Multiple;
+            PhotoGrid.IsItemClickEnabled = false;
+            ModeLabel.Text = "· Select photos — then Collage";
+        }
+        else
+        {
+            PhotoGrid.SelectedItems.Clear();
+            PhotoGrid.SelectionMode = ListViewSelectionMode.None;
+            PhotoGrid.IsItemClickEnabled = true;
+            ModeLabel.Text = _showHiddenAlbum ? "· Hidden album" : "";
+        }
+    }
+
+    private void PhotoGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PhotoGrid.SelectionMode != ListViewSelectionMode.None)
+            StatusText.Text = $"{PhotoGrid.SelectedItems.Count} selected";
     }
 
     // ===================== Info / Reveal / Delete =====================
@@ -742,14 +800,22 @@ public sealed partial class MainWindow : Window
 
     private async void Collage_Click(object sender, RoutedEventArgs e)
     {
-        var pool = _view.Where(p => !p.IsHidden).ToList();
+        // Use the user's selection if they're picking photos; otherwise all visible photos.
+        List<PhotoItem> pool;
+        bool fromSelection = SelectModeButton.IsChecked == true && PhotoGrid.SelectedItems.Count > 0;
+        if (fromSelection)
+            pool = PhotoGrid.SelectedItems.OfType<PhotoItem>().Where(p => !p.IsHidden).ToList();
+        else
+            pool = _view.Where(p => !p.IsHidden).ToList();
+
         if (pool.Count == 0)
         {
             StatusText.Text = "No photos to make a collage.";
             return;
         }
         _collageSource = pool;
-        _collageCount = Math.Min(pool.Count, 12);
+        // When the user hand-picked photos, include them all; otherwise sample a screen-friendly number.
+        _collageCount = fromSelection ? pool.Count : Math.Min(pool.Count, 12);
 
         GalleryView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Collapsed;
@@ -779,7 +845,7 @@ public sealed partial class MainWindow : Window
         CollageCanvas.Children.Clear();
         if (_collageItems.Count == 0) return;
 
-        var tiles = CollageLayout.Compute(_collageItems, CollageCanvas.ActualWidth, CollageCanvas.ActualHeight, 6);
+        var tiles = CollageLayout.Compute(_collageItems, CollageCanvas.ActualWidth, CollageCanvas.ActualHeight, 6, _collagePreset);
         foreach (var tile in tiles)
         {
             var image = new Image { Stretch = Stretch.UniformToFill };
@@ -833,6 +899,39 @@ public sealed partial class MainWindow : Window
 
     private void CollageBack_Click(object sender, RoutedEventArgs e) => ShowGallery();
     private async void CollageShuffle_Click(object sender, RoutedEventArgs e) => await RebuildCollageAsync(reshuffle: true);
+
+    private void CollagePreset_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioMenuFlyoutItem item && Enum.TryParse<CollagePreset>(item.Tag as string, out var preset))
+        {
+            _collagePreset = preset;
+            LayoutCollage();
+        }
+    }
+
+    /// <summary>Adds dropped image files to the open collage and re-lays it out.</summary>
+    private async System.Threading.Tasks.Task AddToCollageAsync(List<string> paths)
+    {
+        var existing = new HashSet<string>(_collageSource.Select(p => p.Path), StringComparer.OrdinalIgnoreCase);
+        var added = paths
+            .Where(p => !existing.Contains(p))
+            .Select(p => new PhotoItem(p)
+            {
+                IsFavorite = _state.FavoritePaths.Contains(p),
+                IsHidden = _state.HiddenPaths.Contains(p)
+            })
+            .ToList();
+        if (added.Count == 0) return;
+
+        _collageSource.AddRange(added);
+        _collageItems.AddRange(added);
+        _collageCount = _collageItems.Count;
+        CollageCountText.Text = $"{_collageItems.Count} photo{(_collageItems.Count == 1 ? "" : "s")}";
+
+        await System.Threading.Tasks.Task.WhenAll(added.Select(i => i.EnsureAspectAsync()));
+        LayoutCollage();
+        StatusText.Text = $"Added {added.Count} photo(s) to the collage";
+    }
 
     private async void CollageFewer_Click(object sender, RoutedEventArgs e)
     {

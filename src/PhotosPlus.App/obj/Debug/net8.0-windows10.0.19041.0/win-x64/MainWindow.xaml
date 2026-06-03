@@ -9,11 +9,12 @@
 
         <!-- ===================== Gallery ===================== -->
         <Grid x:ConnectionId='3' x:Name="GalleryView">
-            <GridView x:ConnectionId='49' x:Name="PhotoGrid"
+            <GridView x:ConnectionId='52' x:Name="PhotoGrid"
                       Padding="24,56,24,32"
                       SelectionMode="None"
                       IsItemClickEnabled="True"
                                                      
+                                                                   
                                                                                    >
                 <GridView.ItemTemplate>
                     <DataTemplate>
@@ -40,15 +41,15 @@
             </GridView>
 
             <!-- Empty state -->
-            <StackPanel x:ConnectionId='50' x:Name="EmptyState" Visibility="Visible"
+            <StackPanel x:ConnectionId='53' x:Name="EmptyState" Visibility="Visible"
                         HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14" MaxWidth="420">
                 <FontIcon Glyph="&#xEB9F;" FontFamily="Segoe MDL2 Assets" FontSize="56" Opacity="0.45" />
                 <TextBlock Text="Your photos, beautifully" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center" />
                 <TextBlock Text="Open a file or folder, or drag photos anywhere onto this window."
                            Opacity="0.7" FontSize="14" TextWrapping="Wrap" TextAlignment="Center" />
                 <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" Margin="0,4,0,0">
-                    <Button x:ConnectionId='60' Content="Open file"                        Style="{StaticResource AccentButtonStyle}" />
-                    <Button x:ConnectionId='61' Content="Open folder"                          />
+                    <Button x:ConnectionId='64' Content="Open file"                        Style="{StaticResource AccentButtonStyle}" />
+                    <Button x:ConnectionId='65' Content="Open folder"                          />
                 </StackPanel>
             </StackPanel>
 
@@ -57,29 +58,29 @@
                     CornerRadius="24" Padding="4" Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel Orientation="Horizontal" Spacing="2">
-                    <Button x:ConnectionId='51' x:Name="OpenButton" Style="{StaticResource GlyphButton}"
+                    <Button x:ConnectionId='54' x:Name="OpenButton" Style="{StaticResource GlyphButton}"
                             ToolTipService.ToolTip="Open">
                         <FontIcon Glyph="&#xE8E5;" FontFamily="Segoe MDL2 Assets" />
                         <Button.Flyout>
                             <MenuFlyout>
-                                <MenuFlyoutItem x:ConnectionId='58' Text="Open file…"                       >
+                                <MenuFlyoutItem x:ConnectionId='62' Text="Open file…"                       >
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
-                                <MenuFlyoutItem x:ConnectionId='59' Text="Open folder…"                         >
+                                <MenuFlyoutItem x:ConnectionId='63' Text="Open folder…"                         >
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE838;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                             </MenuFlyout>
                         </Button.Flyout>
                     </Button>
-                    <Button x:ConnectionId='52' Style="{StaticResource GlyphButton}"                        
+                    <Button x:ConnectionId='55' Style="{StaticResource GlyphButton}"                        
                             ToolTipService.ToolTip="Slideshow (F5)">
                         <FontIcon Glyph="&#xE786;" FontFamily="Segoe MDL2 Assets" />
                     </Button>
-                    <Button x:ConnectionId='53' Style="{StaticResource GlyphButton}"                      
+                    <Button x:ConnectionId='56' Style="{StaticResource GlyphButton}"                      
                             ToolTipService.ToolTip="Collage">
                         <FontIcon Glyph="&#xE8A9;" FontFamily="Segoe MDL2 Assets" />
                     </Button>
-                    <Button x:ConnectionId='54' Style="{StaticResource GlyphButton}"                       
+                    <Button x:ConnectionId='57' Style="{StaticResource GlyphButton}"                       
                             ToolTipService.ToolTip="Settings">
                         <FontIcon Glyph="&#xE713;" FontFamily="Segoe MDL2 Assets" />
                     </Button>
@@ -87,10 +88,11 @@
                         <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" />
                         <Button.Flyout>
                             <MenuFlyout>
-                                <ToggleMenuFlyoutItem x:ConnectionId='55' x:Name="HiddenAlbumButton" Text="Show Hidden album"                           />
-                                <ToggleMenuFlyoutItem x:ConnectionId='56' x:Name="FavoritesFilterButton" Text="Favorites only"                               />
+                                <ToggleMenuFlyoutItem x:ConnectionId='58' x:Name="SelectModeButton" Text="Select photos"                          />
+                                <ToggleMenuFlyoutItem x:ConnectionId='59' x:Name="HiddenAlbumButton" Text="Show Hidden album"                           />
+                                <ToggleMenuFlyoutItem x:ConnectionId='60' x:Name="FavoritesFilterButton" Text="Favorites only"                               />
                                 <MenuFlyoutSeparator />
-                                <MenuFlyoutItem x:ConnectionId='57' Text="Close gallery"                           >
+                                <MenuFlyoutItem x:ConnectionId='61' Text="Close gallery"                           >
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8BB;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                             </MenuFlyout>
@@ -104,33 +106,34 @@
         <Grid x:ConnectionId='4' x:Name="ViewerView" Visibility="Collapsed" Background="#FF101013"
                                                     >
 
-            <Grid x:ConnectionId='24' x:Name="ImageHost" Background="Transparent"
+            <Grid x:ConnectionId='27' x:Name="ImageHost" Background="Transparent"
                                                      
                                                                      
                                                            
                                                        
                                                              
                                                        >
-                <Image x:ConnectionId='47' x:Name="ViewerImage" Stretch="Uniform"
+                <Image x:ConnectionId='50' x:Name="ViewerImage" Stretch="Uniform"
                        HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                        RenderTransformOrigin="0.5,0.5"
+                                                            
                                                             >
                     <Image.RenderTransform>
-                        <CompositeTransform x:ConnectionId='48' x:Name="ViewerTransform" />
+                        <CompositeTransform x:ConnectionId='51' x:Name="ViewerTransform" />
                     </Image.RenderTransform>
                 </Image>
             </Grid>
 
             <!-- Eye obscure: plain black curtain -->
-            <Grid x:ConnectionId='25' x:Name="ObscureOverlay" Visibility="Collapsed" Background="Black" />
+            <Grid x:ConnectionId='28' x:Name="ObscureOverlay" Visibility="Collapsed" Background="Black" />
 
             <!-- Floating chrome that auto-hides -->
-            <Grid x:ConnectionId='26' x:Name="ViewerChrome">
+            <Grid x:ConnectionId='29' x:Name="ViewerChrome">
 
                 <!-- Top-left: back -->
                 <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,48,0,0"
                         CornerRadius="22" Padding="4" Background="{StaticResource PillBrush}">
-                    <Button x:ConnectionId='46' Style="{StaticResource GlyphButton}" Foreground="White"                            
+                    <Button x:ConnectionId='49' Style="{StaticResource GlyphButton}" Foreground="White"                            
                             ToolTipService.ToolTip="Back to gallery (Esc)">
                         <FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" />
                     </Button>
@@ -140,37 +143,37 @@
                 <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,48,16,0"
                         CornerRadius="24" Padding="4" Background="{StaticResource PillBrush}">
                     <StackPanel Orientation="Horizontal" Spacing="2">
-                        <Button x:ConnectionId='36' x:Name="FavoriteButton" Style="{StaticResource GlyphButton}" Foreground="White"
+                        <Button x:ConnectionId='39' x:Name="FavoriteButton" Style="{StaticResource GlyphButton}" Foreground="White"
                                                        ToolTipService.ToolTip="Favorite">
-                            <FontIcon x:ConnectionId='45' x:Name="FavoriteIcon" Glyph="&#xE734;" FontFamily="Segoe MDL2 Assets" />
+                            <FontIcon x:ConnectionId='48' x:Name="FavoriteIcon" Glyph="&#xE734;" FontFamily="Segoe MDL2 Assets" />
                         </Button>
-                        <Button x:ConnectionId='37' x:Name="EyeButton" Style="{StaticResource GlyphButton}" Foreground="White"
+                        <Button x:ConnectionId='40' x:Name="EyeButton" Style="{StaticResource GlyphButton}" Foreground="White"
                                                   ToolTipService.ToolTip="Hide / reveal (H)">
-                            <FontIcon x:ConnectionId='42' x:Name="EyeIcon" Glyph="&#xE890;" FontFamily="Segoe MDL2 Assets" />
+                            <FontIcon x:ConnectionId='45' x:Name="EyeIcon" Glyph="&#xE890;" FontFamily="Segoe MDL2 Assets" />
                             <Button.Flyout>
                                 <MenuFlyout Placement="Bottom">
-                                    <MenuFlyoutItem x:ConnectionId='43' Text="Hide / reveal in view (H)"                         >
+                                    <MenuFlyoutItem x:ConnectionId='46' Text="Hide / reveal in view (H)"                         >
                                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xED1A;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
                                     </MenuFlyoutItem>
-                                    <MenuFlyoutItem x:ConnectionId='44' Text="Hide permanently (Hidden album)"                               >
+                                    <MenuFlyoutItem x:ConnectionId='47' Text="Hide permanently (Hidden album)"                               >
                                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE890;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
                                     </MenuFlyoutItem>
                                 </MenuFlyout>
                             </Button.Flyout>
                         </Button>
-                        <Button x:ConnectionId='38' Style="{StaticResource GlyphButton}" Foreground="White"                     
+                        <Button x:ConnectionId='41' Style="{StaticResource GlyphButton}" Foreground="White"                     
                                 ToolTipService.ToolTip="Rotate (R)">
                             <FontIcon Glyph="&#xE7AD;" FontFamily="Segoe MDL2 Assets" />
                         </Button>
-                        <Button x:ConnectionId='39' Style="{StaticResource GlyphButton}" Foreground="White"                   
+                        <Button x:ConnectionId='42' Style="{StaticResource GlyphButton}" Foreground="White"                   
                                 ToolTipService.ToolTip="Photo info">
                             <FontIcon Glyph="&#xE946;" FontFamily="Segoe MDL2 Assets" />
                         </Button>
-                        <Button x:ConnectionId='40' Style="{StaticResource GlyphButton}" Foreground="White"                     
+                        <Button x:ConnectionId='43' Style="{StaticResource GlyphButton}" Foreground="White"                     
                                 ToolTipService.ToolTip="Reveal in Explorer">
                             <FontIcon Glyph="&#xEC50;" FontFamily="Segoe MDL2 Assets" />
                         </Button>
-                        <Button x:ConnectionId='41' Style="{StaticResource GlyphButton}" Foreground="White"                     
+                        <Button x:ConnectionId='44' Style="{StaticResource GlyphButton}" Foreground="White"                     
                                 ToolTipService.ToolTip="Delete">
                             <FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" />
                         </Button>
@@ -181,32 +184,32 @@
                 <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,28"
                         CornerRadius="26" Padding="6" Background="{StaticResource PillBrush}">
                     <StackPanel Orientation="Horizontal" Spacing="2">
-                        <Button x:ConnectionId='29' Style="{StaticResource GlyphButton}" Foreground="White"                   
+                        <Button x:ConnectionId='32' Style="{StaticResource GlyphButton}" Foreground="White"                   
                                 ToolTipService.ToolTip="Previous">
                             <FontIcon Glyph="&#xE76B;" FontFamily="Segoe MDL2 Assets" />
                         </Button>
-                        <Button x:ConnectionId='30' Style="{StaticResource GlyphButton}" Foreground="White"                      
+                        <Button x:ConnectionId='33' Style="{StaticResource GlyphButton}" Foreground="White"                      
                                 ToolTipService.ToolTip="Zoom out">
                             <FontIcon Glyph="&#xE71F;" FontFamily="Segoe MDL2 Assets" />
                         </Button>
-                        <Button x:ConnectionId='31' Style="{StaticResource GlyphButton}" Foreground="White"                  
+                        <Button x:ConnectionId='34' Style="{StaticResource GlyphButton}" Foreground="White"                  
                                 ToolTipService.ToolTip="Fit (0)">
                             <FontIcon Glyph="&#xE9A6;" FontFamily="Segoe MDL2 Assets" />
                         </Button>
-                        <Button x:ConnectionId='32' Style="{StaticResource GlyphButton}" Foreground="White"                     
+                        <Button x:ConnectionId='35' Style="{StaticResource GlyphButton}" Foreground="White"                     
                                 ToolTipService.ToolTip="Zoom in">
                             <FontIcon Glyph="&#xE8A3;" FontFamily="Segoe MDL2 Assets" />
                         </Button>
-                        <Button x:ConnectionId='33' Style="{StaticResource GlyphButton}" Foreground="White"                   
+                        <Button x:ConnectionId='36' Style="{StaticResource GlyphButton}" Foreground="White"                   
                                 ToolTipService.ToolTip="Next">
                             <FontIcon Glyph="&#xE76C;" FontFamily="Segoe MDL2 Assets" />
                         </Button>
                         <Border Width="1" Margin="6,8" Background="#33FFFFFF" />
-                        <Button x:ConnectionId='34' Style="{StaticResource GlyphButton}" Foreground="White"                        
+                        <Button x:ConnectionId='37' Style="{StaticResource GlyphButton}" Foreground="White"                        
                                 ToolTipService.ToolTip="Slideshow (F5)">
                             <FontIcon Glyph="&#xE786;" FontFamily="Segoe MDL2 Assets" />
                         </Button>
-                        <Button x:ConnectionId='35' Style="{StaticResource GlyphButton}" Foreground="White"                         
+                        <Button x:ConnectionId='38' Style="{StaticResource GlyphButton}" Foreground="White"                         
                                 ToolTipService.ToolTip="Full screen (F11)">
                             <FontIcon Glyph="&#xE740;" FontFamily="Segoe MDL2 Assets" />
                         </Button>
@@ -215,14 +218,14 @@
             </Grid>
 
             <!-- Metadata panel -->
-            <Border x:ConnectionId='27' x:Name="InfoPanel" Visibility="Collapsed"
+            <Border x:ConnectionId='30' x:Name="InfoPanel" Visibility="Collapsed"
                     HorizontalAlignment="Right" VerticalAlignment="Top" Margin="16,104,16,0"
                     Width="330" Padding="18" CornerRadius="12"
                     Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel Spacing="6">
                     <TextBlock Text="Photo info" FontWeight="SemiBold" FontSize="16" />
-                    <TextBlock x:ConnectionId='28' x:Name="InfoText" TextWrapping="Wrap" FontSize="13" Opacity="0.9" />
+                    <TextBlock x:ConnectionId='31' x:Name="InfoText" TextWrapping="Wrap" FontSize="13" Opacity="0.9" />
                 </StackPanel>
             </Border>
         </Grid>
@@ -251,6 +254,19 @@
                         <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" />
                     </Button>
                     <Border Width="1" Margin="6,8" Background="#33FFFFFF" />
+                    <Button Style="{StaticResource GlyphButton}" Foreground="White" ToolTipService.ToolTip="Layout">
+                        <FontIcon Glyph="&#xE71D;" FontFamily="Segoe MDL2 Assets" />
+                        <Button.Flyout>
+                            <MenuFlyout>
+                                <RadioMenuFlyoutItem x:ConnectionId='24' x:Name="PresetJustified" Text="Justified" GroupName="preset"
+                                                     IsChecked="True"                             Tag="Justified" />
+                                <RadioMenuFlyoutItem x:ConnectionId='25' x:Name="PresetGrid" Text="Grid" GroupName="preset"
+                                                                                 Tag="Grid" />
+                                <RadioMenuFlyoutItem x:ConnectionId='26' x:Name="PresetHero" Text="Hero" GroupName="preset"
+                                                                                 Tag="Hero" />
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
                     <Button x:ConnectionId='22' Style="{StaticResource GlyphButton}" Foreground="White"                             
                             ToolTipService.ToolTip="Shuffle">
                         <FontIcon Glyph="&#xE8B1;" FontFamily="Segoe MDL2 Assets" />
