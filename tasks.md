@@ -108,8 +108,9 @@ Still TODO from the roadmap below: editing (Phase 5), shell/default-app registra
 - [ ] Share via Windows share sheet.
 - [ ] Copy to clipboard.
 - [ ] Set as background / lock screen.
-- [ ] Delete to Recycle Bin; rename; reveal in Explorer; Open with….
-- [ ] Register as default photo handler; jump list.
+- [x] Delete to Recycle Bin; reveal in Explorer. _(rename: TODO)_
+- [x] **File activation** — opens a file/folder passed on the command line ("Open with" / default app).
+- [x] **Register as default photo handler** — per-user registry scripts (`tools\register-default.ps1` / `unregister-default.ps1`) + publish to `%LocalAppData%\PhotosPlus\app`. _(user sets the actual default in Settings; jump list: TODO; single-instance: TODO)_
 
 ## Phase 7 — Video (parity)
 

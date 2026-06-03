@@ -112,6 +112,29 @@ dotnet run --project src/PhotosPlus.App
 
 ---
 
+## Set as your default photo app
+
+PhotosPlus opens a file or folder passed on the command line (`PhotosPlus.App.exe "<file>"`), so it works as a Windows file handler.
+
+1. **Publish** a stable, self-contained copy (so the registered path survives rebuilds):
+   ```powershell
+   dotnet publish src/PhotosPlus.App -c Release -r win-x64 --self-contained true -o "$env:LocalAppData\PhotosPlus\app"
+   ```
+2. **Register** it with Windows (per-user, no admin, reversible):
+   ```powershell
+   .\tools\register-default.ps1            # or: -ExePath "<path to PhotosPlus.App.exe>"
+   ```
+   This adds a ProgID, an *Open with* entry, and a *Default apps* capability for ~23 image extensions.
+3. **Make it the default.** Windows 10/11 doesn't let an app silently take over defaults, so do it once:
+   - **Settings → Apps → Default apps** → pick PhotosPlus per file type, **or**
+   - right-click a photo → **Open with → Choose another app → PhotosPlus → Always**.
+
+**Undo:** `.\tools\unregister-default.ps1` removes the registration (Windows reverts to the previous app).
+
+> Each opened file currently launches its own window (no single-instance reuse yet).
+
+---
+
 ## Keyboard Shortcuts
 
 | Key | Action |

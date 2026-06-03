@@ -43,7 +43,7 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _chromeTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     private bool _loadingSettings;
 
-    public MainWindow()
+    public MainWindow(string? initialPath = null)
     {
         InitializeComponent();
         _library = new PhotoLibrary(_state);
@@ -74,7 +74,15 @@ public sealed partial class MainWindow : Window
             ViewerChrome.IsHitTestVisible = false;
         };
 
-        // Cold start always shows the welcome / picker screen — no auto-reload of the last folder.
+        // Cold start shows the welcome / picker screen — unless Windows launched us with a
+        // file/folder to open (default photo app / "Open with").
+        if (!string.IsNullOrEmpty(initialPath))
+        {
+            if (System.IO.Directory.Exists(initialPath))
+                _ = LoadFolderAsync(initialPath);
+            else
+                _ = OpenSinglePhotoAsync(initialPath!);
+        }
     }
 
     // 'new' intentionally hides the (unused) Window.Current; this is the currently viewed photo.
