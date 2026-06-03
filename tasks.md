@@ -23,6 +23,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 **Headline features**
 - **Eye toggle** (`H` / eye icon): covers the current photo with a **solid black** curtain; flyout → permanent hide into a gated **Hidden album**.
 - **Slideshow** (`F5`): full screen, crossfade / Ken Burns, timing, shuffle, loop, auto-hiding controls, caption, skips hidden photos.
+- **Collage**: justified, fit-to-screen auto-layout of the visible photos (aspect-preserving, gap-filling); shuffle, count stepper, save-to-PNG, tap a tile to open it.
 
 **Settings & UI**
 - **Settings panel** — slideshow seconds (2–30), shuffle, loop, transition; persisted.

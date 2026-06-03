@@ -75,6 +75,10 @@
                             ToolTipService.ToolTip="Slideshow (F5)">
                         <FontIcon Glyph="&#xE786;" FontFamily="Segoe MDL2 Assets" />
                     </Button>
+                    <Button Style="{StaticResource GlyphButton}" Click="Collage_Click"
+                            ToolTipService.ToolTip="Collage">
+                        <FontIcon Glyph="&#xE8A9;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
                     <Button Style="{StaticResource GlyphButton}" Click="Settings_Click"
                             ToolTipService.ToolTip="Settings">
                         <FontIcon Glyph="&#xE713;" FontFamily="Segoe MDL2 Assets" />
@@ -219,6 +223,42 @@
                 <StackPanel Spacing="6">
                     <TextBlock Text="Photo info" FontWeight="SemiBold" FontSize="16" />
                     <TextBlock x:Name="InfoText" TextWrapping="Wrap" FontSize="13" Opacity="0.9" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- ===================== Collage ===================== -->
+        <Grid x:Name="CollageView" Visibility="Collapsed" Background="#FF101013">
+            <Canvas x:Name="CollageCanvas" SizeChanged="CollageCanvas_SizeChanged" />
+
+            <!-- Floating collage controls -->
+            <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,28"
+                    CornerRadius="26" Padding="6" Background="{StaticResource PillBrush}">
+                <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                    <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="CollageBack_Click"
+                            ToolTipService.ToolTip="Back to gallery (Esc)">
+                        <FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
+                    <Border Width="1" Margin="6,8" Background="#33FFFFFF" />
+                    <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="CollageFewer_Click"
+                            ToolTipService.ToolTip="Fewer photos">
+                        <FontIcon Glyph="&#xE738;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
+                    <TextBlock x:Name="CollageCountText" Foreground="White" VerticalAlignment="Center"
+                               MinWidth="64" TextAlignment="Center" Text="0 photos" />
+                    <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="CollageMore_Click"
+                            ToolTipService.ToolTip="More photos">
+                        <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
+                    <Border Width="1" Margin="6,8" Background="#33FFFFFF" />
+                    <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="CollageShuffle_Click"
+                            ToolTipService.ToolTip="Shuffle">
+                        <FontIcon Glyph="&#xE8B1;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
+                    <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="CollageSave_Click"
+                            ToolTipService.ToolTip="Save collage…">
+                        <FontIcon Glyph="&#xE74E;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
                 </StackPanel>
             </Border>
         </Grid>

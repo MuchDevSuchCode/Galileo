@@ -43,6 +43,28 @@ public partial class PhotoItem : ObservableObject
         FileName = System.IO.Path.GetFileName(path);
     }
 
+    /// <summary>Width / height of the source image (1.0 until <see cref="EnsureAspectAsync"/> runs).</summary>
+    public double Aspect { get; private set; } = 1.0;
+    private bool _aspectLoaded;
+
+    /// <summary>Reads the image's pixel dimensions (cheap metadata read) to populate <see cref="Aspect"/>.</summary>
+    public async Task EnsureAspectAsync()
+    {
+        if (_aspectLoaded) return;
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(Path);
+            var props = await file.Properties.GetImagePropertiesAsync();
+            if (props.Width > 0 && props.Height > 0)
+                Aspect = (double)props.Width / props.Height;
+        }
+        catch
+        {
+            // Leave Aspect at 1.0 if metadata is unreadable.
+        }
+        _aspectLoaded = true;
+    }
+
     /// <summary>Lazily decodes a small thumbnail. Safe to call repeatedly.</summary>
     public async Task LoadThumbnailAsync(uint size = 240)
     {

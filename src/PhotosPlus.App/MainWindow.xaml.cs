@@ -2,16 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Tasks;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using PhotosPlus.Models;
 using PhotosPlus.Services;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.System;
@@ -42,6 +45,12 @@ public sealed partial class MainWindow : Window
 
     private readonly DispatcherTimer _chromeTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     private bool _loadingSettings;
+
+    // Collage mode state
+    private readonly Random _rng = new();
+    private List<PhotoItem> _collageSource = new();
+    private List<PhotoItem> _collageItems = new();
+    private int _collageCount;
 
     public MainWindow(string? initialPath = null)
     {
@@ -286,6 +295,7 @@ public sealed partial class MainWindow : Window
     private void ShowGallery()
     {
         ViewerView.Visibility = Visibility.Collapsed;
+        CollageView.Visibility = Visibility.Collapsed;
         GalleryView.Visibility = Visibility.Visible;
         InfoPanel.Visibility = Visibility.Collapsed;
         _chromeTimer.Stop();
@@ -295,6 +305,7 @@ public sealed partial class MainWindow : Window
     private void ShowViewer()
     {
         GalleryView.Visibility = Visibility.Collapsed;
+        CollageView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Visible;
         ShowChrome();
     }
@@ -725,6 +736,147 @@ public sealed partial class MainWindow : Window
         slideshow.Activate();
     }
 
+    // ===================== Collage =====================
+
+    private bool InCollage => CollageView.Visibility == Visibility.Visible;
+
+    private async void Collage_Click(object sender, RoutedEventArgs e)
+    {
+        var pool = _view.Where(p => !p.IsHidden).ToList();
+        if (pool.Count == 0)
+        {
+            StatusText.Text = "No photos to make a collage.";
+            return;
+        }
+        _collageSource = pool;
+        _collageCount = Math.Min(pool.Count, 12);
+
+        GalleryView.Visibility = Visibility.Collapsed;
+        ViewerView.Visibility = Visibility.Collapsed;
+        InfoPanel.Visibility = Visibility.Collapsed;
+        CollageView.Visibility = Visibility.Visible;
+        ModeLabel.Text = "· Collage";
+
+        await RebuildCollageAsync(reshuffle: true);
+    }
+
+    private async System.Threading.Tasks.Task RebuildCollageAsync(bool reshuffle)
+    {
+        if (_collageSource.Count == 0) return;
+        _collageCount = Math.Clamp(_collageCount, 1, _collageSource.Count);
+
+        if (reshuffle || _collageItems.Count != _collageCount)
+            _collageItems = _collageSource.OrderBy(_ => _rng.Next()).Take(_collageCount).ToList();
+
+        CollageCountText.Text = $"{_collageItems.Count} photo{(_collageItems.Count == 1 ? "" : "s")}";
+
+        await System.Threading.Tasks.Task.WhenAll(_collageItems.Select(i => i.EnsureAspectAsync()));
+        LayoutCollage();
+    }
+
+    private void LayoutCollage()
+    {
+        CollageCanvas.Children.Clear();
+        if (_collageItems.Count == 0) return;
+
+        var tiles = CollageLayout.Compute(_collageItems, CollageCanvas.ActualWidth, CollageCanvas.ActualHeight, 6);
+        foreach (var tile in tiles)
+        {
+            var image = new Image { Stretch = Stretch.UniformToFill };
+            var border = new Border
+            {
+                Width = tile.Width,
+                Height = tile.Height,
+                CornerRadius = new CornerRadius(8),
+                Background = new SolidColorBrush(Microsoft.UI.Colors.Black),
+                Child = image
+            };
+            var item = tile.Item;
+            border.Tapped += (_, _) => OpenFromCollage(item);
+            Canvas.SetLeft(border, tile.X);
+            Canvas.SetTop(border, tile.Y);
+            CollageCanvas.Children.Add(border);
+            _ = LoadTileAsync(image, item, (int)Math.Ceiling(tile.Width));
+        }
+    }
+
+    private static async System.Threading.Tasks.Task LoadTileAsync(Image image, PhotoItem item, int decodeWidth)
+    {
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(item.Path);
+            using var stream = await file.OpenReadAsync();
+            var bmp = new BitmapImage();
+            if (decodeWidth > 0) bmp.DecodePixelWidth = decodeWidth;
+            await bmp.SetSourceAsync(stream);
+            image.Source = bmp;
+        }
+        catch
+        {
+            // Skip unreadable tiles.
+        }
+    }
+
+    private void OpenFromCollage(PhotoItem item)
+    {
+        var idx = _view.IndexOf(item);
+        if (idx < 0) return;
+        _currentIndex = idx;
+        ShowViewer();
+        _ = LoadCurrentAsync();
+    }
+
+    private void CollageCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (InCollage && _collageItems.Count > 0) LayoutCollage();
+    }
+
+    private void CollageBack_Click(object sender, RoutedEventArgs e) => ShowGallery();
+    private async void CollageShuffle_Click(object sender, RoutedEventArgs e) => await RebuildCollageAsync(reshuffle: true);
+
+    private async void CollageFewer_Click(object sender, RoutedEventArgs e)
+    {
+        _collageCount = Math.Max(1, _collageCount - 1);
+        await RebuildCollageAsync(reshuffle: true);
+    }
+
+    private async void CollageMore_Click(object sender, RoutedEventArgs e)
+    {
+        _collageCount = Math.Min(_collageSource.Count, _collageCount + 1);
+        await RebuildCollageAsync(reshuffle: true);
+    }
+
+    private async void CollageSave_Click(object sender, RoutedEventArgs e)
+    {
+        if (_collageItems.Count == 0) return;
+        try
+        {
+            var rtb = new RenderTargetBitmap();
+            await rtb.RenderAsync(CollageCanvas);
+            var pixels = await rtb.GetPixelsAsync();
+
+            var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.PicturesLibrary };
+            picker.FileTypeChoices.Add("PNG image", new List<string> { ".png" });
+            picker.SuggestedFileName = "collage";
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+
+            var file = await picker.PickSaveFileAsync();
+            if (file is null) return;
+
+            using var stream = await file.OpenAsync(FileAccessMode.ReadWrite);
+            var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+            encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
+                (uint)rtb.PixelWidth, (uint)rtb.PixelHeight, 96, 96, pixels.ToArray());
+            await encoder.FlushAsync();
+            StatusText.Text = $"Collage saved to {file.Path}";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Save failed: {ex.Message}";
+        }
+    }
+
     // ===================== Settings =====================
 
     private void Settings_Click(object sender, RoutedEventArgs e)
@@ -793,6 +945,8 @@ public sealed partial class MainWindow : Window
                 Navigate(+1); e.Handled = true; break;
             case VirtualKey.Escape when SettingsOverlay.Visibility == Visibility.Visible:
                 CloseSettings(); e.Handled = true; break;
+            case VirtualKey.Escape when InCollage:
+                ShowGallery(); e.Handled = true; break;
             case VirtualKey.Escape when InViewer:
                 if (_isFullScreen) ToggleFullScreen(); else ShowGallery();
                 e.Handled = true; break;
