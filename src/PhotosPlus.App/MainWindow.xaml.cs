@@ -953,7 +953,7 @@ public sealed partial class MainWindow : Window
         menu.Items.Add(MI("Copy as file", "", async (_, _) => await CopyFileAsync(item)));
         menu.Items.Add(MI("Copy file path", "", (_, _) => CopyPath(item)));
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(MI("Open with…", "", (_, _) => RunVerb(item, "openas")));
+        menu.Items.Add(MI("Open with…", "", (_, _) => OpenWithItem(item)));
         menu.Items.Add(MI("Print…", "", (_, _) => RunVerb(item, "print")));
         menu.Items.Add(MI("Set as desktop background", "", (_, _) => SetWallpaper(item)));
         menu.Items.Add(new MenuFlyoutSeparator());
@@ -1009,7 +1009,13 @@ public sealed partial class MainWindow : Window
     private void RunVerb(PhotoItem item, string verb)
     {
         try { ShellOps.InvokeVerb(item.Path, verb); }
-        catch (Exception ex) { StatusText.Text = ex.Message; }
+        catch (Exception ex) { StatusText.Text = ex.Message; App.Log("Verb:" + verb, ex); }
+    }
+
+    private void OpenWithItem(PhotoItem item)
+    {
+        try { ShellOps.OpenWith(item.Path); }
+        catch (Exception ex) { StatusText.Text = $"Open with failed: {ex.Message}"; App.Log("OpenWith", ex); }
     }
 
     private void SetWallpaper(PhotoItem item)

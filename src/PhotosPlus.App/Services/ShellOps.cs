@@ -63,9 +63,24 @@ public static class ShellOps
 
     // ---- Shell verbs via the default handler ----
 
-    /// <summary>Invokes a shell verb ("openas" = Open with…, "print", "edit"…) on a file.</summary>
+    /// <summary>Invokes a shell verb ("print", "edit"…) on a file via its default handler.</summary>
     public static void InvokeVerb(string path, string verb)
     {
         Process.Start(new ProcessStartInfo { FileName = path, Verb = verb, UseShellExecute = true });
+    }
+
+    /// <summary>
+    /// Shows the Windows "Open with" dialog. Uses OpenAs_RunDLL, which is reliable — the
+    /// "openas" shell verb via Process.Start frequently no-ops.
+    /// rundll32 passes everything after the entry point as the file path, so spaces are fine.
+    /// </summary>
+    public static void OpenWith(string path)
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "rundll32.exe",
+            Arguments = $"shell32.dll,OpenAs_RunDLL {path}",
+            UseShellExecute = false
+        });
     }
 }
