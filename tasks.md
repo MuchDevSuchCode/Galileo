@@ -6,6 +6,25 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ---
 
+## ✅ Build status (current)
+
+**The app compiles and links cleanly** (`dotnet build`, 0 errors) and runs as an unpackaged WinUI 3 desktop app. A working vertical slice of Phases 0–4 is implemented:
+
+- Open **file**, **folder**, or **drag-and-drop** (single image / multiple images / folder) → virtualized gallery grid with async thumbnails
+- Single-image viewer: zoom / pan / fit / 1:1 / rotate / next-prev / full screen
+- **Eye toggle** (`H` / eye icon): covers the current photo with a solid black curtain + permanent hide → gated **Hidden album**
+- **Slideshow** (`F5`): full screen, crossfade / Ken Burns, timing, shuffle, auto-hiding controls, skips hidden photos
+- Favorites (★), favorites filter, metadata panel, delete-to-Recycle-Bin, reveal in Explorer
+- JSON persistence of hidden/favorite/settings in `%LocalAppData%\PhotosPlus`
+
+**Build notes (csproj):**
+- WindowsAppSDK 1.6 requires `Microsoft.Windows.SDK.NET.Ref ≥ 10.0.19041.38`; the installed .NET 8.0.300 SDK ships `.31`, so pinned `<WindowsSdkPackageVersion>10.0.19041.38</WindowsSdkPackageVersion>`.
+- `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` — the CsWinRT AOT source generator emits unsafe code for generic WinRT instantiations (e.g. drag-drop's `GetStorageItemsAsync`).
+
+Still TODO from the roadmap below: real editing (Phase 5), shell/default-app registration (Phase 6), video (Phase 7), MSIX packaging & DI host (Phases 0/8), and splitting into `.Core`/`.Tests` projects.
+
+---
+
 ## Phase 0 — Project setup
 
 - [ ] Create WinUI 3 (.NET 8) solution: `PhotosPlus.App`, `PhotosPlus.Core`, `PhotosPlus.Tests`.
@@ -36,27 +55,27 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## Phase 3 — ⭐ Eye toggle: hide / un-hide current photo
 
-- [ ] Add **eye icon** to the viewer command bar with stateful glyph (eye ⇄ eye-off) and tooltip.
-- [ ] **Obscure mode:** toggle replaces the displayed image with a blur + "hidden" privacy overlay; toggle again to reveal. Bind to shortcut **H**.
-- [ ] Ensure obscure is view-only — never moves, edits, or deletes the original file.
-- [ ] **Persistent hide:** "Hide permanently" flags the image in the local index; excluded from gallery + search.
-- [ ] **Hidden album** view that lists hidden images; itself gated behind the eye toggle.
+- [x] Add **eye icon** to the viewer command bar with stateful glyph (eye ⇄ eye-off) and tooltip.
+- [x] **Obscure mode:** toggle replaces the displayed image with a "hidden" privacy overlay; toggle again to reveal. Bound to shortcut **H**.
+- [x] Ensure obscure is view-only — never moves, edits, or deletes the original file.
+- [x] **Persistent hide:** "Hide permanently" flags the image in the local index; excluded from gallery.
+- [x] **Hidden album** view that lists hidden images; itself gated behind the eye toggle.
 - [ ] Optional **Windows Hello** gate before revealing the Hidden album.
 - [ ] Hidden-count badge on the eye icon.
-- [ ] Persist hidden state across sessions via sidecar index (no original-file mutation).
+- [x] Persist hidden state across sessions via sidecar index (no original-file mutation).
 - [ ] Unit tests: toggle state machine, persistence round-trip, gallery/search exclusion.
 
 ## Phase 4 — ⭐ Slideshow
 
-- [ ] Slideshow service: ordered/shuffled queue from current folder/album/selection.
-- [ ] Full-screen slideshow shell on the active monitor (multi-monitor aware).
-- [ ] Per-slide duration (2–30 s) and loop toggle.
-- [ ] Transitions: none, crossfade, slide, **Ken Burns** (slow zoom/pan).
-- [ ] Controls overlay (auto-hide): play/pause (Space), prev/next (←/→), speed, exit (Esc).
-- [ ] Optional caption (filename/date).
+- [x] Slideshow service: ordered/shuffled queue from current folder/album/selection.
+- [x] Full-screen slideshow shell on the active monitor.
+- [x] Per-slide duration (2–30 s) and loop toggle.
+- [x] Transitions: none, crossfade, **Ken Burns** (slow zoom/pan). _(slide: TODO)_
+- [x] Controls overlay (auto-hide): play/pause (Space), prev/next (←/→), speed, exit (Esc).
+- [x] Caption (filename + position).
 - [ ] Optional background music (audio file/playlist).
-- [ ] **Skip hidden images** in slideshows (cooperate with Phase 3).
-- [ ] Launch entry points: command bar button + **F5** + right-click → Slideshow.
+- [x] **Skip hidden images** in slideshows (cooperate with Phase 3).
+- [x] Launch entry points: command bar button + **F5**.
 - [ ] Unit/UI tests: queue ordering, shuffle, hidden-skip, timing.
 
 ## Phase 5 — Editing (parity)

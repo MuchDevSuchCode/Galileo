@@ -1,0 +1,36 @@
+Build started 6/2/2026 6:03:01 PM.
+     1>Project "C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\PhotosPlus.App.csproj" on node 1 (Restore target(s)).
+     1>_GetAllRestoreProjectPathItems:
+         Determining projects to restore...
+       Restore:
+         X.509 certificate chain validation will use the default trust store selected by .NET for code signing.
+         X.509 certificate chain validation will use the default trust store selected by .NET for timestamping.
+         Assets file has not changed. Skipping assets file writing. Path: C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\project.assets.json
+         Restored C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\PhotosPlus.App.csproj (in 80 ms).
+         
+         NuGet Config files used:
+             C:\Users\engineer\AppData\Roaming\NuGet\NuGet.Config
+             C:\Program Files (x86)\NuGet\Config\Microsoft.VisualStudio.FallbackLocation.config
+             C:\Program Files (x86)\NuGet\Config\Microsoft.VisualStudio.Offline.config
+         
+         Feeds used:
+             https://api.nuget.org/v3/index.json
+             C:\Program Files (x86)\Microsoft SDKs\NuGetPackages\
+         All projects are up-to-date for restore.
+     1>Done Building Project "C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\PhotosPlus.App.csproj" (Restore target(s)).
+   1:7>Project "C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\PhotosPlus.App.csproj" on node 1 (default targets).
+     1>MarkupCompilePass1:
+         "C:\Users\engineer\.nuget\packages\microsoft.windowsappsdk\1.6.250108002\buildTransitive\..\tools\net6.0\..\net472\XamlCompiler.exe" "obj\Debug\net8.0-windows10.0.19041.0\win-x64\\input.json" "obj\Debug\net8.0-windows10.0.19041.0\win-x64\\output.json"
+     1>C:\Users\engineer\.nuget\packages\microsoft.windowsappsdk\1.6.250108002\buildTransitive\Microsoft.UI.Xaml.Markup.Compiler.interop.targets(590,9): error MSB3073: The command ""C:\Users\engineer\.nuget\packages\microsoft.windowsappsdk\1.6.250108002\buildTransitive\..\tools\net6.0\..\net472\XamlCompiler.exe" "obj\Debug\net8.0-windows10.0.19041.0\win-x64\\input.json" "obj\Debug\net8.0-windows10.0.19041.0\win-x64\\output.json"" exited with code 1. [C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\PhotosPlus.App.csproj]
+     1>Done Building Project "C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\PhotosPlus.App.csproj" (default targets) -- FAILED.
+
+Build FAILED.
+
+       "C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\PhotosPlus.App.csproj" (default target) (1:7) ->
+       (MarkupCompilePass1 target) -> 
+         C:\Users\engineer\.nuget\packages\microsoft.windowsappsdk\1.6.250108002\buildTransitive\Microsoft.UI.Xaml.Markup.Compiler.interop.targets(590,9): error MSB3073: The command ""C:\Users\engineer\.nuget\packages\microsoft.windowsappsdk\1.6.250108002\buildTransitive\..\tools\net6.0\..\net472\XamlCompiler.exe" "obj\Debug\net8.0-windows10.0.19041.0\win-x64\\input.json" "obj\Debug\net8.0-windows10.0.19041.0\win-x64\\output.json"" exited with code 1. [C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\PhotosPlus.App.csproj]
+
+    0 Warning(s)
+    1 Error(s)
+
+Time Elapsed 00:00:03.67
