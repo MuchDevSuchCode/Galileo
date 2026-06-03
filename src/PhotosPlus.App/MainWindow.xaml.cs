@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
 using PhotosPlus.Models;
@@ -39,6 +40,9 @@ public sealed partial class MainWindow : Window
     private bool _showHiddenAlbum;
     private bool _favoritesOnly;
 
+    private readonly DispatcherTimer _chromeTimer = new() { Interval = TimeSpan.FromSeconds(3) };
+    private bool _loadingSettings;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -49,6 +53,26 @@ public sealed partial class MainWindow : Window
         var id = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
         _appWindow = AppWindow.GetFromWindowId(id);
         _appWindow.Title = "PhotosPlus";
+
+        // Mica backdrop for a modern translucent window.
+        SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
+
+        // Seamless modern chrome: draw our own content up into the title bar.
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(AppTitleBar);
+        if (AppWindowTitleBar.IsCustomizationSupported())
+        {
+            var tb = _appWindow.TitleBar;
+            tb.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
+            tb.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
+        }
+
+        _chromeTimer.Tick += (_, _) =>
+        {
+            _chromeTimer.Stop();
+            ViewerChrome.Opacity = 0;
+            ViewerChrome.IsHitTestVisible = false;
+        };
 
         if (!string.IsNullOrEmpty(_state.LastFolder) && System.IO.Directory.Exists(_state.LastFolder))
         {
@@ -259,31 +283,28 @@ public sealed partial class MainWindow : Window
         ViewerView.Visibility = Visibility.Collapsed;
         GalleryView.Visibility = Visibility.Visible;
         InfoPanel.Visibility = Visibility.Collapsed;
+        _chromeTimer.Stop();
         ModeLabel.Text = _showHiddenAlbum ? "· Hidden album" : "";
-        SetViewerCommandsVisible(false);
     }
 
     private void ShowViewer()
     {
         GalleryView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Visible;
-        SetViewerCommandsVisible(true);
+        ShowChrome();
     }
 
-    private void SetViewerCommandsVisible(bool visible)
+    // --- Viewer chrome auto-hide ---
+
+    private void ShowChrome()
     {
-        var v = visible ? Visibility.Visible : Visibility.Collapsed;
-        BackButton.Visibility = v;
-        ViewerSep1.Visibility = v;
-        PrevButton.Visibility = v;
-        NextButton.Visibility = v;
-        ZoomInButton.Visibility = v;
-        ZoomOutButton.Visibility = v;
-        FitButton.Visibility = v;
-        RotateButton.Visibility = v;
-        FavoriteButton.Visibility = v;
-        EyeButton.Visibility = v;
+        ViewerChrome.Opacity = 1;
+        ViewerChrome.IsHitTestVisible = true;
+        _chromeTimer.Stop();
+        _chromeTimer.Start();
     }
+
+    private void ViewerView_PointerMoved(object sender, PointerRoutedEventArgs e) => ShowChrome();
 
     private async Task LoadCurrentAsync()
     {
@@ -294,6 +315,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        _rotation = 0;
+        _bmpW = _bmpH = 0;
+
         try
         {
             var file = await StorageFile.GetFileFromPathAsync(item.Path);
@@ -301,6 +325,8 @@ public sealed partial class MainWindow : Window
             var bmp = new BitmapImage();
             await bmp.SetSourceAsync(stream);
             ViewerImage.Source = bmp;
+            _bmpW = bmp.PixelWidth;
+            _bmpH = bmp.PixelHeight;
         }
         catch (Exception ex)
         {
@@ -332,12 +358,14 @@ public sealed partial class MainWindow : Window
     // and rotation through a single CompositeTransform that we drive directly — no
     // ScrollViewer, so the mouse wheel zooms instead of scrolling.
 
-    private const double MinScale = 1.0;   // 1.0 == fit-to-window
     private const double MaxScale = 8.0;
 
     private double _scale = 1.0;
+    private double _minScale = 1.0;   // the fit scale for the current rotation (1.0 unless rotated 90/270)
     private double _tx;
     private double _ty;
+    private double _bmpW;             // source pixel size of the current photo
+    private double _bmpH;
 
     private bool _panning;
     private Windows.Foundation.Point _panStart;
@@ -353,30 +381,55 @@ public sealed partial class MainWindow : Window
         ViewerTransform.Rotation = _rotation;
     }
 
-    /// <summary>Resets zoom/pan/rotation to the default fit view.</summary>
+    /// <summary>
+    /// Scale that makes the photo fully fit the host at the current rotation. 1.0 for
+    /// 0°/180°; for 90°/270° the width/height swap, so the image is scaled down to fit.
+    /// </summary>
+    private double FitScaleForRotation()
+    {
+        double W = ImageHost.ActualWidth, H = ImageHost.ActualHeight;
+        if (_bmpW <= 0 || _bmpH <= 0 || W <= 0 || H <= 0) return 1.0;
+
+        var uniform = Math.Min(W / _bmpW, H / _bmpH); // displayed size at scale 1 (Uniform stretch)
+        double fw = _bmpW * uniform, fh = _bmpH * uniform;
+
+        var quarterTurn = _rotation % 180 != 0;
+        double boxW = quarterTurn ? fh : fw;
+        double boxH = quarterTurn ? fw : fh;
+
+        var fit = Math.Min(W / boxW, H / boxH);
+        return fit < 1.0 ? fit : 1.0;
+    }
+
+    /// <summary>Resets to the centered fit for the current rotation (zoom/pan cleared).</summary>
     private void ResetView()
     {
-        _scale = 1.0;
+        _minScale = FitScaleForRotation();
+        _scale = _minScale;
         _tx = 0;
         _ty = 0;
-        _rotation = 0;
         ApplyTransform();
     }
 
     /// <summary>Zoom about a focal point (in ImageHost coordinates) so it stays put.</summary>
     private void ZoomAt(double factor, Windows.Foundation.Point focus)
     {
-        var newScale = Math.Clamp(_scale * factor, MinScale, MaxScale);
+        var newScale = Math.Clamp(_scale * factor, _minScale, MaxScale);
         var ratio = newScale / _scale;
-        _tx = focus.X - ratio * (focus.X - _tx);
-        _ty = focus.Y - ratio * (focus.Y - _ty);
+        // Pivot is the host centre (RenderTransformOrigin = 0.5,0.5), so anchor relative to it.
+        var ux = focus.X - ImageHost.ActualWidth / 2;
+        var uy = focus.Y - ImageHost.ActualHeight / 2;
+        _tx = ux - ratio * (ux - _tx);
+        _ty = uy - ratio * (uy - _ty);
         _scale = newScale;
-        if (_scale <= MinScale + 0.001) { _tx = 0; _ty = 0; } // snap back to centered fit
+        if (_scale <= _minScale + 0.001) { _tx = 0; _ty = 0; } // snap back to centered fit
         ApplyTransform();
     }
 
     private Windows.Foundation.Point HostCenter() =>
         new(ImageHost.ActualWidth / 2, ImageHost.ActualHeight / 2);
+
+    private bool IsAtFit => _scale <= _minScale + 0.001;
 
     private void ZoomIn_Click(object sender, RoutedEventArgs e) => ZoomAt(1.25, HostCenter());
     private void ZoomOut_Click(object sender, RoutedEventArgs e) => ZoomAt(0.8, HostCenter());
@@ -384,7 +437,7 @@ public sealed partial class MainWindow : Window
 
     private void ImageHost_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
-        if (_scale > MinScale + 0.001) ResetView();
+        if (!IsAtFit) ResetView();
         else ZoomAt(2.5, e.GetPosition(ImageHost));
     }
 
@@ -402,7 +455,7 @@ public sealed partial class MainWindow : Window
 
     private void ImageHost_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        if (_scale <= MinScale + 0.001) return; // nothing to pan at fit
+        if (IsAtFit) return; // nothing to pan at fit
         var point = e.GetCurrentPoint(ImageHost);
         if (!point.Properties.IsLeftButtonPressed) return;
 
@@ -436,12 +489,24 @@ public sealed partial class MainWindow : Window
         {
             Rect = new Windows.Foundation.Rect(0, 0, ImageHost.ActualWidth, ImageHost.ActualHeight)
         };
+        if (IsAtFit) ResetView(); // keep the photo fitted as the window resizes
+    }
+
+    /// <summary>Once decoded we know the true pixel size; re-fit if the user hasn't zoomed.</summary>
+    private void ViewerImage_ImageOpened(object sender, RoutedEventArgs e)
+    {
+        if (ViewerImage.Source is BitmapImage b && b.PixelWidth > 0)
+        {
+            _bmpW = b.PixelWidth;
+            _bmpH = b.PixelHeight;
+            if (IsAtFit) ResetView();
+        }
     }
 
     private void Rotate_Click(object sender, RoutedEventArgs e)
     {
         _rotation = (_rotation + 90) % 360;
-        ApplyTransform();
+        ResetView(); // re-fit (and re-centre) so the rotated image stays fully in view
     }
 
     // ===================== Favorites =====================
@@ -461,8 +526,11 @@ public sealed partial class MainWindow : Window
     private void UpdateFavoriteIcon()
     {
         var fav = Current?.IsFavorite == true;
-        FavoriteButton.Icon = new SymbolIcon(fav ? Symbol.SolidStar : Symbol.OutlineStar);
-        FavoriteButton.Label = fav ? "Unfavorite" : "Favorite";
+        FavoriteIcon.Glyph = fav ? "" : ""; // filled / outline star // filled / outline star
+        FavoriteIcon.Foreground = fav
+            ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gold)
+            : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White);
+        ToolTipService.SetToolTip(FavoriteButton, fav ? "Unfavorite" : "Favorite");
     }
 
     // ===================== Eye toggle (headline feature) =====================
@@ -489,7 +557,7 @@ public sealed partial class MainWindow : Window
         ObscureOverlay.Visibility = obscured ? Visibility.Visible : Visibility.Collapsed;
         // Eye glyph reflects state: open eye = visible, eye-off = hidden.
         EyeIcon.Glyph = obscured ? GlyphEyeOff : GlyphEyeOpen;
-        EyeButton.Label = obscured ? "Reveal" : "Hide";
+        ToolTipService.SetToolTip(EyeButton, obscured ? "Reveal (H)" : "Hide (H)");
     }
 
     /// <summary>Permanently flag the current photo as hidden (Hidden album); never deletes the file.</summary>
@@ -652,6 +720,58 @@ public sealed partial class MainWindow : Window
         slideshow.Activate();
     }
 
+    // ===================== Settings =====================
+
+    private void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        _loadingSettings = true;
+        SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
+        SlideshowSecondsValue.Text = $"{_state.SlideshowSeconds}s";
+        ShuffleSwitch.IsOn = _state.SlideshowShuffle;
+        LoopSwitch.IsOn = _state.SlideshowLoop;
+        TransitionCombo.SelectedIndex = (int)_state.SlideshowTransition;
+        _loadingSettings = false;
+
+        SettingsOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void CloseSettings()
+    {
+        SettingsOverlay.Visibility = Visibility.Collapsed;
+        _state.Save();
+    }
+
+    private void SettingsClose_Click(object sender, RoutedEventArgs e) => CloseSettings();
+
+    // Tap on the dim scrim closes; tap inside the card is swallowed so it doesn't bubble up.
+    private void SettingsScrim_Tapped(object sender, TappedRoutedEventArgs e) => CloseSettings();
+    private void SettingsCard_Tapped(object sender, TappedRoutedEventArgs e) => e.Handled = true;
+
+    private void SlideshowSecondsSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.SlideshowSeconds = (int)Math.Round(e.NewValue);
+        SlideshowSecondsValue.Text = $"{_state.SlideshowSeconds}s";
+    }
+
+    private void ShuffleSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.SlideshowShuffle = ShuffleSwitch.IsOn;
+    }
+
+    private void LoopSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.SlideshowLoop = LoopSwitch.IsOn;
+    }
+
+    private void TransitionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.SlideshowTransition = (SlideshowTransition)Math.Max(0, TransitionCombo.SelectedIndex);
+    }
+
     // ===================== Keyboard =====================
 
     private void RootGrid_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -666,6 +786,8 @@ public sealed partial class MainWindow : Window
                 Navigate(-1); e.Handled = true; break;
             case VirtualKey.Right when InViewer:
                 Navigate(+1); e.Handled = true; break;
+            case VirtualKey.Escape when SettingsOverlay.Visibility == Visibility.Visible:
+                CloseSettings(); e.Handled = true; break;
             case VirtualKey.Escape when InViewer:
                 if (_isFullScreen) ToggleFullScreen(); else ShowGallery();
                 e.Handled = true; break;

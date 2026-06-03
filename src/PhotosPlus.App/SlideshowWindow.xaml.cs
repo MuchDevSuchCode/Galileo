@@ -66,6 +66,7 @@ public sealed partial class SlideshowWindow : Window
     {
         if (_started) return;
         _started = true;
+        Activated -= OnActivated; // one-shot: only run on first activation
         _ = ShowAtAsync(_pos, animate: false);
         _advanceTimer.Start();
         _hideControlsTimer.Start();

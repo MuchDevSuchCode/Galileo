@@ -6,204 +6,281 @@
 
     <Grid x:Name="RootGrid" KeyDown="RootGrid_KeyDown"
           AllowDrop="True" DragOver="RootGrid_DragOver" Drop="RootGrid_Drop">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
 
-        <!-- ===================== Command bar ===================== -->
-        <CommandBar x:Name="MainCommandBar" Grid.Row="0"
-                    DefaultLabelPosition="Right"
-                    IsOpen="False"
-                    HorizontalContentAlignment="Stretch">
-            <CommandBar.Content>
-                <StackPanel Orientation="Horizontal" Spacing="8" Margin="12,0,0,0" VerticalAlignment="Center">
-                    <FontIcon Glyph="&#xEB9F;" FontFamily="Segoe MDL2 Assets" />
-                    <TextBlock Text="PhotosPlus" FontWeight="SemiBold" VerticalAlignment="Center" />
-                    <TextBlock x:Name="ModeLabel" Text="" Opacity="0.6" VerticalAlignment="Center" />
+        <!-- ===================== Gallery ===================== -->
+        <Grid x:Name="GalleryView">
+            <GridView x:Name="PhotoGrid"
+                      Padding="24,56,24,32"
+                      SelectionMode="None"
+                      IsItemClickEnabled="True"
+                      ItemClick="PhotoGrid_ItemClick"
+                      ContainerContentChanging="PhotoGrid_ContainerContentChanging">
+                <GridView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Width="196" Height="196" Margin="5"
+                              CornerRadius="10" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+                            <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
+                            <Border Background="#B0000000" VerticalAlignment="Bottom" Padding="8,4">
+                                <TextBlock Text="{Binding FileName}" FontSize="11"
+                                           TextTrimming="CharacterEllipsis" Foreground="White" />
+                            </Border>
+                            <FontIcon Glyph="&#xE735;" FontFamily="Segoe MDL2 Assets"
+                                      Foreground="Gold" FontSize="16"
+                                      HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10"
+                                      Visibility="{Binding FavoriteVisibility}" />
+                            <Border Background="#CC000000" CornerRadius="10"
+                                    Visibility="{Binding HiddenVisibility}">
+                                <FontIcon Glyph="&#xED1A;" FontFamily="Segoe MDL2 Assets"
+                                          Foreground="White" FontSize="28"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                </GridView.ItemTemplate>
+            </GridView>
+
+            <!-- Empty state -->
+            <StackPanel x:Name="EmptyState" Visibility="Visible"
+                        HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14" MaxWidth="420">
+                <FontIcon Glyph="&#xEB9F;" FontFamily="Segoe MDL2 Assets" FontSize="56" Opacity="0.45" />
+                <TextBlock Text="Your photos, beautifully" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                <TextBlock Text="Open a file or folder, or drag photos anywhere onto this window."
+                           Opacity="0.7" FontSize="14" TextWrapping="Wrap" TextAlignment="Center" />
+                <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" Margin="0,4,0,0">
+                    <Button Content="Open file" Click="OpenFile_Click" Style="{StaticResource AccentButtonStyle}" />
+                    <Button Content="Open folder" Click="OpenFolder_Click" />
                 </StackPanel>
-            </CommandBar.Content>
+            </StackPanel>
 
-            <AppBarButton x:Name="OpenButton" Label="Open" Icon="OpenFile">
-                <AppBarButton.Flyout>
-                    <MenuFlyout>
-                        <MenuFlyoutItem Text="Open file…" Click="OpenFile_Click">
-                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
-                        </MenuFlyoutItem>
-                        <MenuFlyoutItem Text="Open folder…" Click="OpenFolder_Click">
-                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE838;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
-                        </MenuFlyoutItem>
-                    </MenuFlyout>
-                </AppBarButton.Flyout>
-            </AppBarButton>
-            <AppBarButton x:Name="BackButton" Label="Gallery" Icon="Pictures" Visibility="Collapsed"
-                          ToolTipService.ToolTip="Gallery options">
-                <AppBarButton.Flyout>
-                    <MenuFlyout>
-                        <MenuFlyoutItem Text="Back to gallery (Esc)" Click="BackToGallery_Click">
-                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
-                        </MenuFlyoutItem>
-                        <MenuFlyoutSeparator />
-                        <MenuFlyoutItem Text="Close gallery" Click="CloseGallery_Click">
-                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8BB;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
-                        </MenuFlyoutItem>
-                    </MenuFlyout>
-                </AppBarButton.Flyout>
-            </AppBarButton>
-            <AppBarSeparator x:Name="ViewerSep1" Visibility="Collapsed" />
-            <AppBarButton x:Name="PrevButton" Label="Previous" Icon="Previous" Click="Prev_Click" Visibility="Collapsed" />
-            <AppBarButton x:Name="NextButton" Label="Next" Icon="Next" Click="Next_Click" Visibility="Collapsed" />
-            <AppBarButton x:Name="ZoomInButton" Label="Zoom in" Icon="ZoomIn" Click="ZoomIn_Click" Visibility="Collapsed" />
-            <AppBarButton x:Name="ZoomOutButton" Label="Zoom out" Icon="ZoomOut" Click="ZoomOut_Click" Visibility="Collapsed" />
-            <AppBarButton x:Name="FitButton" Label="Fit" Icon="FullScreen" Click="Fit_Click" Visibility="Collapsed" />
-            <AppBarButton x:Name="RotateButton" Label="Rotate" Icon="Rotate" Click="Rotate_Click" Visibility="Collapsed" />
-            <AppBarButton x:Name="FavoriteButton" Label="Favorite" Icon="OutlineStar" Click="Favorite_Click" Visibility="Collapsed" />
-
-            <!-- ===== Eye toggle: the headline feature ===== -->
-            <AppBarButton x:Name="EyeButton" Label="Hide" Click="Eye_Click" Visibility="Collapsed"
-                          ToolTipService.ToolTip="Hide / un-hide this photo (H)">
-                <AppBarButton.Icon>
-                    <FontIcon x:Name="EyeIcon" Glyph="&#xE890;" FontFamily="Segoe MDL2 Assets" />
-                </AppBarButton.Icon>
-                <AppBarButton.Flyout>
-                    <MenuFlyout>
-                        <MenuFlyoutItem Text="Obscure in view (H)" Click="EyeObscure_Click">
-                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xED1A;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
-                        </MenuFlyoutItem>
-                        <MenuFlyoutItem Text="Hide permanently (move to Hidden album)" Click="EyeHidePermanent_Click">
-                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE890;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
-                        </MenuFlyoutItem>
-                    </MenuFlyout>
-                </AppBarButton.Flyout>
-            </AppBarButton>
-
-            <AppBarButton x:Name="SlideshowButton" Label="Slideshow" Click="Slideshow_Click"
-                          ToolTipService.ToolTip="Start slideshow (F5)">
-                <AppBarButton.Icon><FontIcon Glyph="&#xE786;" FontFamily="Segoe MDL2 Assets" /></AppBarButton.Icon>
-            </AppBarButton>
-
-            <CommandBar.SecondaryCommands>
-                <AppBarButton x:Name="CloseGalleryButton" Label="Close gallery" Click="CloseGallery_Click">
-                    <AppBarButton.Icon><FontIcon Glyph="&#xE8BB;" FontFamily="Segoe MDL2 Assets" /></AppBarButton.Icon>
-                </AppBarButton>
-                <AppBarToggleButton x:Name="HiddenAlbumButton" Label="Show Hidden album" Click="HiddenAlbum_Click">
-                    <AppBarToggleButton.Icon><FontIcon Glyph="&#xE890;" FontFamily="Segoe MDL2 Assets" /></AppBarToggleButton.Icon>
-                </AppBarToggleButton>
-                <AppBarToggleButton x:Name="FavoritesFilterButton" Label="Favorites only" Click="FavoritesFilter_Click">
-                    <AppBarToggleButton.Icon><FontIcon Glyph="&#xE735;" FontFamily="Segoe MDL2 Assets" /></AppBarToggleButton.Icon>
-                </AppBarToggleButton>
-                <AppBarButton x:Name="InfoButton" Label="Photo info" Click="Info_Click">
-                    <AppBarButton.Icon><FontIcon Glyph="&#xE946;" FontFamily="Segoe MDL2 Assets" /></AppBarButton.Icon>
-                </AppBarButton>
-                <AppBarButton x:Name="RevealButton" Label="Reveal in Explorer" Click="Reveal_Click">
-                    <AppBarButton.Icon><FontIcon Glyph="&#xEC50;" FontFamily="Segoe MDL2 Assets" /></AppBarButton.Icon>
-                </AppBarButton>
-                <AppBarButton x:Name="DeleteButton" Label="Delete" Click="Delete_Click">
-                    <AppBarButton.Icon><FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" /></AppBarButton.Icon>
-                </AppBarButton>
-                <AppBarButton x:Name="FullScreenButton" Label="Full screen (F11)" Click="FullScreen_Click">
-                    <AppBarButton.Icon><FontIcon Glyph="&#xE740;" FontFamily="Segoe MDL2 Assets" /></AppBarButton.Icon>
-                </AppBarButton>
-            </CommandBar.SecondaryCommands>
-        </CommandBar>
-
-        <!-- ===================== Content ===================== -->
-        <Grid Grid.Row="1">
-
-            <!-- Gallery -->
-            <Grid x:Name="GalleryView">
-                <GridView x:Name="PhotoGrid"
-                          Padding="12"
-                          SelectionMode="None"
-                          IsItemClickEnabled="True"
-                          ItemClick="PhotoGrid_ItemClick"
-                          ContainerContentChanging="PhotoGrid_ContainerContentChanging">
-                    <GridView.ItemTemplate>
-                        <DataTemplate>
-                            <Grid Width="200" Height="200" Margin="4"
-                                  CornerRadius="6" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
-                                <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
-                                <Border Background="#88000000" VerticalAlignment="Bottom" Padding="6,3">
-                                    <TextBlock Text="{Binding FileName}" FontSize="11"
-                                               TextTrimming="CharacterEllipsis" Foreground="White" />
-                                </Border>
-                                <FontIcon Glyph="&#xE735;" FontFamily="Segoe MDL2 Assets"
-                                          Foreground="Gold" FontSize="16"
-                                          HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
-                                          Visibility="{Binding FavoriteVisibility}" />
-                                <Border Background="#AA000000" CornerRadius="6"
-                                        Visibility="{Binding HiddenVisibility}">
-                                    <FontIcon Glyph="&#xED1A;" FontFamily="Segoe MDL2 Assets"
-                                              Foreground="White" FontSize="28"
-                                              HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                </Border>
-                            </Grid>
-                        </DataTemplate>
-                    </GridView.ItemTemplate>
-                </GridView>
-
-                <StackPanel x:Name="EmptyState" Visibility="Visible"
-                            HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
-                    <FontIcon Glyph="&#xEB9F;" FontFamily="Segoe MDL2 Assets" FontSize="48" Opacity="0.5" />
-                    <TextBlock Text="Open a file or folder — or drag photos here" Opacity="0.7" FontSize="16" HorizontalAlignment="Center" />
-                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
-                        <Button Content="Open file" Click="OpenFile_Click" />
-                        <Button Content="Open folder" Click="OpenFolder_Click" />
-                    </StackPanel>
+            <!-- Floating gallery toolbar -->
+            <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,48,16,0"
+                    CornerRadius="24" Padding="4" Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel Orientation="Horizontal" Spacing="2">
+                    <Button x:Name="OpenButton" Style="{StaticResource GlyphButton}"
+                            ToolTipService.ToolTip="Open">
+                        <FontIcon Glyph="&#xE8E5;" FontFamily="Segoe MDL2 Assets" />
+                        <Button.Flyout>
+                            <MenuFlyout>
+                                <MenuFlyoutItem Text="Open file…" Click="OpenFile_Click">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Text="Open folder…" Click="OpenFolder_Click">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE838;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
+                    <Button Style="{StaticResource GlyphButton}" Click="Slideshow_Click"
+                            ToolTipService.ToolTip="Slideshow (F5)">
+                        <FontIcon Glyph="&#xE786;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
+                    <Button Style="{StaticResource GlyphButton}" Click="Settings_Click"
+                            ToolTipService.ToolTip="Settings">
+                        <FontIcon Glyph="&#xE713;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
+                    <Button Style="{StaticResource GlyphButton}" ToolTipService.ToolTip="More">
+                        <FontIcon Glyph="&#xE712;" FontFamily="Segoe MDL2 Assets" />
+                        <Button.Flyout>
+                            <MenuFlyout>
+                                <ToggleMenuFlyoutItem x:Name="HiddenAlbumButton" Text="Show Hidden album" Click="HiddenAlbum_Click" />
+                                <ToggleMenuFlyoutItem x:Name="FavoritesFilterButton" Text="Favorites only" Click="FavoritesFilter_Click" />
+                                <MenuFlyoutSeparator />
+                                <MenuFlyoutItem Text="Close gallery" Click="CloseGallery_Click">
+                                    <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8BB;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
                 </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- ===================== Viewer ===================== -->
+        <Grid x:Name="ViewerView" Visibility="Collapsed" Background="#FF101013"
+              PointerMoved="ViewerView_PointerMoved">
+
+            <Grid x:Name="ImageHost" Background="Transparent"
+                  SizeChanged="ImageHost_SizeChanged"
+                  PointerWheelChanged="ImageHost_PointerWheelChanged"
+                  PointerPressed="ImageHost_PointerPressed"
+                  PointerMoved="ImageHost_PointerMoved"
+                  PointerReleased="ImageHost_PointerReleased"
+                  DoubleTapped="ImageHost_DoubleTapped">
+                <Image x:Name="ViewerImage" Stretch="Uniform"
+                       HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                       RenderTransformOrigin="0.5,0.5"
+                       ImageOpened="ViewerImage_ImageOpened">
+                    <Image.RenderTransform>
+                        <CompositeTransform x:Name="ViewerTransform" />
+                    </Image.RenderTransform>
+                </Image>
             </Grid>
 
-            <!-- Viewer -->
-            <Grid x:Name="ViewerView" Visibility="Collapsed" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
-                <!-- Transform-based image host: the Image fills the host and Uniform stretch
-                     scales the photo up/down to fit; we control zoom/pan/rotate via the transform. -->
-                <Grid x:Name="ImageHost" Background="Transparent"
-                      SizeChanged="ImageHost_SizeChanged"
-                      PointerWheelChanged="ImageHost_PointerWheelChanged"
-                      PointerPressed="ImageHost_PointerPressed"
-                      PointerMoved="ImageHost_PointerMoved"
-                      PointerReleased="ImageHost_PointerReleased"
-                      DoubleTapped="ImageHost_DoubleTapped">
-                    <Image x:Name="ViewerImage" Stretch="Uniform"
-                           HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                           RenderTransformOrigin="0,0">
-                        <Image.RenderTransform>
-                            <CompositeTransform x:Name="ViewerTransform" />
-                        </Image.RenderTransform>
-                    </Image>
-                </Grid>
+            <!-- Eye obscure: plain black curtain -->
+            <Grid x:Name="ObscureOverlay" Visibility="Collapsed" Background="Black" />
 
-                <!-- Eye obscure: plain black curtain over the current photo -->
-                <Grid x:Name="ObscureOverlay" Visibility="Collapsed" Background="Black" />
+            <!-- Floating chrome that auto-hides -->
+            <Grid x:Name="ViewerChrome">
 
-                <!-- Edge nav buttons -->
-                <Button Click="Prev_Click" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="8"
-                        Width="48" Height="48" CornerRadius="24" Background="#66000000">
-                    <FontIcon Glyph="&#xE76B;" FontFamily="Segoe MDL2 Assets" Foreground="White" />
-                </Button>
-                <Button Click="Next_Click" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8"
-                        Width="48" Height="48" CornerRadius="24" Background="#66000000">
-                    <FontIcon Glyph="&#xE76C;" FontFamily="Segoe MDL2 Assets" Foreground="White" />
-                </Button>
+                <!-- Top-left: back -->
+                <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,48,0,0"
+                        CornerRadius="22" Padding="4" Background="{StaticResource PillBrush}">
+                    <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="BackToGallery_Click"
+                            ToolTipService.ToolTip="Back to gallery (Esc)">
+                        <FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
+                </Border>
 
-                <!-- Metadata panel -->
-                <Border x:Name="InfoPanel" Visibility="Collapsed"
-                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="12"
-                        Width="320" Padding="16" CornerRadius="8"
-                        Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="Photo info" FontWeight="SemiBold" FontSize="16" />
-                        <TextBlock x:Name="InfoText" TextWrapping="Wrap" FontSize="13" Opacity="0.9" />
+                <!-- Top-right: actions -->
+                <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,48,16,0"
+                        CornerRadius="24" Padding="4" Background="{StaticResource PillBrush}">
+                    <StackPanel Orientation="Horizontal" Spacing="2">
+                        <Button x:Name="FavoriteButton" Style="{StaticResource GlyphButton}" Foreground="White"
+                                Click="Favorite_Click" ToolTipService.ToolTip="Favorite">
+                            <FontIcon x:Name="FavoriteIcon" Glyph="&#xE734;" FontFamily="Segoe MDL2 Assets" />
+                        </Button>
+                        <Button x:Name="EyeButton" Style="{StaticResource GlyphButton}" Foreground="White"
+                                Click="Eye_Click" ToolTipService.ToolTip="Hide / reveal (H)">
+                            <FontIcon x:Name="EyeIcon" Glyph="&#xE890;" FontFamily="Segoe MDL2 Assets" />
+                            <Button.Flyout>
+                                <MenuFlyout Placement="Bottom">
+                                    <MenuFlyoutItem Text="Hide / reveal in view (H)" Click="EyeObscure_Click">
+                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xED1A;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                    <MenuFlyoutItem Text="Hide permanently (Hidden album)" Click="EyeHidePermanent_Click">
+                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE890;" FontFamily="Segoe MDL2 Assets" /></MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                </MenuFlyout>
+                            </Button.Flyout>
+                        </Button>
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Rotate_Click"
+                                ToolTipService.ToolTip="Rotate (R)">
+                            <FontIcon Glyph="&#xE7AD;" FontFamily="Segoe MDL2 Assets" />
+                        </Button>
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Info_Click"
+                                ToolTipService.ToolTip="Photo info">
+                            <FontIcon Glyph="&#xE946;" FontFamily="Segoe MDL2 Assets" />
+                        </Button>
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Reveal_Click"
+                                ToolTipService.ToolTip="Reveal in Explorer">
+                            <FontIcon Glyph="&#xEC50;" FontFamily="Segoe MDL2 Assets" />
+                        </Button>
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Delete_Click"
+                                ToolTipService.ToolTip="Delete">
+                            <FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" />
+                        </Button>
+                    </StackPanel>
+                </Border>
+
+                <!-- Bottom-centre: navigation & zoom -->
+                <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,28"
+                        CornerRadius="26" Padding="6" Background="{StaticResource PillBrush}">
+                    <StackPanel Orientation="Horizontal" Spacing="2">
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Prev_Click"
+                                ToolTipService.ToolTip="Previous">
+                            <FontIcon Glyph="&#xE76B;" FontFamily="Segoe MDL2 Assets" />
+                        </Button>
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="ZoomOut_Click"
+                                ToolTipService.ToolTip="Zoom out">
+                            <FontIcon Glyph="&#xE71F;" FontFamily="Segoe MDL2 Assets" />
+                        </Button>
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Fit_Click"
+                                ToolTipService.ToolTip="Fit (0)">
+                            <FontIcon Glyph="&#xE9A6;" FontFamily="Segoe MDL2 Assets" />
+                        </Button>
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="ZoomIn_Click"
+                                ToolTipService.ToolTip="Zoom in">
+                            <FontIcon Glyph="&#xE8A3;" FontFamily="Segoe MDL2 Assets" />
+                        </Button>
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Next_Click"
+                                ToolTipService.ToolTip="Next">
+                            <FontIcon Glyph="&#xE76C;" FontFamily="Segoe MDL2 Assets" />
+                        </Button>
+                        <Border Width="1" Margin="6,8" Background="#33FFFFFF" />
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Slideshow_Click"
+                                ToolTipService.ToolTip="Slideshow (F5)">
+                            <FontIcon Glyph="&#xE786;" FontFamily="Segoe MDL2 Assets" />
+                        </Button>
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="FullScreen_Click"
+                                ToolTipService.ToolTip="Full screen (F11)">
+                            <FontIcon Glyph="&#xE740;" FontFamily="Segoe MDL2 Assets" />
+                        </Button>
                     </StackPanel>
                 </Border>
             </Grid>
+
+            <!-- Metadata panel -->
+            <Border x:Name="InfoPanel" Visibility="Collapsed"
+                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="16,104,16,0"
+                    Width="330" Padding="18" CornerRadius="12"
+                    Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Photo info" FontWeight="SemiBold" FontSize="16" />
+                    <TextBlock x:Name="InfoText" TextWrapping="Wrap" FontSize="13" Opacity="0.9" />
+                </StackPanel>
+            </Border>
         </Grid>
 
-        <!-- ===================== Status bar ===================== -->
-        <Border Grid.Row="2" Padding="12,4" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-            <TextBlock x:Name="StatusText" Text="Ready" FontSize="12" Opacity="0.7" />
-        </Border>
+        <!-- ===================== Settings overlay ===================== -->
+        <Grid x:Name="SettingsOverlay" Visibility="Collapsed" Background="#88000000"
+              Tapped="SettingsScrim_Tapped">
+            <Border Width="420" VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="{ThemeResource LayerFillColorAltBrush}" CornerRadius="14"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                    Padding="24" Tapped="SettingsCard_Tapped">
+                <StackPanel Spacing="18">
+                    <Grid>
+                        <TextBlock Text="Settings" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button Style="{StaticResource GlyphButton}" Click="SettingsClose_Click"
+                                HorizontalAlignment="Right" ToolTipService.ToolTip="Close">
+                            <FontIcon Glyph="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
+                        </Button>
+                    </Grid>
+
+                    <TextBlock Text="Slideshow" FontWeight="SemiBold" Opacity="0.8" />
+
+                    <Grid>
+                        <TextBlock Text="Seconds per photo" VerticalAlignment="Center" />
+                        <TextBlock x:Name="SlideshowSecondsValue" Text="4s" HorizontalAlignment="Right" VerticalAlignment="Center" Opacity="0.8" />
+                    </Grid>
+                    <Slider x:Name="SlideshowSecondsSlider" Minimum="2" Maximum="30" StepFrequency="1"
+                            ValueChanged="SlideshowSecondsSlider_ValueChanged" />
+
+                    <Grid>
+                        <TextBlock Text="Shuffle" VerticalAlignment="Center" />
+                        <ToggleSwitch x:Name="ShuffleSwitch" HorizontalAlignment="Right" Toggled="ShuffleSwitch_Toggled" />
+                    </Grid>
+                    <Grid>
+                        <TextBlock Text="Loop" VerticalAlignment="Center" />
+                        <ToggleSwitch x:Name="LoopSwitch" HorizontalAlignment="Right" Toggled="LoopSwitch_Toggled" />
+                    </Grid>
+                    <Grid>
+                        <TextBlock Text="Transition" VerticalAlignment="Center" />
+                        <ComboBox x:Name="TransitionCombo" HorizontalAlignment="Right" MinWidth="160"
+                                  SelectionChanged="TransitionCombo_SelectionChanged">
+                            <ComboBoxItem Content="None" />
+                            <ComboBoxItem Content="Crossfade" />
+                            <ComboBoxItem Content="Ken Burns" />
+                        </ComboBox>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- ===================== Title bar (drag region) ===================== -->
+        <Grid x:Name="AppTitleBar" Height="40" VerticalAlignment="Top" Background="Transparent">
+            <StackPanel Orientation="Horizontal" Spacing="10" Margin="16,0,0,0" VerticalAlignment="Center">
+                <FontIcon Glyph="&#xEB9F;" FontFamily="Segoe MDL2 Assets" FontSize="14" Opacity="0.8" />
+                <TextBlock Text="PhotosPlus" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                <TextBlock x:Name="ModeLabel" Text="" Opacity="0.6" FontSize="13" VerticalAlignment="Center" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Subtle status text -->
+        <TextBlock x:Name="StatusText" Text="Ready" FontSize="12" Opacity="0.55"
+                   HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="16,0,0,8"
+                   IsHitTestVisible="False" />
     </Grid>
 </Window>
