@@ -1,107 +1,114 @@
 # PhotosPlus
 
-A modern, native replacement for the **Windows 11 Photos** app — built with **WinUI 3 / .NET 8** for full Fluent Design integration. PhotosPlus aims for feature parity with Microsoft Photos, plus two headline additions:
+A modern, native alternative to the **Windows 11 Photos** app — built with **WinUI 3 / .NET 8**. PhotosPlus is a fast, local-first photo viewer with a clean Fluent UI, plus two headline additions over stock Photos:
 
-1. **👁 Eye toggle** — a one-click "eye" icon that instantly **hides / un-hides the photo currently in the viewer** (privacy obscure), with an optional persistent **Hidden** album.
-2. **▶ Slideshow** — a full-featured, configurable slideshow mode with transitions, timing, shuffle, and music.
+1. **👁 Eye toggle** — a one-click eye icon (shortcut **H**) that instantly **blacks out the photo in the viewer** for privacy, plus an optional **Hidden album** for photos you want kept out of the gallery.
+2. **▶ Slideshow** — a full-screen, configurable slideshow with adjustable timing, shuffle, loop, and transitions.
+
+> **Status:** working application. The core viewer, gallery, eye toggle, slideshow, settings, and a modern redesigned UI are implemented and building. Editing, video, and shell/default-app integration remain on the roadmap — see **[tasks.md](./tasks.md)**.
 
 ---
 
 ## Why PhotosPlus
 
-Windows Photos is capable but cluttered, increasingly cloud-driven, and slow to open large folders. PhotosPlus is a **fast, local-first, privacy-respecting** viewer and light editor that keeps the parts people use every day and removes the friction.
+Windows Photos is capable but cluttered and increasingly cloud-driven. PhotosPlus is a **fast, local-first, privacy-respecting** viewer:
 
-**Design principles**
-
-- **Local-first** — no account, no forced cloud sync; your library stays on disk.
-- **Fast** — GPU-accelerated rendering, async thumbnail pipeline, instant folder open.
-- **Native** — Win11 Fluent UI, Mica/Acrylic, dark/light theme, proper file associations.
-- **Private** — the eye toggle and Hidden album make it trivial to conceal sensitive images.
+- **Local-first** — no account, no cloud sync; your library stays on disk.
+- **Fast** — GPU-composited viewer, async/virtualized thumbnails.
+- **Native** — Win11 Fluent, Mica backdrop, extended title bar, dark/light theme.
+- **Private** — the eye toggle and Hidden album make it trivial to conceal sensitive images. Hidden state lives in app data; original files are never modified.
 
 ---
 
-## Feature Set
+## Features (implemented)
 
-### Parity with Windows Photos
+**Viewing**
+- Open a **file**, a **folder**, or **drag-and-drop** onto the window (single image → opens in viewer; multiple images → builds a gallery; folder → loads it).
+- Virtualized gallery grid with async thumbnails; favorite (★) and hidden badges.
+- Full-bleed single-image viewer that **scales any photo to fit the window** (up or down), with:
+  - **Mouse-wheel zoom** toward the cursor (no modifier), plus +/- buttons and double-tap.
+  - **Drag to pan** when zoomed in.
+  - **Rotate** (auto re-fits and re-centres so the rotated image stays fully visible).
+  - Fit / next / previous / full screen.
+- Remembers and reopens your last folder.
 
-| Area | Features |
-|------|----------|
-| **Viewing** | Open single image or folder; gallery grid with adjustable thumbnail size; single-image viewer; next/previous navigation; zoom (wheel, pinch, +/-), pan, fit-to-window, 1:1, rotate, flip. |
-| **Formats** | JPEG, PNG, GIF (animated), BMP, TIFF, WEBP, HEIC/HEIF, AVIF, and common RAW (CR2/CR3, NEF, ARW, DNG) via `Windows.Graphics.Imaging` codecs. |
-| **Collections** | Folder browsing, "Recent", "Favorites" (★), and an indexed library across user-chosen folders. |
-| **Editing** | Crop & straighten, rotate/flip, aspect-ratio presets, brightness/contrast/exposure/saturation/warmth, auto-enhance, filters, red-eye, spot fix, markup/draw (ink). Non-destructive with "Save a copy". |
-| **Metadata** | EXIF/IPTC view (camera, lens, date, GPS, dimensions), rename, file info. |
-| **Video** | Play/pause/scrub common video formats; basic trim; frame export. |
-| **Actions** | Print, Share (Win share sheet), Copy, Set as background / lock screen, Delete (with recycle), Open with…, reveal in Explorer. |
-| **Search** | Filename and metadata search; date and folder filters. |
-| **Shell** | Register as a photo-handler so PhotosPlus can be set as the default photo app; jump list / "Open with". |
+**Formats** — JPEG, PNG, GIF, BMP, TIFF, WEBP, HEIC/HEIF, AVIF, and common RAW (CR2/CR3, NEF, ARW, DNG…) decoded via the platform `Windows.Storage` / `BitmapImage` codecs (RAW/HEIC depend on the OS codec being installed).
 
-### ✨ Added in PhotosPlus
+**Organize & act** — Favorites (★) with a "Favorites only" filter; per-photo metadata panel (dimensions, size, dates, camera); delete to Recycle Bin; reveal in Explorer.
+
+**Settings** — a Settings panel to configure the slideshow (seconds per photo, shuffle, loop, transition). Persisted across sessions.
+
+### ✨ The two headline features
 
 #### 1. Eye toggle — hide / un-hide the current photo
-
-A persistent **eye icon** in the viewer command bar (and keyboard shortcut **H**).
-
-- **Obscure mode (default):** clicking the eye instantly replaces the on-screen image with a privacy overlay (blur + 👁‍🗨 "hidden" placeholder). The image is *not* deleted or moved — it is concealed in the current view so a glance over your shoulder reveals nothing. Click again (or press **H**) to reveal.
-- **Hidden album (persistent):** holding the eye / choosing "Hide permanently" flags the image so it is excluded from the gallery and search, and collected into a **Hidden** album. The Hidden album is itself gated behind the eye (and optionally Windows Hello).
-- **Stateful icon:** the glyph switches between `` (eye) and `` (eye-off) to reflect current state; a subtle badge shows hidden count.
-- Hidden state is stored in app data (a sidecar index), never by altering the original files.
+- **Black-out (default):** the eye icon (or **H**) instantly covers the current photo with a solid black curtain — a glance over your shoulder reveals nothing. Press again to reveal. The image is never moved or deleted.
+- **Hidden album (persistent):** the eye button's flyout → *Hide permanently* flags the photo so it's excluded from the gallery and slideshows, and collected into a **Hidden album** (toggle *Show Hidden album* in the gallery's More menu).
+- Hidden/favorite state is stored as JSON in `%LocalAppData%\PhotosPlus`, never by altering originals.
 
 #### 2. Slideshow
+- Launches from the toolbar or **F5**; full-screen on the active monitor.
+- **Per-slide duration** (2–30 s, set in Settings), **shuffle**, **loop**.
+- **Transitions:** none, crossfade, **Ken Burns** (slow zoom/pan).
+- Auto-hiding controls; caption (filename + position).
+- Controls: play/pause (**Space**), prev/next (**←/→**), speed (**↑/↓**), exit (**Esc**).
+- **Hidden photos are skipped**, so the eye toggle and slideshow cooperate.
 
-Launch from the command bar (**F5**) or right-click → *Slideshow*.
+---
 
-- Plays the current folder/album/selection in order or **shuffled**.
-- **Per-slide duration** (2–30 s) and **loop** toggle.
-- **Transitions:** none, crossfade, slide, Ken Burns (slow zoom/pan).
-- **Controls:** play/pause (Space), next/prev (←/→), speed, exit (Esc); auto-hiding overlay; optional caption (filename/date).
-- **Full-screen** on the active monitor; multi-monitor aware.
-- Optional **background music** from a chosen audio file/playlist.
-- **Hidden images are skipped** in slideshows, so the eye toggle and slideshow cooperate.
+## Modern UI
+
+- **Mica** backdrop and **extended title bar** for a seamless Win11 look — no chunky command bar.
+- **Floating, auto-hiding controls:** a translucent pill toolbar in the gallery; back / actions / nav-zoom pills in the viewer that fade out after a few seconds of inactivity.
+- Rounded thumbnails, a proper empty-state, dark/light aware.
 
 ---
 
 ## Tech Stack
 
-- **UI:** WinUI 3 (Windows App SDK 1.5+), Fluent Design, Mica backdrop.
+- **UI:** WinUI 3 (Windows App SDK **1.6**), Fluent Design, Mica backdrop. Unpackaged, self-contained desktop app.
 - **Runtime:** .NET 8, C# 12.
-- **Imaging:** `Windows.Graphics.Imaging` (BitmapDecoder/Encoder), Win2D / Composition for GPU rendering, async thumbnail cache.
-- **Architecture:** MVVM (CommunityToolkit.Mvvm), dependency injection (`Microsoft.Extensions.DependencyInjection`).
-- **Storage:** local SQLite (or LiteDB) index for library, favorites, hidden flags, and settings.
-- **Packaging:** MSIX; declares photo file-type associations so it can be set as the default app.
+- **Imaging:** `Windows.Storage` thumbnails + `BitmapImage`; GPU-composited transform-based viewer (zoom/pan/rotate via `CompositeTransform`).
+- **MVVM:** CommunityToolkit.Mvvm (observable `PhotoItem`).
+- **Storage:** JSON app-state (`%LocalAppData%\PhotosPlus\state.json`) for hidden/favorite flags and slideshow settings.
+
+### Project layout (current)
 
 ```
 PhotosPlus/
+├─ global.json                 # pins .NET SDK 8.0.300
 ├─ src/
-│  ├─ PhotosPlus.App/          # WinUI 3 app head (App.xaml, MainWindow)
-│  ├─ PhotosPlus.Core/         # models, services (library, hidden, slideshow, codecs)
-│  └─ PhotosPlus.Tests/        # unit tests
-├─ assets/                     # icons, sample images
+│  └─ PhotosPlus.App/          # WinUI 3 app (single project)
+│     ├─ App.xaml(.cs)         # app + shared resources (GlyphButton style, PillBrush)
+│     ├─ MainWindow.xaml(.cs)  # gallery + viewer + settings + title bar
+│     ├─ SlideshowWindow.xaml(.cs)
+│     ├─ Models/PhotoItem.cs
+│     └─ Services/             # AppState (persistence), PhotoLibrary
 ├─ README.md
 └─ tasks.md
 ```
 
 ---
 
-## Getting Started (planned)
-
-> The repository currently contains design docs (`README.md`, `tasks.md`). The steps below describe the intended developer workflow once scaffolding lands — see `tasks.md` for current status.
+## Getting Started
 
 **Prerequisites**
-
-- Windows 11 (22H2 or later)
-- Visual Studio 2022 with the **Windows App SDK / WinUI** workload, or `winget install Microsoft.DotNet.SDK.8`
-- Windows App SDK 1.5+ runtime
+- Windows 11
+- .NET SDK 8 (`winget install Microsoft.DotNet.SDK.8`) — repo pins `8.0.300` via `global.json`.
 
 **Build & run**
 
 ```powershell
-git clone <repo> PhotosPlus
-cd PhotosPlus
-dotnet restore
-dotnet build
+dotnet build src/PhotosPlus.App
+# then run the produced exe, or:
 dotnet run --project src/PhotosPlus.App
 ```
+
+> ⚠️ Close any running PhotosPlus window before rebuilding — Windows locks the `.exe` while it runs (otherwise the build fails with an `MSB3021` file-lock error).
+
+**Build notes (already configured in the `.csproj`):**
+- `<WindowsSdkPackageVersion>10.0.19041.38</WindowsSdkPackageVersion>` — Windows App SDK 1.6 requires SDK.NET.Ref ≥ `.38`; the .NET 8.0.300 SDK ships `.31`.
+- `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` — the CsWinRT AOT source generator emits unsafe code for generic WinRT calls (e.g. drag-drop's `GetStorageItemsAsync`).
+- Shared XAML styles live in **`App.xaml`**, not `Window.Resources` — the WinUI 1.6 markup compiler crashes on `Style` defined in `Window.Resources`.
 
 ---
 
@@ -110,14 +117,15 @@ dotnet run --project src/PhotosPlus.App
 | Key | Action |
 |-----|--------|
 | `←` / `→` | Previous / next image |
+| Mouse wheel | Zoom in / out (toward cursor) |
 | `+` / `-` | Zoom in / out |
 | `0` | Fit to window |
-| `1` | Actual size (1:1) |
-| `R` | Rotate 90° |
-| `H` | **Hide / un-hide current photo (eye toggle)** |
+| `R` | Rotate 90° (auto-fit) |
+| `H` | **Black out / reveal current photo (eye toggle)** |
 | `F5` | **Start slideshow** |
 | `Space` | Slideshow play / pause |
-| `Esc` | Exit slideshow / full screen |
+| `←` `→` `↑` `↓` | (in slideshow) prev / next / speed |
+| `Esc` | Close settings · exit slideshow / full screen · back to gallery |
 | `F` / `F11` | Toggle full screen |
 | `Del` | Delete (to Recycle Bin) |
 
@@ -125,8 +133,8 @@ dotnet run --project src/PhotosPlus.App
 
 ## Roadmap
 
-See **[tasks.md](./tasks.md)** for the full, phased task breakdown and current progress.
+See **[tasks.md](./tasks.md)** for the full phased breakdown. Not yet implemented: image editing (crop/adjust/filters/markup), video playback, set-as-default-photo-app / MSIX packaging, Windows Hello gate on the Hidden album, slideshow background music, and splitting into `Core`/`Tests` projects.
 
 ## License
 
-TBD (recommend MIT for an open-source viewer).
+TBD (MIT recommended).

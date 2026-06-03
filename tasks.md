@@ -8,50 +8,65 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## ✅ Build status (current)
 
-**The app compiles and links cleanly** (`dotnet build`, 0 errors) and runs as an unpackaged WinUI 3 desktop app. A working vertical slice of Phases 0–4 is implemented:
+**The app compiles cleanly** (`dotnet build`, 0 warnings / 0 errors) and runs as an unpackaged WinUI 3 desktop app with a modern, redesigned UI. Implemented and working:
 
-- Open **file**, **folder**, or **drag-and-drop** (single image / multiple images / folder) → virtualized gallery grid with async thumbnails
-- Single-image viewer: zoom / pan / fit / 1:1 / rotate / next-prev / full screen
-- **Eye toggle** (`H` / eye icon): covers the current photo with a solid black curtain + permanent hide → gated **Hidden album**
-- **Slideshow** (`F5`): full screen, crossfade / Ken Burns, timing, shuffle, auto-hiding controls, skips hidden photos
-- Favorites (★), favorites filter, metadata panel, delete-to-Recycle-Bin, reveal in Explorer
-- JSON persistence of hidden/favorite/settings in `%LocalAppData%\PhotosPlus`
+**Open & gallery**
+- Open **file**, **folder**, or **drag-and-drop** (single image / multiple images / folder) → virtualized gallery grid with async thumbnails, favorite ★ + hidden badges.
+- Reopens last folder on launch; **Close gallery** clears it.
 
-**Build notes (csproj):**
-- WindowsAppSDK 1.6 requires `Microsoft.Windows.SDK.NET.Ref ≥ 10.0.19041.38`; the installed .NET 8.0.300 SDK ships `.31`, so pinned `<WindowsSdkPackageVersion>10.0.19041.38</WindowsSdkPackageVersion>`.
-- `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` — the CsWinRT AOT source generator emits unsafe code for generic WinRT instantiations (e.g. drag-drop's `GetStorageItemsAsync`).
+**Viewer**
+- **Fit-to-screen by default** — any photo scaled up/down to be fully visible; re-fits on resize.
+- **Mouse-wheel zoom toward the cursor** (transform-based viewer — no ScrollViewer fighting the wheel), plus +/- buttons, double-tap, and **drag-to-pan** when zoomed.
+- **Rotate** that auto-re-fits and re-centres (90°/270° scaled down so the image stays fully visible).
+- Next / prev / full screen.
 
-Still TODO from the roadmap below: real editing (Phase 5), shell/default-app registration (Phase 6), video (Phase 7), MSIX packaging & DI host (Phases 0/8), and splitting into `.Core`/`.Tests` projects.
+**Headline features**
+- **Eye toggle** (`H` / eye icon): covers the current photo with a **solid black** curtain; flyout → permanent hide into a gated **Hidden album**.
+- **Slideshow** (`F5`): full screen, crossfade / Ken Burns, timing, shuffle, loop, auto-hiding controls, caption, skips hidden photos.
+
+**Settings & UI**
+- **Settings panel** — slideshow seconds (2–30), shuffle, loop, transition; persisted.
+- **Modern UI** — Mica backdrop, extended title bar (no command bar), floating auto-hiding control pills, rounded thumbnails, hero empty-state.
+
+**Other** — favorites + filter, metadata panel, delete-to-Recycle-Bin, reveal in Explorer; JSON persistence in `%LocalAppData%\PhotosPlus`.
+
+**Build notes (csproj / project):**
+- `<WindowsSdkPackageVersion>10.0.19041.38</WindowsSdkPackageVersion>` — WindowsAppSDK 1.6 needs SDK.NET.Ref ≥ `.38`; .NET 8.0.300 ships `.31`.
+- `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` — CsWinRT AOT generator emits unsafe code for generic WinRT calls (drag-drop's `GetStorageItemsAsync`).
+- Shared XAML styles live in **`App.xaml`**, not `Window.Resources` — the WinUI 1.6 markup compiler hard-crashes on a `Style` in `Window.Resources`.
+- Close the running app before rebuilding (the `.exe` is locked while running → `MSB3021`).
+
+Still TODO from the roadmap below: editing (Phase 5), shell/default-app registration (Phase 6), video (Phase 7), MSIX packaging & DI host (Phases 0/8), `.Core`/`.Tests` split, and automated tests.
 
 ---
 
 ## Phase 0 — Project setup
 
-- [ ] Create WinUI 3 (.NET 8) solution: `PhotosPlus.App`, `PhotosPlus.Core`, `PhotosPlus.Tests`.
-- [ ] Add packages: `CommunityToolkit.Mvvm`, `Microsoft.Extensions.DependencyInjection`, `Microsoft.Graphics.Win2D`, SQLite/LiteDB.
-- [ ] Configure MVVM + DI host; app theme (Mica, dark/light).
+- [~] WinUI 3 (.NET 8) app project (single `PhotosPlus.App`; `.Core`/`.Tests` split still TODO).
+- [~] Packages: `CommunityToolkit.Mvvm` added (DI host / Win2D / SQLite not used — JSON state instead).
+- [~] MVVM + app theme: observable models + **Mica / dark-light** done; no DI host.
 - [ ] Set up CI (build + test) and linting/formatting (`dotnet format`).
 - [ ] MSIX packaging project with photo file-type associations declared.
 
 ## Phase 1 — Core viewer (parity)
 
-- [ ] Image decode service over `Windows.Graphics.Imaging` (JPEG, PNG, GIF, BMP, TIFF, WEBP, HEIC, AVIF, RAW).
-- [ ] GPU-accelerated viewer control: zoom (wheel/pinch/+/-), pan, fit-to-window, 1:1.
-- [ ] Rotate / flip.
-- [ ] Animated GIF playback.
-- [ ] Next/previous navigation within a folder; preload neighbors.
-- [ ] Open single file (file association + "Open with") and open folder.
-- [ ] Full-screen mode (F11/F).
+- [x] Image decode (JPEG, PNG, GIF, BMP, TIFF, WEBP, HEIC, AVIF, RAW via platform codecs).
+- [x] Viewer control: zoom (wheel/+/-, double-tap), pan, fit-to-window. _(1:1 via zoom)_
+- [x] Rotate (auto-fit). _(flip: TODO)_
+- [x] Animated GIF playback.
+- [x] Next/previous navigation within a folder. _(neighbor preload: TODO)_
+- [x] Open single file and open folder (+ drag-and-drop). _(file association / "Open with": TODO)_
+- [x] Full-screen mode (F11/F).
 
 ## Phase 2 — Library & collections (parity)
 
-- [ ] Folder picker + persisted library locations.
-- [ ] Async thumbnail pipeline + on-disk thumbnail cache.
-- [ ] Gallery grid view with adjustable thumbnail size; virtualization for large folders.
-- [ ] Favorites (★) stored in local index.
+- [x] Folder/file picker + persisted last folder.
+- [~] Async thumbnail pipeline (virtualized, on-realization). _(on-disk cache: TODO)_
+- [x] Gallery grid with virtualization for large folders. _(adjustable thumbnail size: TODO)_
+- [x] Favorites (★) stored in local state + "Favorites only" filter.
 - [ ] "Recent" and "All photos" virtual collections.
 - [ ] Search by filename; filters by date and folder.
-- [ ] EXIF/IPTC metadata panel (camera, lens, date, GPS, dimensions).
+- [x] Metadata panel (dimensions, size, dates, camera).
 
 ## Phase 3 — ⭐ Eye toggle: hide / un-hide current photo
 
@@ -103,11 +118,12 @@ Still TODO from the roadmap below: real editing (Phase 5), shell/default-app reg
 
 ## Phase 8 — Polish & release
 
-- [ ] Settings page (theme, default folder, slideshow defaults, Hello gate, eye behavior).
-- [ ] Keyboard shortcut map + accessibility (narrator, high contrast, keyboard nav).
-- [ ] Performance pass: cold-open time, memory on large folders.
+- [~] Settings panel: **slideshow seconds / shuffle / loop / transition** done. _(theme, default folder, Hello gate, eye behavior: TODO)_
+- [x] Modern UI redesign: Mica, extended title bar, floating auto-hiding controls, removed command bar.
+- [~] Keyboard shortcuts implemented. _(full accessibility pass: narrator/high-contrast/keyboard nav TODO)_
+- [ ] Performance pass: cold-open time, memory on large folders, neighbor preload.
 - [ ] Localization scaffolding.
-- [ ] App icon, store assets, README polish.
+- [ ] App icon, store assets.
 - [ ] Package & sign MSIX; release notes.
 
 ---
@@ -120,9 +136,10 @@ Still TODO from the roadmap below: real editing (Phase 5), shell/default-app reg
 4. **M4 – Editor + Actions:** Phases 5–6.
 5. **M5 – 1.0:** Phases 7–8.
 
-## Open questions
+## Open questions / decisions
 
-- "Hide" default behavior — obscure-only, or always offer permanent-hide? (Current plan: obscure by default, permanent via menu.)
-- RAW codec coverage — rely on Microsoft Raw Image Extension, or bundle LibRaw?
-- Storage engine — SQLite vs LiteDB for the local index.
+- ~~"Hide" default behavior~~ → **Resolved:** eye = solid black-out by default; permanent hide via flyout.
+- ~~Storage engine~~ → **Resolved:** JSON app-state for now (SQLite/LiteDB only if the library grows large).
+- RAW/HEIC codec coverage — currently relies on the OS-installed codec; bundle/guide install of Microsoft Raw/HEIF extensions?
+- Editing scope for Phase 5 — minimal (crop/rotate/adjust) vs full parity (filters/markup/red-eye)?
 - License choice (README suggests MIT).
