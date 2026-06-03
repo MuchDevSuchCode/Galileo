@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PhotosPlus.App")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f4be4805187fc48c27b0d5c97d0a936b6f6fde80")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6ff1efbbdb5abeaac3230a1b6874073b131959f1")]
 [assembly: System.Reflection.AssemblyProductAttribute("PhotosPlus.App")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PhotosPlus.App")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

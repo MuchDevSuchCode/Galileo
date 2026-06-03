@@ -74,10 +74,7 @@ public sealed partial class MainWindow : Window
             ViewerChrome.IsHitTestVisible = false;
         };
 
-        if (!string.IsNullOrEmpty(_state.LastFolder) && System.IO.Directory.Exists(_state.LastFolder))
-        {
-            _ = LoadFolderAsync(_state.LastFolder!);
-        }
+        // Cold start always shows the welcome / picker screen — no auto-reload of the last folder.
     }
 
     // 'new' intentionally hides the (unused) Window.Current; this is the currently viewed photo.

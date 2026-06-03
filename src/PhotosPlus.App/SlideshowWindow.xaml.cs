@@ -58,16 +58,17 @@ public sealed partial class SlideshowWindow : Window
         _hideControlsTimer.Tick += (_, _) => { _hideControlsTimer.Stop(); SetChromeVisible(false); };
 
         UpdateSpeedText();
-        Activated += OnActivated;
+        Root.Loaded += OnRootLoaded;
     }
 
     private bool _started;
-    private void OnActivated(object sender, WindowActivatedEventArgs e)
+    private async void OnRootLoaded(object sender, RoutedEventArgs e)
     {
         if (_started) return;
         _started = true;
-        Activated -= OnActivated; // one-shot: only run on first activation
-        _ = ShowAtAsync(_pos, animate: false);
+        Root.Loaded -= OnRootLoaded; // one-shot
+
+        await ShowAtAsync(_pos, animate: false); // show the first slide before timing starts
         _advanceTimer.Start();
         _hideControlsTimer.Start();
         Root.Focus(FocusState.Programmatic);
