@@ -1887,6 +1887,49 @@ public sealed partial class MainWindow : Window
         return (state & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
     }
 
+    /// <summary>True while Ctrl is held — used to detect clipboard / select-all shortcuts.</summary>
+    private static bool IsCtrlDown()
+    {
+        var state = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control);
+        return (state & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
+    }
+
+    /// <summary>True when keyboard focus is in a text field, so explorer shortcuts (Ctrl+A/C/V…)
+    /// don't hijack normal text editing in the address bar or a rename box.</summary>
+    private bool IsTextInputFocused() =>
+        FocusManager.GetFocusedElement(RootGrid.XamlRoot) is TextBox or RichEditBox;
+
+    /// <summary>The explorer list currently on screen (icon grid or details list).</summary>
+    private ListViewBase ActiveExplorerList() =>
+        ExplorerIconsView.Visibility == Visibility.Visible ? ExplorerIconsView : ExplorerDetailsList;
+
+    /// <summary>The ExplorerItems currently selected in the active explorer list.</summary>
+    private List<ExplorerItem> SelectedExplorerItems() =>
+        ActiveExplorerList().SelectedItems.OfType<ExplorerItem>().ToList();
+
+    /// <summary>Copies (or cuts) the selected explorer items to the clipboard as files/folders,
+    /// so they can be pasted here or into Windows Explorer.</summary>
+    private async System.Threading.Tasks.Task CopySelectedExplorerAsync(bool cut)
+    {
+        // Drives can't be copied/moved — only real files and folders.
+        var selection = SelectedExplorerItems().Where(i => i.Kind != ExplorerItemKind.Drive).ToList();
+        if (selection.Count == 0) return;
+        try
+        {
+            var items = new List<IStorageItem>();
+            foreach (var it in selection)
+                items.Add(it.IsFolder
+                    ? await StorageFolder.GetFolderFromPathAsync(it.Path)
+                    : await StorageFile.GetFileFromPathAsync(it.Path));
+
+            var data = new DataPackage { RequestedOperation = cut ? DataPackageOperation.Move : DataPackageOperation.Copy };
+            data.SetStorageItems(items);
+            Clipboard.SetContent(data);
+            StatusText.Text = $"{(cut ? "Cut" : "Copied")} {items.Count} item(s)";
+        }
+        catch (Exception ex) { StatusText.Text = $"{(cut ? "Cut" : "Copy")} failed: {ex.Message}"; }
+    }
+
     private async System.Threading.Tasks.Task DeleteExplorerAsync(ExplorerItem item)
     {
         var permanent = IsShiftDown();
@@ -2805,6 +2848,29 @@ public sealed partial class MainWindow : Window
                 e.Handled = true; break;
             case VirtualKey.Delete when ExplorerView.Visibility == Visibility.Visible:
                 _ = DeleteSelectedExplorerAsync(); e.Handled = true; break;
+
+            // ---- Explorer clipboard / selection shortcuts (skip while typing in a text field) ----
+            case VirtualKey.C when ExplorerView.Visibility == Visibility.Visible && IsCtrlDown() && !IsTextInputFocused():
+                _ = CopySelectedExplorerAsync(cut: false); e.Handled = true; break;
+            case VirtualKey.X when ExplorerView.Visibility == Visibility.Visible && IsCtrlDown() && !IsTextInputFocused():
+                _ = CopySelectedExplorerAsync(cut: true); e.Handled = true; break;
+            case VirtualKey.V when ExplorerView.Visibility == Visibility.Visible && IsCtrlDown() && !IsTextInputFocused():
+                _ = PasteIntoCurrentAsync(); e.Handled = true; break;
+            case VirtualKey.A when ExplorerView.Visibility == Visibility.Visible && IsCtrlDown() && !IsTextInputFocused():
+                ActiveExplorerList().SelectAll(); e.Handled = true; break;
+            case VirtualKey.F2 when ExplorerView.Visibility == Visibility.Visible && !IsTextInputFocused():
+            {
+                var sel = SelectedExplorerItems();
+                if (sel.Count > 0) _ = RenameExplorerAsync(sel[0]);
+                e.Handled = true; break;
+            }
+            case VirtualKey.Enter when ExplorerView.Visibility == Visibility.Visible && !IsTextInputFocused():
+            {
+                var sel = SelectedExplorerItems();
+                if (sel.Count > 0) OpenExplorerItem(sel[0]);
+                e.Handled = true; break;
+            }
+
             case VirtualKey.Back when ExplorerView.Visibility == Visibility.Visible
                     && FocusManager.GetFocusedElement(RootGrid.XamlRoot) is not TextBox:
                 NavBack_Click(sender, e); e.Handled = true; break;
