@@ -22,10 +22,10 @@ $ErrorActionPreference = 'Stop'
 
 $project = Resolve-Path (Join-Path $PSScriptRoot '..\src\PhotosPlus.App\PhotosPlus.App.csproj')
 $dest    = Join-Path $env:LOCALAPPDATA 'PhotosPlus\app'
-$exe     = Join-Path $dest 'PhotosPlus.App.exe'
+$exe     = Join-Path $dest 'Galileo.exe'
 
 # 1) The exe is locked while running — stop it so publish can overwrite.
-Get-Process 'PhotosPlus.App' -ErrorAction SilentlyContinue | ForEach-Object {
+Get-Process 'Galileo' -ErrorAction SilentlyContinue | ForEach-Object {
     Write-Host "Stopping running PhotosPlus (pid $($_.Id))..." -ForegroundColor DarkGray
     $_ | Stop-Process -Force
 }

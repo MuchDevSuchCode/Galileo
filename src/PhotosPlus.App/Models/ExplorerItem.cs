@@ -100,6 +100,17 @@ public partial class ExplorerItem : ObservableObject
                     await bmp.SetSourceAsync(thumb);
                     Icon = bmp;
                 }
+                return;
+            }
+
+            // No thumbnail (e.g. .lnk / .url / unknown types) → fall back to the shell's file icon
+            // so the item is never blank.
+            var (iconPixels, iw, ih) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: true));
+            if (iconPixels is not null && iw > 0 && ih > 0)
+            {
+                var wb = new WriteableBitmap(iw, ih);
+                using (var s = wb.PixelBuffer.AsStream()) s.Write(iconPixels, 0, iconPixels.Length);
+                Icon = wb;
             }
         }
         catch

@@ -22,10 +22,19 @@ public sealed class PhotoLibrary
         ".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf", ".orf", ".rw2"
     };
 
+    public static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp4", ".m4v", ".mov", ".mkv", ".avi", ".wmv", ".webm", ".flv",
+        ".mpg", ".mpeg", ".m2ts", ".ts", ".3gp", ".ogv"
+    };
+
     public PhotoLibrary(AppState state) => _state = state;
 
     public static bool IsSupported(string path) =>
         SupportedExtensions.Contains(Path.GetExtension(path));
+
+    public static bool IsVideo(string path) =>
+        VideoExtensions.Contains(Path.GetExtension(path));
 
     /// <summary>Loads all supported images in a folder, newest first.</summary>
     public List<PhotoItem> Load(string folder)

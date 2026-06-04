@@ -164,6 +164,7 @@
                               IsItemClickEnabled="True"
                               CanDragItems="True"
                               ItemClick="ExplorerItem_Click"
+                              DoubleTapped="ExplorerItem_DoubleTapped"
                               DragItemsStarting="Explorer_DragItemsStarting"
                               RightTapped="ExplorerView_RightTapped"
                               ContainerContentChanging="ExplorerIcons_ContainerContentChanging">
@@ -196,6 +197,7 @@
                                   IsItemClickEnabled="True"
                                   CanDragItems="True"
                                   ItemClick="ExplorerItem_Click"
+                                  DoubleTapped="ExplorerItem_DoubleTapped"
                                   DragItemsStarting="Explorer_DragItemsStarting"
                                   RightTapped="ExplorerView_RightTapped"
                                   ContainerContentChanging="ExplorerIcons_ContainerContentChanging"
@@ -335,6 +337,18 @@
                     </Image.RenderTransform>
                 </Image>
             </Grid>
+
+            <!-- Embedded video player (shown for video files) -->
+            <MediaPlayerElement x:Name="VideoPlayer" Visibility="Collapsed"
+                                AreTransportControlsEnabled="True" AutoPlay="True" Stretch="Uniform" />
+            <Border x:Name="VideoBackBar" Visibility="Collapsed"
+                    HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,48,0,0"
+                    CornerRadius="22" Padding="4" Background="{StaticResource PillBrush}">
+                <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="BackToGallery_Click"
+                        ToolTipService.ToolTip="Back (Esc)">
+                    <FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" />
+                </Button>
+            </Border>
 
             <!-- Eye obscure: plain black curtain -->
             <Grid x:Name="ObscureOverlay" Visibility="Collapsed" Background="Black" />
@@ -507,7 +521,26 @@
                         </Button>
                     </Grid>
 
-                    <TextBlock Text="Slideshow" FontWeight="SemiBold" Opacity="0.8" />
+                    <TextBlock Text="General" FontWeight="SemiBold" Opacity="0.8" />
+                    <Grid>
+                        <TextBlock Text="Theme" VerticalAlignment="Center" />
+                        <ComboBox x:Name="ThemeCombo" HorizontalAlignment="Right" MinWidth="160"
+                                  SelectionChanged="ThemeCombo_SelectionChanged">
+                            <ComboBoxItem Content="System default" />
+                            <ComboBoxItem Content="Light" />
+                            <ComboBoxItem Content="Dark" />
+                        </ComboBox>
+                    </Grid>
+                    <Grid>
+                        <TextBlock Text="Open items with" VerticalAlignment="Center" />
+                        <ComboBox x:Name="OpenModeCombo" HorizontalAlignment="Right" MinWidth="160"
+                                  SelectionChanged="OpenModeCombo_SelectionChanged">
+                            <ComboBoxItem Content="Double-click" />
+                            <ComboBoxItem Content="Single-click" />
+                        </ComboBox>
+                    </Grid>
+
+                    <TextBlock Text="Slideshow" FontWeight="SemiBold" Opacity="0.8" Margin="0,6,0,0" />
 
                     <Grid>
                         <TextBlock Text="Seconds per photo" VerticalAlignment="Center" />

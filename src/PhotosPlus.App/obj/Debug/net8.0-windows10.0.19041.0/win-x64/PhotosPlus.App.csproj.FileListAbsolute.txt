@@ -228,11 +228,6 @@ C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Microsoft.Windows.System.Power.winmd
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Microsoft.Windows.System.winmd
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Microsoft.Windows.Widgets.winmd
-C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\PhotosPlus.App.exe
-C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\PhotosPlus.App.deps.json
-C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\PhotosPlus.App.runtimeconfig.json
-C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\PhotosPlus.App.dll
-C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\PhotosPlus.App.pdb
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\resources.pri
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Microsoft.Web.WebView2.Core.dll
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\CommunityToolkit.Mvvm.dll
@@ -276,11 +271,7 @@ C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\PhotosPlus.App.csproj.CoreCompileInputs.cache
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\PhotosPlus.App.sourcelink.json
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\PhotosPl.054DAE16.Up2Date
-C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\PhotosPlus.App.dll
-C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\refint\PhotosPlus.App.dll
-C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\PhotosPlus.App.pdb
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\PhotosPlus.App.genruntimeconfig.cache
-C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\ref\PhotosPlus.App.dll
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\priconfig.xml
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\priconfig.xml.intermediate
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\unfiltered.layout.resfiles
@@ -303,3 +294,12 @@ C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\SlideshowWindow.xbf
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Assets\galileo.ico
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Assets\galileo.png
+C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Galileo.exe
+C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Galileo.deps.json
+C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Galileo.runtimeconfig.json
+C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Galileo.dll
+C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Galileo.pdb
+C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\Galileo.dll
+C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\refint\Galileo.dll
+C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\Galileo.pdb
+C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\ref\Galileo.dll

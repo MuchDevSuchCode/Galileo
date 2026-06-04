@@ -16,6 +16,7 @@ using PhotosPlus.Models;
 using PhotosPlus.Services;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics.Imaging;
+using Windows.Media.Core;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
@@ -105,6 +106,8 @@ public sealed partial class MainWindow : Window
         ExplorerIconsView.ItemTemplate = (DataTemplate)Application.Current.Resources["ExplorerIconTemplate"];
         PopulateSidebar();
         ApplyIconSize();
+        ApplyTheme();
+        ApplyClickMode();
 
         // Windows may launch us with a file (default app) or folder to open.
         if (!string.IsNullOrEmpty(initialPath) && System.IO.File.Exists(initialPath))
@@ -354,6 +357,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Returns to the file-explorer home (the photo viewer / collage live on top of it).</summary>
     private void ShowExplorer()
     {
+        StopVideo();
         ViewerView.Visibility = Visibility.Collapsed;
         GalleryView.Visibility = Visibility.Collapsed;
         CollageView.Visibility = Visibility.Collapsed;
@@ -384,6 +388,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        EnterImageMode();
         _rotation = 0;
         _bmpW = _bmpH = 0;
 
@@ -1205,6 +1210,7 @@ public sealed partial class MainWindow : Window
     {
         if (item.IsFolder) NavigateTo(item.Path);
         else if (item.IsImage) OpenImageFromExplorer(item);
+        else if (PhotoLibrary.IsVideo(item.Path)) OpenVideoFromExplorer(item);
         else
         {
             try
@@ -1214,6 +1220,58 @@ public sealed partial class MainWindow : Window
             }
             catch (Exception ex) { StatusText.Text = ex.Message; App.Log("OpenDefault", ex); }
         }
+    }
+
+    private void ExplorerItem_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (_state.SingleClickToOpen) return; // single-click already opened it
+        if ((e.OriginalSource as FrameworkElement)?.DataContext is ExplorerItem item)
+            OpenExplorerItem(item);
+    }
+
+    // ---- Embedded video player ----
+
+    private async void OpenVideoFromExplorer(ExplorerItem item)
+    {
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(item.Path);
+            ShowViewer();
+            EnterVideoMode();
+            VideoPlayer.Source = MediaSource.CreateFromStorageFile(file);
+            VideoPlayer.MediaPlayer?.Play();
+            ModeLabel.Text = item.Name;
+        }
+        catch (Exception ex) { StatusText.Text = $"Couldn't play video: {ex.Message}"; App.Log("OpenVideo", ex); }
+    }
+
+    private void EnterVideoMode()
+    {
+        ImageHost.Visibility = Visibility.Collapsed;
+        ObscureOverlay.Visibility = Visibility.Collapsed;
+        ViewerChrome.Visibility = Visibility.Collapsed;
+        InfoPanel.Visibility = Visibility.Collapsed;
+        VideoPlayer.Visibility = Visibility.Visible;
+        VideoBackBar.Visibility = Visibility.Visible;
+    }
+
+    private void EnterImageMode()
+    {
+        StopVideo();
+        VideoPlayer.Visibility = Visibility.Collapsed;
+        VideoBackBar.Visibility = Visibility.Collapsed;
+        ImageHost.Visibility = Visibility.Visible;
+        ViewerChrome.Visibility = Visibility.Visible;
+    }
+
+    private void StopVideo()
+    {
+        try
+        {
+            VideoPlayer.MediaPlayer?.Pause();
+            VideoPlayer.Source = null;
+        }
+        catch { /* ignore */ }
     }
 
     private void OpenImageFromExplorer(ExplorerItem item)
@@ -1765,6 +1823,8 @@ public sealed partial class MainWindow : Window
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         _loadingSettings = true;
+        ThemeCombo.SelectedIndex = _state.Theme switch { "Light" => 1, "Dark" => 2, _ => 0 };
+        OpenModeCombo.SelectedIndex = _state.SingleClickToOpen ? 1 : 0;
         SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
         SlideshowSecondsValue.Text = $"{_state.SlideshowSeconds}s";
         ShuffleSwitch.IsOn = _state.SlideshowShuffle;
@@ -1773,6 +1833,37 @@ public sealed partial class MainWindow : Window
         _loadingSettings = false;
 
         SettingsOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void ThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.Theme = ThemeCombo.SelectedIndex switch { 1 => "Light", 2 => "Dark", _ => "System" };
+        ApplyTheme();
+    }
+
+    private void OpenModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.SingleClickToOpen = OpenModeCombo.SelectedIndex == 1;
+        ApplyClickMode();
+    }
+
+    private void ApplyTheme()
+    {
+        RootGrid.RequestedTheme = _state.Theme switch
+        {
+            "Light" => ElementTheme.Light,
+            "Dark" => ElementTheme.Dark,
+            _ => ElementTheme.Default
+        };
+    }
+
+    private void ApplyClickMode()
+    {
+        // Single-click → ItemClick opens; double-click (default) → items select, double-tap opens.
+        ExplorerIconsView.IsItemClickEnabled = _state.SingleClickToOpen;
+        ExplorerDetailsList.IsItemClickEnabled = _state.SingleClickToOpen;
     }
 
     private void CloseSettings()

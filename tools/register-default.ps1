@@ -16,7 +16,7 @@
     Full path to PhotosPlus.App.exe. Defaults to the published install under %LocalAppData%.
 #>
 param(
-    [string]$ExePath = (Join-Path $env:LOCALAPPDATA 'PhotosPlus\app\PhotosPlus.App.exe')
+    [string]$ExePath = (Join-Path $env:LOCALAPPDATA 'PhotosPlus\app\Galileo.exe')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,7 +28,7 @@ if (-not (Test-Path $ExePath)) {
 $ExePath = (Resolve-Path $ExePath).Path
 
 $progId  = 'PhotosPlus.Image'
-$appName = 'PhotosPlus.App.exe'
+$appName = 'Galileo.exe'
 $exts = @(
     'jpg','jpeg','jpe','jfif','png','gif','bmp','dib','tif','tiff','webp',
     'heic','heif','avif','ico','cr2','cr3','nef','arw','dng','raf','orf','rw2'
@@ -42,22 +42,22 @@ function Set-Default($path, $value) { Ensure-Key $path; Set-ItemProperty -Path $
 
 Write-Host "Registering PhotosPlus -> $ExePath" -ForegroundColor Cyan
 
-# 1) ProgID: how to open a "PhotosPlus image"
-Set-Default "HKCU:\Software\Classes\$progId" 'PhotosPlus Image'
-Set-ItemProperty "HKCU:\Software\Classes\$progId" -Name 'FriendlyTypeName' -Value 'PhotosPlus Image'
+# 1) ProgID: how to open a "Galileo image"
+Set-Default "HKCU:\Software\Classes\$progId" 'Galileo Image'
+Set-ItemProperty "HKCU:\Software\Classes\$progId" -Name 'FriendlyTypeName' -Value 'Galileo Image'
 Set-Default "HKCU:\Software\Classes\$progId\DefaultIcon" $icon
 Set-Default "HKCU:\Software\Classes\$progId\shell\open\command" $cmd
 
 # 2) Application entry (Open with list) + supported types
 Set-Default "HKCU:\Software\Classes\Applications\$appName\shell\open\command" $cmd
-Set-ItemProperty "HKCU:\Software\Classes\Applications\$appName" -Name 'FriendlyAppName' -Value 'PhotosPlus'
+Set-ItemProperty "HKCU:\Software\Classes\Applications\$appName" -Name 'FriendlyAppName' -Value 'Galileo'
 Ensure-Key "HKCU:\Software\Classes\Applications\$appName\SupportedTypes"
 
 # 3) Capabilities (Settings > Default apps)
 $cap = 'HKCU:\Software\PhotosPlus\Capabilities'
 Ensure-Key $cap
-Set-ItemProperty $cap -Name 'ApplicationName'        -Value 'PhotosPlus'
-Set-ItemProperty $cap -Name 'ApplicationDescription' -Value 'A modern, local-first photo viewer.'
+Set-ItemProperty $cap -Name 'ApplicationName'        -Value 'Galileo'
+Set-ItemProperty $cap -Name 'ApplicationDescription' -Value 'A modern Windows Explorer + Photos alternative.'
 Ensure-Key "$cap\FileAssociations"
 
 foreach ($ext in $exts) {
@@ -82,6 +82,6 @@ $shell::SHChangeNotify(0x08000000, 0x0000, [IntPtr]::Zero, [IntPtr]::Zero)  # SH
 
 Write-Host "Done. $($exts.Count) extensions registered." -ForegroundColor Green
 Write-Host ""
-Write-Host "Next: set PhotosPlus as default ->" -ForegroundColor Yellow
-Write-Host "  Settings > Apps > Default apps > search 'PhotosPlus' (or set per file type),"
-Write-Host "  or right-click a photo > Open with > Choose another app > PhotosPlus > Always."
+Write-Host "Next: set Galileo as default ->" -ForegroundColor Yellow
+Write-Host "  Settings > Apps > Default apps > search 'Galileo' (or set per file type),"
+Write-Host "  or right-click a photo > Open with > Choose another app > Galileo > Always."

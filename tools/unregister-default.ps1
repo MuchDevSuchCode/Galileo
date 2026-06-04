@@ -6,7 +6,7 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
 $progId  = 'PhotosPlus.Image'
-$appName = 'PhotosPlus.App.exe'
+$appName = 'Galileo.exe'
 $exts = @(
     'jpg','jpeg','jpe','jfif','png','gif','bmp','dib','tif','tiff','webp',
     'heic','heif','avif','ico','cr2','cr3','nef','arw','dng','raf','orf','rw2'

@@ -10,12 +10,12 @@
 using System;
 using System.Reflection;
 
-[assembly: System.Reflection.AssemblyCompanyAttribute("PhotosPlus.App")]
+[assembly: System.Reflection.AssemblyCompanyAttribute("Galileo")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e1fd76aafc227e84cd346e70da7bd06309bc8b66")]
-[assembly: System.Reflection.AssemblyProductAttribute("PhotosPlus.App")]
-[assembly: System.Reflection.AssemblyTitleAttribute("PhotosPlus.App")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c8a433fc65d9601ee78d2996c4905da6a0bf3347")]
+[assembly: System.Reflection.AssemblyProductAttribute("Galileo")]
+[assembly: System.Reflection.AssemblyTitleAttribute("Galileo")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
 [assembly: System.Runtime.Versioning.TargetPlatformAttribute("Windows10.0.19041.0")]
 [assembly: System.Runtime.Versioning.SupportedOSPlatformAttribute("Windows10.0.17763.0")]

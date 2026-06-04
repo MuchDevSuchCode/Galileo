@@ -7,7 +7,7 @@
   "targets": {
     ".NETCoreApp,Version=v8.0": {},
     ".NETCoreApp,Version=v8.0/win-x64": {
-      "PhotosPlus.App/1.0.0": {
+      "Galileo/1.0.0": {
         "dependencies": {
           "CommunityToolkit.Mvvm": "8.3.2",
           "Microsoft.WindowsAppSDK": "1.6.250108002",
@@ -15,7 +15,7 @@
           "runtimepack.Microsoft.Windows.SDK.NET.Ref": "10.0.19041.38"
         },
         "runtime": {
-          "PhotosPlus.App.dll": {}
+          "Galileo.dll": {}
         }
       },
       "runtimepack.Microsoft.Windows.SDK.NET.Ref/10.0.19041.38": {
@@ -132,7 +132,7 @@
     }
   },
   "libraries": {
-    "PhotosPlus.App/1.0.0": {
+    "Galileo/1.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

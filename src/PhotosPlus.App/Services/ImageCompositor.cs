@@ -13,8 +13,8 @@ public static class ImageCompositor
     {
         if (fw <= 0 || fh <= 0 || iw <= 0 || ih <= 0) return;
 
-        var maxW = fw * 0.50;
-        var maxH = fh * 0.42;
+        var maxW = fw * 0.64;
+        var maxH = fh * 0.54;
         var scale = Math.Min(maxW / iw, maxH / ih);
         if (scale <= 0) return;
 
