@@ -130,6 +130,14 @@ public sealed class Vault
 
     public void SaveManifest() => File.WriteAllText(ManifestPath, JsonSerializer.Serialize(Manifest, JsonOpts));
 
+    /// <summary>Renames the vault (display name only — the on-disk store is keyed by id, so no files
+    /// move). Works whether the vault is locked or unlocked.</summary>
+    public void Rename(string newName)
+    {
+        Manifest.Name = newName;
+        SaveManifest();
+    }
+
     // ---------- Unlock / lock ----------
 
     public async Task UnlockWithPassphraseAsync(string passphrase)

@@ -3239,6 +3239,51 @@ public sealed partial class MainWindow : Window
 
     private async void NewVault_Click(object sender, RoutedEventArgs e) => await CreateVaultDialogAsync(null);
 
+    private void VaultsList_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        if ((e.OriginalSource as FrameworkElement)?.DataContext is not Models.VaultInfo vi) return;
+        var menu = new MenuFlyout();
+        var rename = new MenuFlyoutItem { Text = "Rename…", Icon = new SymbolIcon(Symbol.Rename) };
+        rename.Click += async (_, _) => await RenameVaultAsync(vi);
+        menu.Items.Add(rename);
+        var target = (FrameworkElement)sender;
+        menu.ShowAt(target, new FlyoutShowOptions { Position = e.GetPosition(target) });
+        e.Handled = true;
+    }
+
+    private async Task RenameVaultAsync(Models.VaultInfo vi)
+    {
+        var box = new TextBox { Text = vi.Name, PlaceholderText = "Vault name" };
+        box.Loaded += (_, _) => box.SelectAll();
+        var dlg = new ContentDialog
+        {
+            Title = "Rename vault",
+            Content = box,
+            PrimaryButtonText = "Rename",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = RootGrid.XamlRoot,
+        };
+        dlg.PrimaryButtonClick += (_, args) => { if (string.IsNullOrWhiteSpace(box.Text)) args.Cancel = true; };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var newName = box.Text.Trim();
+        if (newName == vi.Name) return;
+        try
+        {
+            // Use the live unlocked instance if it's the same vault, so its in-memory name updates too.
+            var v = _vaults.Current?.Id == vi.Id
+                ? _vaults.Current
+                : Vault.Load(System.IO.Path.Combine(VaultManager.VaultsRoot, vi.Id));
+            v.Rename(newName);
+        }
+        catch (Exception ex) { StatusText.Text = "Rename failed: " + ex.Message; return; }
+
+        RefreshVaults();
+        UpdateVaultLockButton();
+        StatusText.Text = $"Vault renamed to “{newName}”.";
+    }
+
     private async Task TryUnlockVaultAsync(Vault v)
     {
         var pw = new PasswordBox { PlaceholderText = "Passphrase" };

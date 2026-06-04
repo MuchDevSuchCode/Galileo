@@ -55,7 +55,7 @@
 
                         <TextBlock Text="Vaults" Opacity="0.6" FontSize="12" Margin="10,12,0,4" />
                         <ListView x:Name="VaultsList" SelectionMode="None" IsItemClickEnabled="True"
-                                  ItemClick="VaultsList_ItemClick">
+                                  ItemClick="VaultsList_ItemClick" RightTapped="VaultsList_RightTapped">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Orientation="Horizontal" Spacing="10" Height="32">
