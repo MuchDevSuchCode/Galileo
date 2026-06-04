@@ -34,6 +34,9 @@ public sealed class VaultManifest
 
     /// <summary>Per-vault idle-lock override in seconds; null = use the global setting.</summary>
     public int? IdleSecondsOverride { get; set; }
+
+    /// <summary>Consecutive wrong-passphrase attempts since the last successful unlock.</summary>
+    public int FailedAttempts { get; set; }
 }
 
 public sealed class VaultIndex
@@ -135,6 +138,23 @@ public sealed class Vault
     public void Rename(string newName)
     {
         Manifest.Name = newName;
+        SaveManifest();
+    }
+
+    public int FailedAttempts => Manifest.FailedAttempts;
+
+    /// <summary>Records a wrong-passphrase attempt and returns the new running total.</summary>
+    public int RecordFailedAttempt()
+    {
+        Manifest.FailedAttempts++;
+        SaveManifest();
+        return Manifest.FailedAttempts;
+    }
+
+    public void ResetFailedAttempts()
+    {
+        if (Manifest.FailedAttempts == 0) return;
+        Manifest.FailedAttempts = 0;
         SaveManifest();
     }
 

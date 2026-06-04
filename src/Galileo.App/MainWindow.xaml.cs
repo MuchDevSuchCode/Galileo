@@ -1410,6 +1410,29 @@ public sealed partial class MainWindow : Window
     private void BuildBreadcrumb()
     {
         Breadcrumb.Children.Clear();
+
+        // Inside an unlocked vault, root the trail at the vault name and hide the working-folder path.
+        if (_vaults.Current?.WorkingDir is { } work && _currentFolder is not null
+            && _currentFolder.StartsWith(work, StringComparison.OrdinalIgnoreCase))
+        {
+            AddCrumb(_vaults.Current!.Name, work);
+            var rel = System.IO.Path.GetRelativePath(work, _currentFolder);
+            if (rel != ".")
+            {
+                var acc = work;
+                foreach (var part in rel.Split(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar))
+                {
+                    if (string.IsNullOrEmpty(part)) continue;
+                    acc = System.IO.Path.Combine(acc, part);
+                    Breadcrumb.Children.Add(new TextBlock { Text = "›", Opacity = 0.5, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 2, 0) });
+                    AddCrumb(part, acc);
+                }
+            }
+            BreadcrumbScroller.UpdateLayout();
+            BreadcrumbScroller.ChangeView(BreadcrumbScroller.ScrollableWidth, null, null, true);
+            return;
+        }
+
         AddCrumb("This PC", null);
         if (_currentFolder is not null)
         {
@@ -2399,9 +2422,17 @@ public sealed partial class MainWindow : Window
         tvi.Header = TabHeaderFor(_currentFolder);
     }
 
-    private static string TabHeaderFor(string? folder)
+    private string TabHeaderFor(string? folder)
     {
         if (folder is null) return "This PC";
+        // Inside an unlocked vault, show the vault's name at its root (not the working-folder GUID).
+        if (_vaults.Current?.WorkingDir is { } work
+            && folder.StartsWith(work, StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Equals(folder.TrimEnd('\\'), work.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)
+                ? _vaults.Current!.Name
+                : System.IO.Path.GetFileName(folder.TrimEnd('\\'));
+        }
         var name = System.IO.Path.GetFileName(folder.TrimEnd('\\'));
         return string.IsNullOrEmpty(name) ? folder : name;
     }
@@ -2656,6 +2687,9 @@ public sealed partial class MainWindow : Window
         VaultIdleSlider.Value = vaultIdleMin;
         VaultIdleValue.Text = vaultIdleMin == 0 ? "Never" : $"{vaultIdleMin} min";
         VaultHelloSwitch.IsOn = _state.VaultDefaultUseHello;
+        VaultWipeSwitch.IsOn = _state.VaultWipeOnFailure;
+        VaultWipeCountBox.Value = _state.VaultWipeAfterAttempts;
+        VaultWipeCountRow.Visibility = _state.VaultWipeOnFailure ? Visibility.Visible : Visibility.Collapsed;
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
         SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
         SlideshowSecondsValue.Text = $"{_state.SlideshowSeconds}s";
@@ -2894,6 +2928,21 @@ public sealed partial class MainWindow : Window
     {
         if (_loadingSettings) return;
         _state.VaultDefaultUseHello = VaultHelloSwitch.IsOn;
+        _state.Save();
+    }
+
+    private void VaultWipeSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        VaultWipeCountRow.Visibility = VaultWipeSwitch.IsOn ? Visibility.Visible : Visibility.Collapsed;
+        if (_loadingSettings) return;
+        _state.VaultWipeOnFailure = VaultWipeSwitch.IsOn;
+        _state.Save();
+    }
+
+    private void VaultWipeCount_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_loadingSettings || double.IsNaN(args.NewValue)) return;
+        _state.VaultWipeAfterAttempts = Math.Clamp((int)args.NewValue, 1, 50);
         _state.Save();
     }
 
@@ -3216,7 +3265,63 @@ public sealed partial class MainWindow : Window
         _vaultList.Clear();
         foreach (var v in _vaults.List())
             _vaultList.Add(new Models.VaultInfo(v.Id, v.Name, _vaults.Current?.Id == v.Id));
+
+        // The vault list only appears once something is unlocked; otherwise a single discreet entry.
+        var open = _vaults.IsAnyUnlocked;
+        VaultsSection.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        VaultsLockedEntry.Visibility = open ? Visibility.Collapsed : Visibility.Visible;
         UpdateVaultLockButton();
+    }
+
+    private async void VaultsLockedEntry_Click(object sender, RoutedEventArgs e) => await ShowVaultPickerAsync();
+
+    /// <summary>Locked-state entry point: lists vaults to unlock (or create one) without revealing
+    /// them in the sidebar.</summary>
+    private async Task ShowVaultPickerAsync()
+    {
+        var vaults = _vaults.List();
+        var panel = new StackPanel { Spacing = 10, MinWidth = 280 };
+
+        ListView? list = null;
+        if (vaults.Count == 0)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "No vaults yet. Create one to get started.",
+                Opacity = 0.7, TextWrapping = TextWrapping.Wrap,
+            });
+        }
+        else
+        {
+            list = new ListView { SelectionMode = ListViewSelectionMode.Single, MaxHeight = 300, ItemsSource = vaults, DisplayMemberPath = "Name" };
+            list.SelectedIndex = 0;
+            panel.Children.Add(list);
+        }
+
+        var dlg = new ContentDialog
+        {
+            Title = "Vaults",
+            Content = panel,
+            PrimaryButtonText = vaults.Count > 0 ? "Unlock" : null,
+            SecondaryButtonText = "New vault…",
+            CloseButtonText = "Cancel",
+            DefaultButton = vaults.Count > 0 ? ContentDialogButton.Primary : ContentDialogButton.Secondary,
+            XamlRoot = RootGrid.XamlRoot,
+        };
+
+        Vault? chosen = null;
+        if (list is not null)
+        {
+            list.DoubleTapped += (_, _) => { if (list.SelectedItem is Vault) { chosen = (Vault)list.SelectedItem; dlg.Hide(); } };
+            dlg.PrimaryButtonClick += (_, args) =>
+            {
+                if (list.SelectedItem is Vault v) chosen = v; else args.Cancel = true;
+            };
+        }
+
+        var result = await dlg.ShowAsync();
+        if (chosen is not null) { await TryUnlockVaultAsync(chosen); return; }
+        if (result == ContentDialogResult.Secondary) await CreateVaultDialogAsync(null);
     }
 
     private async void VaultsList_ItemClick(object sender, ItemClickEventArgs e)
@@ -3243,6 +3348,18 @@ public sealed partial class MainWindow : Window
     {
         if ((e.OriginalSource as FrameworkElement)?.DataContext is not Models.VaultInfo vi) return;
         var menu = new MenuFlyout();
+
+        if (_vaults.Current?.Id == vi.Id)
+        {
+            var lockItem = new MenuFlyoutItem
+            {
+                Text = "Lock",
+                Icon = new FontIcon { Glyph = char.ConvertFromUtf32(0xE72E), FontFamily = new FontFamily("Segoe Fluent Icons") },
+            };
+            lockItem.Click += (_, _) => _ = LockActiveVaultAsync();
+            menu.Items.Add(lockItem);
+        }
+
         var rename = new MenuFlyoutItem { Text = "Rename…", Icon = new SymbolIcon(Symbol.Rename) };
         rename.Click += async (_, _) => await RenameVaultAsync(vi);
         menu.Items.Add(rename);
@@ -3307,10 +3424,34 @@ public sealed partial class MainWindow : Window
         if (result == ContentDialogResult.Primary)
         {
             StatusText.Text = "Unlocking…";
-            try { await _vaults.UnlockWithPassphraseAsync(v, pw.Password); }
-            catch (System.Security.Cryptography.CryptographicException) { StatusText.Text = "Wrong passphrase."; return; }
+            VaultUnlockOutcome outcome;
+            try { outcome = await _vaults.UnlockWithPassphraseAsync(v, pw.Password, _state.VaultWipeOnFailure, _state.VaultWipeAfterAttempts); }
             catch (Exception ex) { StatusText.Text = "Unlock failed: " + ex.Message; return; }
-            OnVaultOpened(v);
+
+            switch (outcome)
+            {
+                case VaultUnlockOutcome.Success:
+                    OnVaultOpened(v);
+                    break;
+                case VaultUnlockOutcome.Wiped:
+                    RefreshVaults();
+                    await new ContentDialog
+                    {
+                        Title = "Vault wiped",
+                        Content = $"“{v.Name}” was permanently erased after {_state.VaultWipeAfterAttempts} incorrect attempts.",
+                        CloseButtonText = "OK",
+                        XamlRoot = RootGrid.XamlRoot,
+                    }.ShowAsync();
+                    break;
+                default:
+                    if (_state.VaultWipeOnFailure)
+                    {
+                        var left = Math.Max(0, _state.VaultWipeAfterAttempts - v.FailedAttempts);
+                        StatusText.Text = $"Wrong passphrase — {left} attempt(s) left before this vault is wiped.";
+                    }
+                    else StatusText.Text = "Wrong passphrase.";
+                    break;
+            }
         }
         else if (result == ContentDialogResult.Secondary)
         {
@@ -3349,8 +3490,38 @@ public sealed partial class MainWindow : Window
             Text = "Your passphrase is the only recovery key — there is no reset. Hello is an optional convenience.",
             Opacity = 0.6, FontSize = 12, TextWrapping = TextWrapping.Wrap,
         };
+        // Passphrase strength meter (red → green bars + label), live as the user types.
+        var bars = new Border[4];
+        var barRow = new Grid { Height = 6, Margin = new Thickness(0, 2, 0, 0) };
+        Brush Neutral() => new SolidColorBrush(Microsoft.UI.Colors.Gray) { Opacity = 0.25 };
+        for (var i = 0; i < 4; i++)
+        {
+            barRow.ColumnDefinitions.Add(new ColumnDefinition());
+            var b = new Border { CornerRadius = new CornerRadius(3), Margin = new Thickness(i == 0 ? 0 : 4, 0, 0, 0), Background = Neutral() };
+            Grid.SetColumn(b, i);
+            barRow.Children.Add(b);
+            bars[i] = b;
+        }
+        var strengthLabel = new TextBlock { FontSize = 12, Opacity = 0.85 };
+        void UpdateStrength()
+        {
+            if (pw.Password.Length == 0)
+            {
+                for (var i = 0; i < 4; i++) bars[i].Background = Neutral();
+                strengthLabel.Text = "";
+                return;
+            }
+            var (score, label, color) = EvaluatePassphrase(pw.Password);
+            var brush = new SolidColorBrush(color);
+            for (var i = 0; i < 4; i++) bars[i].Background = i < score ? brush : Neutral();
+            strengthLabel.Text = label;
+            strengthLabel.Foreground = brush;
+        }
+        pw.PasswordChanged += (_, _) => UpdateStrength();
+        UpdateStrength();
+
         var panel = new StackPanel { Spacing = 10 };
-        foreach (var c in new UIElement[] { name, pw, pw2, hello, hint, error }) panel.Children.Add(c);
+        foreach (var c in new UIElement[] { name, pw, barRow, strengthLabel, pw2, hello, hint, error }) panel.Children.Add(c);
 
         var dlg = new ContentDialog
         {
@@ -3407,6 +3578,33 @@ public sealed partial class MainWindow : Window
         LoadCurrentFolder(); // originals are gone; new items appear if browsing the vault
         ResetVaultIdle();
         StatusText.Text = $"Sent {n} item(s) to vault “{cur.Name}” — encrypted, originals wiped.";
+    }
+
+    /// <summary>Scores a passphrase 1–4 from length + character-class variety, with a label and a
+    /// red→green colour for the strength meter.</summary>
+    private static (int score, string label, Windows.UI.Color color) EvaluatePassphrase(string pw)
+    {
+        var score = 0;
+        if (pw.Length >= 8) score++;
+        if (pw.Length >= 12) score++;
+        if (pw.Length >= 16) score++;
+        var classes = 0;
+        if (pw.Any(char.IsLower)) classes++;
+        if (pw.Any(char.IsUpper)) classes++;
+        if (pw.Any(char.IsDigit)) classes++;
+        if (pw.Any(c => !char.IsLetterOrDigit(c))) classes++;
+        if (classes >= 2) score++;
+        if (classes >= 3) score++;
+        score = Math.Clamp(score, 0, 4);
+
+        static Windows.UI.Color C(byte r, byte g, byte b) => Windows.UI.Color.FromArgb(255, r, g, b);
+        return score switch
+        {
+            <= 1 => (1, "Weak", C(0xE7, 0x4C, 0x3C)),   // red
+            2 => (2, "Fair", C(0xE6, 0x7E, 0x22)),       // orange
+            3 => (3, "Good", C(0xF1, 0xC4, 0x0F)),       // amber
+            _ => (4, "Strong", C(0x2E, 0xCC, 0x71)),     // green
+        };
     }
 
     /// <summary>Creates a new vault from the selected items (encrypt + securely remove originals).</summary>

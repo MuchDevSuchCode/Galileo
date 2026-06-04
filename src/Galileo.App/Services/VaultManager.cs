@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 
 namespace Galileo.Services;
 
+public enum VaultUnlockOutcome { Success, WrongPassphrase, Wiped }
+
 /// <summary>
 /// Owns the set of vaults on disk and the single currently-unlocked vault. Locking is centralized
 /// here so the idle timer, the app-exit hook, and manual lock all go through one path.
@@ -49,11 +51,36 @@ public sealed class VaultManager
         return v;
     }
 
-    public async Task UnlockWithPassphraseAsync(Vault v, string passphrase)
+    public async Task<VaultUnlockOutcome> UnlockWithPassphraseAsync(Vault v, string passphrase, bool wipeEnabled, int wipeAfter)
     {
         if (Current is not null && Current.Id != v.Id) await LockCurrentAsync();
-        await v.UnlockWithPassphraseAsync(passphrase);
-        Current = v;
+        try
+        {
+            await v.UnlockWithPassphraseAsync(passphrase);
+            v.ResetFailedAttempts();
+            Current = v;
+            return VaultUnlockOutcome.Success;
+        }
+        catch (System.Security.Cryptography.CryptographicException)
+        {
+            var attempts = v.RecordFailedAttempt();
+            if (wipeEnabled && wipeAfter > 0 && attempts >= wipeAfter)
+            {
+                await WipeVaultAsync(v);
+                return VaultUnlockOutcome.Wiped;
+            }
+            return VaultUnlockOutcome.WrongPassphrase;
+        }
+    }
+
+    /// <summary>Permanently and securely destroys a vault (blobs, index, manifest, working copy, and
+    /// any Windows Hello credential). Irreversible.</summary>
+    public async Task WipeVaultAsync(Vault v)
+    {
+        if (Current?.Id == v.Id) Current = null;
+        try { if (v.HasHello) await v.DisableHelloAsync(); } catch { /* ignore */ }
+        VaultCrypto.WipeDirectory(Path.Combine(Vault.WorkRoot, v.Id));
+        VaultCrypto.WipeDirectory(v.Root);
     }
 
     /// <summary>Encrypts the given paths into the currently-unlocked vault and securely wipes the

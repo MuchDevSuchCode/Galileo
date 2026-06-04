@@ -53,27 +53,41 @@
                             </ListView.ItemTemplate>
                         </ListView>
 
-                        <TextBlock Text="Vaults" Opacity="0.6" FontSize="12" Margin="10,12,0,4" />
-                        <ListView x:Name="VaultsList" SelectionMode="None" IsItemClickEnabled="True"
-                                  ItemClick="VaultsList_ItemClick" RightTapped="VaultsList_RightTapped">
-                            <ListView.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="10" Height="32">
-                                        <FontIcon Glyph="{Binding Glyph}" FontFamily="Segoe Fluent Icons"
-                                                  FontSize="15" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-                        <Button Click="NewVault_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                Background="Transparent" BorderThickness="0" Padding="10,6" Margin="0,2,0,0"
-                                ToolTipService.ToolTip="Create a new secure vault">
+                        <!-- Discreet entry: the only vault affordance shown while everything is locked. -->
+                        <Button x:Name="VaultsLockedEntry" Click="VaultsLockedEntry_Click"
+                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                Background="Transparent" BorderThickness="0" Padding="10,8" Margin="0,12,0,0"
+                                ToolTipService.ToolTip="Open a vault">
                             <StackPanel Orientation="Horizontal" Spacing="10">
-                                <FontIcon Glyph="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="14" />
-                                <TextBlock Text="New vault" VerticalAlignment="Center" />
+                                <FontIcon Glyph="&#xE72E;" FontFamily="Segoe Fluent Icons" FontSize="16" />
+                                <TextBlock Text="Vaults" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
+
+                        <!-- Full section: shown only once a vault is unlocked. -->
+                        <StackPanel x:Name="VaultsSection" Visibility="Collapsed" Spacing="2">
+                            <TextBlock Text="Vaults" Opacity="0.6" FontSize="12" Margin="10,12,0,4" />
+                            <ListView x:Name="VaultsList" SelectionMode="None" IsItemClickEnabled="True"
+                                      ItemClick="VaultsList_ItemClick" RightTapped="VaultsList_RightTapped">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Spacing="10" Height="32">
+                                            <FontIcon Glyph="{Binding Glyph}" FontFamily="Segoe Fluent Icons"
+                                                      FontSize="15" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <Button Click="NewVault_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                    Background="Transparent" BorderThickness="0" Padding="10,6" Margin="0,2,0,0"
+                                    ToolTipService.ToolTip="Create a new secure vault">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                                    <TextBlock Text="New vault" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
             </Grid>
@@ -750,6 +764,20 @@
                                                Opacity="0.6" FontSize="12" TextWrapping="Wrap" />
                                 </StackPanel>
                                 <ToggleSwitch Grid.Column="1" x:Name="VaultHelloSwitch" Toggled="VaultHelloSwitch_Toggled" />
+                            </Grid>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                    <TextBlock Text="Wipe vault after failed unlocks" />
+                                    <TextBlock Text="Permanently destroys a vault after too many wrong passphrases. There is no recovery."
+                                               Opacity="0.6" FontSize="12" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <ToggleSwitch Grid.Column="1" x:Name="VaultWipeSwitch" Toggled="VaultWipeSwitch_Toggled" />
+                            </Grid>
+                            <Grid x:Name="VaultWipeCountRow" ColumnDefinitions="*,Auto" Visibility="Collapsed">
+                                <TextBlock Text="Wipe after this many attempts" VerticalAlignment="Center" />
+                                <NumberBox Grid.Column="1" x:Name="VaultWipeCountBox" Minimum="1" Maximum="50"
+                                           SpinButtonPlacementMode="Inline" Width="120"
+                                           ValueChanged="VaultWipeCount_ValueChanged" />
                             </Grid>
 
                             <TextBlock Text="Collage" FontWeight="SemiBold" Opacity="0.8" Margin="0,6,0,0" />

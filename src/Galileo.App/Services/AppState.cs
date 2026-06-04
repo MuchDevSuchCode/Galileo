@@ -55,6 +55,10 @@ public sealed class AppState
     public int VaultIdleSeconds { get; set; } = 300;
     /// <summary>Offer/enable Windows Hello by default when creating a vault.</summary>
     public bool VaultDefaultUseHello { get; set; }
+    /// <summary>Permanently wipe a vault after too many wrong passphrase attempts.</summary>
+    public bool VaultWipeOnFailure { get; set; }
+    /// <summary>Number of consecutive wrong passphrases that triggers a wipe (when enabled).</summary>
+    public int VaultWipeAfterAttempts { get; set; } = 10;
 
     // Slideshow settings
     public int SlideshowSeconds { get; set; } = 4;
