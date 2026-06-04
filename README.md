@@ -20,6 +20,21 @@ Windows Photos is capable but cluttered and increasingly cloud-driven. PhotosPlu
 
 ---
 
+## File Explorer (home)
+
+PhotosPlus now opens into a **Windows-Explorer-style file manager** (Win11 layout):
+
+- **Sidebar** — Home (This PC), Quick access (Desktop/Downloads/Documents/Pictures/Music/Videos), and drives.
+- **Navigation** — back / forward / up, a clickable **breadcrumb**, and an editable **address bar** (pencil button or type a path + Enter).
+- **Views** — Large / Medium / Small icons with a **size slider**, plus a **Details** view (Name · Date modified · Type · Size). Real shell thumbnails/icons for every file type.
+- **Open** — folders navigate in; images open in the photo viewer; other files open in their default app. **Slideshow** and **Collage** buttons act on the current folder's images.
+- **File operations** — New folder, Copy, Copy path, Paste, Rename, Delete (Recycle Bin), and the native **Properties** dialog (right-click items or empty space).
+- **⭐ Hide folder** — the **Hide folder** button (or a folder's right-click) makes a folder **appear empty when opened** and excludes it from its parent. Toggle **Show app-hidden** to reveal hidden folders (dimmed); **Unhide** to restore. App-only and reversible — the folder on disk is never modified.
+
+> Phase 1 of the explorer. Planned next: cut/move, drag-and-drop between folders, column sorting in Details, search, and an expandable folder tree in the sidebar.
+
+---
+
 ## Features (implemented)
 
 **Viewing**

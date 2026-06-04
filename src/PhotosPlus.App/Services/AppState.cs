@@ -24,6 +24,9 @@ public sealed class AppState
     public HashSet<string> HiddenPaths { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public HashSet<string> FavoritePaths { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Folders the user has app-hidden (appear empty / excluded; disk untouched).</summary>
+    public HashSet<string> HiddenFolders { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public string? LastFolder { get; set; }
 
     // Slideshow settings
@@ -64,6 +67,7 @@ public sealed class AppState
                     // Rehydrate sets as case-insensitive (deserializer loses the comparer).
                     state.HiddenPaths = new HashSet<string>(state.HiddenPaths, StringComparer.OrdinalIgnoreCase);
                     state.FavoritePaths = new HashSet<string>(state.FavoritePaths, StringComparer.OrdinalIgnoreCase);
+                    state.HiddenFolders = new HashSet<string>(state.HiddenFolders ?? new(), StringComparer.OrdinalIgnoreCase);
                     return state;
                 }
             }

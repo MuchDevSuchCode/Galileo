@@ -7,6 +7,19 @@ namespace PhotosPlus.Services;
 /// <summary>Thin wrappers over Win32 shell operations used by the image context menu.</summary>
 public static class ShellOps
 {
+    // ---- Let a launched app take the foreground (Windows blocks this by default) ----
+
+    [DllImport("user32.dll")]
+    private static extern bool AllowSetForegroundWindow(int dwProcessId);
+
+    private const int ASFW_ANY = -1;
+
+    /// <summary>
+    /// Grants foreground rights to any process we're about to launch, so the opened file's
+    /// app comes to the front instead of staying behind PhotosPlus.
+    /// </summary>
+    public static void AllowForeground() => AllowSetForegroundWindow(ASFW_ANY);
+
     // ---- Set as desktop background ----
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -66,6 +79,7 @@ public static class ShellOps
     /// <summary>Invokes a shell verb ("print", "edit"…) on a file via its default handler.</summary>
     public static void InvokeVerb(string path, string verb)
     {
+        AllowForeground();
         Process.Start(new ProcessStartInfo { FileName = path, Verb = verb, UseShellExecute = true });
     }
 
@@ -76,6 +90,7 @@ public static class ShellOps
     /// </summary>
     public static void OpenWith(string path)
     {
+        AllowForeground();
         Process.Start(new ProcessStartInfo
         {
             FileName = "rundll32.exe",

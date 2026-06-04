@@ -23,6 +23,40 @@
                 <Setter Property="VerticalContentAlignment" Value="Center" />
             </Style>
             <SolidColorBrush x:Key="PillBrush" Color="#E6262626" />
+
+            <!-- Explorer: icon-view tile (cell size set via ItemsWrapGrid.ItemWidth/Height) -->
+            <DataTemplate x:Key="ExplorerIconTemplate">
+                <Grid Padding="6" Opacity="{Binding ItemOpacity}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Image Source="{Binding Icon}" Stretch="Uniform"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" Margin="4" />
+                    <TextBlock Grid.Row="1" Text="{Binding Name}" FontSize="12" Margin="0,2,0,0"
+                               TextAlignment="Center" TextWrapping="Wrap" MaxLines="2"
+                               TextTrimming="CharacterEllipsis" />
+                </Grid>
+            </DataTemplate>
+
+            <!-- Explorer: details row -->
+            <DataTemplate x:Key="ExplorerDetailsTemplate">
+                <Grid Height="30" Opacity="{Binding ItemOpacity}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="160" />
+                        <ColumnDefinition Width="130" />
+                        <ColumnDefinition Width="90" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <Image Source="{Binding Icon}" Width="20" Height="20" />
+                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="{Binding ModifiedText}" VerticalAlignment="Center" Opacity="0.8" FontSize="13" />
+                    <TextBlock Grid.Column="2" Text="{Binding TypeName}" VerticalAlignment="Center" Opacity="0.8" FontSize="13" />
+                    <TextBlock Grid.Column="3" Text="{Binding SizeText}" VerticalAlignment="Center" Opacity="0.8" FontSize="13" TextAlignment="Right" />
+                </Grid>
+            </DataTemplate>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

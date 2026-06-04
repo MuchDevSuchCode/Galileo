@@ -35,6 +35,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 **Crash logging** — global exception handlers write to `%LocalAppData%\PhotosPlus\logs\error.log`; viewer caps decode size (8000px) to avoid GPU-texture-limit crashes on huge images.
 
+**File Explorer (home, phase 1)** — Win11-style sidebar (This PC / Quick access / drives), back/fwd/up + breadcrumb + editable address, Large/Medium/Small icon views with a size slider + Details (name/date/type/size), shell thumbnails for all file types, open files/folders, New folder / Copy / Copy path / Paste / Rename / Delete / Properties, Slideshow/Collage on the current folder. **Hide-folder**: app-hidden folders appear empty when opened, excluded/dimmed in parent, Show-app-hidden toggle, reversible, disk untouched (`AppState.HiddenFolders`). _Next: cut/move, drag-drop between folders, Details sorting, search, expandable folder tree._
+
 **Build notes (csproj / project):**
 - `<WindowsSdkPackageVersion>10.0.19041.38</WindowsSdkPackageVersion>` — WindowsAppSDK 1.6 needs SDK.NET.Ref ≥ `.38`; .NET 8.0.300 ships `.31`.
 - `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` — CsWinRT AOT generator emits unsafe code for generic WinRT calls (drag-drop's `GetStorageItemsAsync`).

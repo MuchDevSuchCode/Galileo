@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Tasks;
@@ -47,6 +48,17 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _chromeTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     private bool _loadingSettings;
 
+    // File-explorer state
+    private FileSystemService _fs = null!;
+    private readonly ObservableCollection<ExplorerItem> _explorerItems = new();
+    private readonly List<string?> _navHistory = new();
+    private int _navIndex = -1;
+    private string? _currentFolder; // null = home (This PC)
+    private bool _showAppHidden;
+    private string _explorerViewMode = "Large";
+    private double _iconSize = 110;
+    private ExplorerItem? _explorerContextItem;
+
     // Collage mode state
     private readonly Random _rng = new();
     private List<PhotoItem> _collageSource = new();
@@ -85,14 +97,29 @@ public sealed partial class MainWindow : Window
             ViewerChrome.IsHitTestVisible = false;
         };
 
-        // Cold start shows the welcome / picker screen — unless Windows launched us with a
-        // file/folder to open (default photo app / "Open with").
-        if (!string.IsNullOrEmpty(initialPath))
+        // File explorer is the home view.
+        _fs = new FileSystemService(_state);
+        ExplorerIconsView.ItemsSource = _explorerItems;
+        ExplorerDetailsList.ItemsSource = _explorerItems;
+        ExplorerIconsView.ItemTemplate = (DataTemplate)Application.Current.Resources["ExplorerIconTemplate"];
+        PopulateSidebar();
+        ApplyIconSize();
+
+        // Windows may launch us with a file (default app) or folder to open.
+        if (!string.IsNullOrEmpty(initialPath) && System.IO.File.Exists(initialPath))
         {
-            if (System.IO.Directory.Exists(initialPath))
-                _ = LoadFolderAsync(initialPath);
-            else
-                _ = OpenSinglePhotoAsync(initialPath!);
+            var dir = System.IO.Path.GetDirectoryName(initialPath);
+            NavigateTo(dir);
+            var match = _explorerItems.FirstOrDefault(i => string.Equals(i.Path, initialPath, StringComparison.OrdinalIgnoreCase));
+            if (match is not null) OpenImageFromExplorer(match);
+        }
+        else if (!string.IsNullOrEmpty(initialPath) && System.IO.Directory.Exists(initialPath))
+        {
+            NavigateTo(initialPath);
+        }
+        else
+        {
+            NavigateTo(null); // This PC / home
         }
     }
 
@@ -158,7 +185,7 @@ public sealed partial class MainWindow : Window
     private async Task LoadPathsAsync(System.Collections.Generic.List<string> paths)
     {
         StatusText.Text = "Loading…";
-        ShowGallery();
+        ShowExplorer();
 
         var items = await Task.Run(() => _library.LoadFiles(paths));
         _allPhotos.Clear();
@@ -235,7 +262,7 @@ public sealed partial class MainWindow : Window
     private async Task LoadFolderAsync(string folder)
     {
         StatusText.Text = "Loading…";
-        ShowGallery();
+        ShowExplorer();
 
         var items = await Task.Run(() => _library.Load(folder));
         _allPhotos.Clear();
@@ -278,7 +305,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void BackToGallery_Click(object sender, RoutedEventArgs e) => ShowGallery();
+    private void BackToGallery_Click(object sender, RoutedEventArgs e) => ShowExplorer();
 
     /// <summary>Completely closes the gallery: clears all loaded photos and returns to the empty state.</summary>
     private void CloseGallery_Click(object sender, RoutedEventArgs e)
@@ -298,7 +325,7 @@ public sealed partial class MainWindow : Window
         _favoritesOnly = false;
         FavoritesFilterButton.IsChecked = false;
 
-        ShowGallery();
+        ShowExplorer();
         EmptyState.Visibility = Visibility.Visible;
         ModeLabel.Text = "";
         StatusText.Text = "Gallery closed";
@@ -316,10 +343,23 @@ public sealed partial class MainWindow : Window
 
     private void ShowViewer()
     {
+        ExplorerView.Visibility = Visibility.Collapsed;
         GalleryView.Visibility = Visibility.Collapsed;
         CollageView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Visible;
         ShowChrome();
+    }
+
+    /// <summary>Returns to the file-explorer home (the photo viewer / collage live on top of it).</summary>
+    private void ShowExplorer()
+    {
+        ViewerView.Visibility = Visibility.Collapsed;
+        GalleryView.Visibility = Visibility.Collapsed;
+        CollageView.Visibility = Visibility.Collapsed;
+        SettingsOverlay.Visibility = Visibility.Collapsed;
+        InfoPanel.Visibility = Visibility.Collapsed;
+        ExplorerView.Visibility = Visibility.Visible;
+        _chromeTimer.Stop();
     }
 
     // --- Viewer chrome auto-hide ---
@@ -339,7 +379,7 @@ public sealed partial class MainWindow : Window
         var item = Current;
         if (item is null)
         {
-            ShowGallery();
+            ShowExplorer();
             return;
         }
 
@@ -433,15 +473,14 @@ public sealed partial class MainWindow : Window
         double W = ImageHost.ActualWidth, H = ImageHost.ActualHeight;
         if (_bmpW <= 0 || _bmpH <= 0 || W <= 0 || H <= 0) return 1.0;
 
-        var uniform = Math.Min(W / _bmpW, H / _bmpH); // displayed size at scale 1 (Uniform stretch)
-        double fw = _bmpW * uniform, fh = _bmpH * uniform;
-
+        // The Image fills the host with Uniform stretch, so at transform-scale 1 the photo is
+        // already magnified by `uniform`. We want the base view magnified by `m` instead:
+        //   m = min(1.0, fitMagnification)  → fit large photos, but never upscale small ones.
+        var uniform = Math.Min(W / _bmpW, H / _bmpH);
         var quarterTurn = _rotation % 180 != 0;
-        double boxW = quarterTurn ? fh : fw;
-        double boxH = quarterTurn ? fw : fh;
-
-        var fit = Math.Min(W / boxW, H / boxH);
-        return fit < 1.0 ? fit : 1.0;
+        var fitMagnification = quarterTurn ? Math.Min(W / _bmpH, H / _bmpW) : uniform;
+        var m = Math.Min(1.0, fitMagnification);
+        return m / uniform; // transform scale that yields magnification m
     }
 
     /// <summary>Resets to the centered fit for the current rotation (zoom/pan cleared).</summary>
@@ -612,7 +651,7 @@ public sealed partial class MainWindow : Window
     private void HiddenAlbum_Click(object sender, RoutedEventArgs e)
     {
         _showHiddenAlbum = HiddenAlbumButton.IsChecked == true;
-        ShowGallery();
+        ShowExplorer();
         RefreshView();
         StatusText.Text = _showHiddenAlbum
             ? $"Hidden album — {_view.Count} photo(s)"
@@ -756,6 +795,7 @@ public sealed partial class MainWindow : Window
         // When the user hand-picked photos, include them all; otherwise sample a screen-friendly number.
         _collageCount = fromSelection ? pool.Count : Math.Min(pool.Count, 12);
 
+        ExplorerView.Visibility = Visibility.Collapsed;
         GalleryView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Collapsed;
         InfoPanel.Visibility = Visibility.Collapsed;
@@ -836,7 +876,7 @@ public sealed partial class MainWindow : Window
         if (InCollage && _collageItems.Count > 0) LayoutCollage();
     }
 
-    private void CollageBack_Click(object sender, RoutedEventArgs e) => ShowGallery();
+    private void CollageBack_Click(object sender, RoutedEventArgs e) => ShowExplorer();
     private async void CollageShuffle_Click(object sender, RoutedEventArgs e) => await RebuildCollageAsync(reshuffle: true);
 
     private void CollagePreset_Click(object sender, RoutedEventArgs e)
@@ -913,6 +953,537 @@ public sealed partial class MainWindow : Window
         {
             StatusText.Text = $"Save failed: {ex.Message}";
         }
+    }
+
+    // ===================== File Explorer =====================
+
+    private void PopulateSidebar()
+    {
+        var quick = _fs.GetQuickAccess();
+        var drives = _fs.GetDrives();
+        QuickAccessList.ItemsSource = quick;
+        DrivesList.ItemsSource = drives;
+        foreach (var i in quick.Concat(drives)) _ = i.LoadIconAsync(32);
+        ExplorerIconsView.Loaded += (_, _) => ApplyIconSize();
+
+        // Ctrl + mouse wheel resizes the thumbnails (handledEventsToo so it fires even though
+        // the list scrolls the wheel internally).
+        ExplorerIconsView.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(Explorer_PointerWheelChanged), true);
+        ExplorerDetailsList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(Explorer_PointerWheelChanged), true);
+    }
+
+    private void Explorer_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        if (!e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control)) return;
+        var delta = e.GetCurrentPoint((UIElement)sender).Properties.MouseWheelDelta;
+        if (delta == 0) return;
+
+        if (_explorerViewMode == "Details") { _explorerViewMode = "Large"; ApplyViewMode(); }
+        _iconSize = Math.Clamp(_iconSize + (delta > 0 ? 16 : -16), 48, 240);
+        IconSizeSlider.Value = _iconSize;
+        ApplyIconSize();
+        e.Handled = true;
+    }
+
+    private void NavHome_Click(object sender, RoutedEventArgs e) { ShowExplorer(); NavigateTo(null); }
+
+    private void Sidebar_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is ExplorerItem item) { ShowExplorer(); NavigateTo(item.Path); }
+    }
+
+    private void NavigateTo(string? path, bool addHistory = true)
+    {
+        _currentFolder = path;
+        if (addHistory)
+        {
+            if (_navIndex < _navHistory.Count - 1)
+                _navHistory.RemoveRange(_navIndex + 1, _navHistory.Count - _navIndex - 1);
+            _navHistory.Add(path);
+            _navIndex = _navHistory.Count - 1;
+        }
+        LoadCurrentFolder();
+        UpdateNavButtons();
+        BuildBreadcrumb();
+    }
+
+    private void LoadCurrentFolder()
+    {
+        _explorerItems.Clear();
+        HiddenFolderPlaceholder.Visibility = Visibility.Collapsed;
+        ExplorerEmpty.Visibility = Visibility.Collapsed;
+
+        if (_currentFolder is null)
+        {
+            foreach (var it in _fs.GetQuickAccess().Concat(_fs.GetDrives())) _explorerItems.Add(it);
+            ApplyViewMode();
+            UpdateHideFolderButton();
+            StatusText.Text = "This PC";
+            return;
+        }
+
+        // App-hidden folder: present it as an ordinary empty folder — never reveal that it's
+        // hidden. (Unhide via the toolbar's "Unhide folder" button or the Show-app-hidden toggle.)
+        if (_state.HiddenFolders.Contains(_currentFolder) && !_showAppHidden)
+        {
+            ApplyViewMode();
+            ExplorerEmpty.Visibility = Visibility.Visible;
+            UpdateHideFolderButton();
+            StatusText.Text = "0 item(s)";
+            return;
+        }
+
+        var items = _fs.List(_currentFolder, showWindowsHidden: false, _showAppHidden);
+        foreach (var it in items) _explorerItems.Add(it);
+        ApplyViewMode();
+        ExplorerEmpty.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateHideFolderButton();
+        StatusText.Text = $"{items.Count} item(s)";
+    }
+
+    private void ApplyViewMode()
+    {
+        var details = _explorerViewMode == "Details";
+        ExplorerIconsView.Visibility = details ? Visibility.Collapsed : Visibility.Visible;
+        ExplorerDetailsView.Visibility = details ? Visibility.Visible : Visibility.Collapsed;
+        if (!details) ApplyIconSize();
+    }
+
+    private void ApplyIconSize()
+    {
+        if (ExplorerIconsView.ItemsPanelRoot is ItemsWrapGrid wg)
+        {
+            wg.ItemWidth = _iconSize;
+            wg.ItemHeight = _iconSize + 28;
+        }
+    }
+
+    private void UpdateNavButtons()
+    {
+        BackNav.IsEnabled = _navIndex > 0;
+        FwdNav.IsEnabled = _navIndex < _navHistory.Count - 1;
+        UpNav.IsEnabled = _currentFolder is not null;
+    }
+
+    private void BuildBreadcrumb()
+    {
+        Breadcrumb.Children.Clear();
+        AddCrumb("This PC", null);
+        if (_currentFolder is not null)
+        {
+            var chain = new List<(string Name, string Path)>();
+            var di = new DirectoryInfo(_currentFolder);
+            while (di is not null) { chain.Insert(0, (string.IsNullOrEmpty(di.Name) ? di.FullName : di.Name, di.FullName)); di = di.Parent; }
+            foreach (var (name, path) in chain)
+            {
+                Breadcrumb.Children.Add(new TextBlock { Text = "›", Opacity = 0.5, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 2, 0) });
+                AddCrumb(name, path);
+            }
+        }
+
+        // Keep the current (right-most) folder visible when the path is long.
+        BreadcrumbScroller.UpdateLayout();
+        BreadcrumbScroller.ChangeView(BreadcrumbScroller.ScrollableWidth, null, null, true);
+    }
+
+    private void PathBar_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e) => EditPath_Click(sender, null!);
+
+    private void AddCrumb(string text, string? path)
+    {
+        var btn = new Button
+        {
+            Content = text,
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6, 4, 6, 4),
+            FontSize = 13
+        };
+        btn.Click += (_, _) => NavigateTo(path);
+        Breadcrumb.Children.Add(btn);
+    }
+
+    private void NavBack_Click(object sender, RoutedEventArgs e)
+    {
+        if (_navIndex > 0) { _navIndex--; NavigateTo(_navHistory[_navIndex], addHistory: false); }
+    }
+
+    private void NavForward_Click(object sender, RoutedEventArgs e)
+    {
+        if (_navIndex < _navHistory.Count - 1) { _navIndex++; NavigateTo(_navHistory[_navIndex], addHistory: false); }
+    }
+
+    private void NavUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentFolder is null) return;
+        NavigateTo(Directory.GetParent(_currentFolder)?.FullName);
+    }
+
+    private void EditPath_Click(object sender, RoutedEventArgs e)
+    {
+        AddressBox.Text = _currentFolder ?? "";
+        BreadcrumbScroller.Visibility = Visibility.Collapsed;
+        AddressBox.Visibility = Visibility.Visible;
+        AddressBox.Focus(FocusState.Programmatic);
+        AddressBox.SelectAll();
+    }
+
+    private void AddressBox_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Enter)
+        {
+            var path = AddressBox.Text.Trim();
+            EndEditPath();
+            if (Directory.Exists(path)) NavigateTo(path);
+            else if (File.Exists(path) && PhotoLibrary.IsSupported(path))
+            {
+                NavigateTo(Directory.GetParent(path)?.FullName);
+                var m = _explorerItems.FirstOrDefault(i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase));
+                if (m is not null) OpenImageFromExplorer(m);
+            }
+            else StatusText.Text = "Path not found.";
+            e.Handled = true;
+        }
+        else if (e.Key == VirtualKey.Escape) { EndEditPath(); e.Handled = true; }
+    }
+
+    private void EndEditPath()
+    {
+        AddressBox.Visibility = Visibility.Collapsed;
+        BreadcrumbScroller.Visibility = Visibility.Visible;
+    }
+
+    private void Refresh_Click(object sender, RoutedEventArgs e) => LoadCurrentFolder();
+
+    private async void ExplorerIcons_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+    {
+        if (args.InRecycleQueue) return;
+        if (args.Item is ExplorerItem it && it.Icon is null)
+            await it.LoadIconAsync((uint)Math.Clamp(_iconSize, 48, 256));
+    }
+
+    private void ExplorerItem_Click(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is not ExplorerItem item) return;
+        OpenExplorerItem(item);
+    }
+
+    /// <summary>Lets the user drag files/folders out to Explorer, terminals, chat apps, etc.</summary>
+    private void Explorer_DragItemsStarting(object sender, DragItemsStartingEventArgs e)
+    {
+        var picked = e.Items.OfType<ExplorerItem>().Select(i => (i.Path, i.IsFolder)).ToList();
+        if (picked.Count == 0) { e.Cancel = true; return; }
+
+        e.Data.RequestedOperation = DataPackageOperation.Copy;
+        // Path text fallback (terminals/editors that accept text).
+        e.Data.SetText(string.Join(" ", picked.Select(p => $"\"{p.Path}\"")));
+
+        // Real file drop (CF_HDROP) provided on demand so we can resolve StorageItems async.
+        e.Data.SetDataProvider(StandardDataFormats.StorageItems, async request =>
+        {
+            var deferral = request.GetDeferral();
+            try
+            {
+                var items = new List<IStorageItem>();
+                foreach (var (path, isFolder) in picked)
+                {
+                    try
+                    {
+                        items.Add(isFolder
+                            ? await StorageFolder.GetFolderFromPathAsync(path)
+                            : await StorageFile.GetFileFromPathAsync(path));
+                    }
+                    catch { /* skip unreadable */ }
+                }
+                request.SetData(items);
+            }
+            finally { deferral.Complete(); }
+        });
+    }
+
+    private void OpenExplorerItem(ExplorerItem item)
+    {
+        if (item.IsFolder) NavigateTo(item.Path);
+        else if (item.IsImage) OpenImageFromExplorer(item);
+        else
+        {
+            try
+            {
+                ShellOps.AllowForeground(); // let the opened app come to the front, not stay behind us
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = item.Path, UseShellExecute = true });
+            }
+            catch (Exception ex) { StatusText.Text = ex.Message; App.Log("OpenDefault", ex); }
+        }
+    }
+
+    private void OpenImageFromExplorer(ExplorerItem item)
+    {
+        PopulatePhotoPipelineFromCurrent();
+        var idx = _view.ToList().FindIndex(p => string.Equals(p.Path, item.Path, StringComparison.OrdinalIgnoreCase));
+        _currentIndex = Math.Max(0, idx);
+        ShowViewer();
+        _ = LoadCurrentAsync();
+    }
+
+    private void PopulatePhotoPipelineFromCurrent()
+    {
+        var paths = _explorerItems.Where(i => i.IsImage).Select(i => i.Path).ToList();
+        _allPhotos.Clear();
+        _allPhotos.AddRange(_library.LoadFiles(paths));
+        _showHiddenAlbum = false;
+        _favoritesOnly = false;
+        RefreshView();
+    }
+
+    // ---- View controls ----
+
+    private void ViewMode_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not RadioMenuFlyoutItem item) return;
+        _explorerViewMode = item.Tag as string ?? "Large";
+        if (_explorerViewMode != "Details")
+        {
+            _iconSize = _explorerViewMode switch { "Large" => 160, "Medium" => 110, _ => 72 };
+            IconSizeSlider.Value = _iconSize;
+        }
+        ApplyViewMode();
+    }
+
+    private void IconSize_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (_fs is null) return;
+        _iconSize = e.NewValue;
+        if (_explorerViewMode == "Details") { _explorerViewMode = "Large"; ApplyViewMode(); }
+        ApplyIconSize();
+    }
+
+    private void ShowAppHidden_Click(object sender, RoutedEventArgs e)
+    {
+        _showAppHidden = ShowHiddenToggle.IsChecked == true;
+        LoadCurrentFolder();
+    }
+
+    // ---- Hide folder feature ----
+
+    private void HideFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentFolder is null) return;
+        ToggleFolderHidden(_currentFolder);
+        LoadCurrentFolder();
+    }
+
+    private void ToggleFolderHidden(string folderPath)
+    {
+        if (_state.HiddenFolders.Contains(folderPath)) _state.HiddenFolders.Remove(folderPath);
+        else _state.HiddenFolders.Add(folderPath);
+        _state.Save();
+    }
+
+    private void UnhideCurrent_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentFolder is null) return;
+        _state.HiddenFolders.Remove(_currentFolder);
+        _state.Save();
+        LoadCurrentFolder();
+    }
+
+    private void UpdateHideFolderButton()
+    {
+        var canHide = _currentFolder is not null;
+        HideFolderBtn.IsEnabled = canHide;
+        var hidden = canHide && _state.HiddenFolders.Contains(_currentFolder!);
+        HideFolderText.Text = hidden ? "Unhide folder" : "Hide folder";
+        HideFolderIcon.Glyph = hidden ? GlyphEyeOpen : GlyphEyeOff;
+    }
+
+    // ---- File operations ----
+
+    private void NewFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentFolder is null) { StatusText.Text = "Pick a folder first."; return; }
+        try
+        {
+            var name = "New folder";
+            var n = 2;
+            while (Directory.Exists(Path.Combine(_currentFolder, name))) name = $"New folder ({n++})";
+            Directory.CreateDirectory(Path.Combine(_currentFolder, name));
+            LoadCurrentFolder();
+        }
+        catch (Exception ex) { StatusText.Text = $"Couldn't create folder: {ex.Message}"; }
+    }
+
+    private void ExplorerSlideshow_Click(object sender, RoutedEventArgs e)
+    {
+        PopulatePhotoPipelineFromCurrent();
+        StartSlideshow();
+    }
+
+    private void ExplorerCollage_Click(object sender, RoutedEventArgs e)
+    {
+        PopulatePhotoPipelineFromCurrent();
+        if (_view.Count == 0) { StatusText.Text = "No images in this folder."; return; }
+        Collage_Click(this, new RoutedEventArgs());
+    }
+
+    // ---- Explorer context menu ----
+
+    private void ExplorerView_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        var item = (e.OriginalSource as FrameworkElement)?.DataContext as ExplorerItem;
+        _explorerContextItem = item;
+        var target = (FrameworkElement)sender;
+        ShowExplorerMenu(item, target, e.GetPosition(target));
+        e.Handled = true;
+    }
+
+    private void ShowExplorerMenu(ExplorerItem? item, FrameworkElement target, Windows.Foundation.Point position)
+    {
+        var menu = new MenuFlyout();
+        MenuFlyoutItem SMI(string text, Symbol? sym, RoutedEventHandler click)
+        {
+            var i = new MenuFlyoutItem { Text = text };
+            if (sym.HasValue) i.Icon = new SymbolIcon(sym.Value);
+            i.Click += click;
+            return i;
+        }
+
+        if (item is not null)
+        {
+            menu.Items.Add(SMI(item.IsFolder ? "Open" : "Open", Symbol.OpenFile, (_, _) => OpenExplorerItem(item)));
+            if (!item.IsFolder)
+                menu.Items.Add(SMI("Open with…", null, (_, _) => OpenWithItem2(item.Path)));
+            menu.Items.Add(new MenuFlyoutSeparator());
+            menu.Items.Add(SMI("Copy", Symbol.Copy, async (_, _) => await CopyFileToClipboardAsync(item.Path)));
+            menu.Items.Add(SMI("Copy path", Symbol.Link, (_, _) => CopyTextToClipboard(item.Path)));
+            menu.Items.Add(new MenuFlyoutSeparator());
+            if (item.IsFolder)
+            {
+                var hidden = _state.HiddenFolders.Contains(item.Path);
+                menu.Items.Add(SMI(hidden ? "Unhide folder" : "Hide folder", null, (_, _) => { ToggleFolderHidden(item.Path); LoadCurrentFolder(); }));
+            }
+            menu.Items.Add(SMI("Rename…", Symbol.Rename, async (_, _) => await RenameExplorerAsync(item)));
+            menu.Items.Add(SMI("Delete", Symbol.Delete, async (_, _) => await DeleteExplorerAsync(item)));
+            menu.Items.Add(new MenuFlyoutSeparator());
+            menu.Items.Add(SMI("Properties", null, (_, _) => { var h = WinRT.Interop.WindowNative.GetWindowHandle(this); ShellOps.ShowProperties(h, item.Path); }));
+        }
+        else
+        {
+            menu.Items.Add(SMI("New folder", Symbol.NewFolder, NewFolder_Click));
+            menu.Items.Add(SMI("Paste", Symbol.Paste, async (_, _) => await PasteIntoCurrentAsync()));
+            menu.Items.Add(SMI("Refresh", Symbol.Refresh, (_, _) => LoadCurrentFolder()));
+        }
+
+        menu.ShowAt(target, new FlyoutShowOptions { Position = position });
+    }
+
+    private void OpenWithItem2(string path)
+    {
+        try { ShellOps.OpenWith(path); }
+        catch (Exception ex) { StatusText.Text = ex.Message; }
+    }
+
+    private async System.Threading.Tasks.Task CopyFileToClipboardAsync(string path)
+    {
+        try
+        {
+            IStorageItem item = Directory.Exists(path)
+                ? await StorageFolder.GetFolderFromPathAsync(path)
+                : await StorageFile.GetFileFromPathAsync(path);
+            var data = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+            data.SetStorageItems(new[] { item });
+            Clipboard.SetContent(data);
+            StatusText.Text = "Copied to clipboard";
+        }
+        catch (Exception ex) { StatusText.Text = $"Copy failed: {ex.Message}"; }
+    }
+
+    private void CopyTextToClipboard(string text)
+    {
+        var data = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+        data.SetText(text);
+        Clipboard.SetContent(data);
+        StatusText.Text = "Path copied";
+    }
+
+    private async System.Threading.Tasks.Task PasteIntoCurrentAsync()
+    {
+        if (_currentFolder is null) { StatusText.Text = "Pick a folder first."; return; }
+        try
+        {
+            var content = Clipboard.GetContent();
+            if (!content.Contains(StandardDataFormats.StorageItems)) { StatusText.Text = "Nothing to paste."; return; }
+            var dest = await StorageFolder.GetFolderFromPathAsync(_currentFolder);
+            var items = await content.GetStorageItemsAsync();
+            var count = 0;
+            foreach (var i in items)
+            {
+                if (i is StorageFile f) { await f.CopyAsync(dest, f.Name, NameCollisionOption.GenerateUniqueName); count++; }
+            }
+            LoadCurrentFolder();
+            StatusText.Text = $"Pasted {count} file(s)";
+        }
+        catch (Exception ex) { StatusText.Text = $"Paste failed: {ex.Message}"; }
+    }
+
+    private async System.Threading.Tasks.Task RenameExplorerAsync(ExplorerItem item)
+    {
+        var box = new TextBox { Text = item.Name };
+        box.Loaded += (_, _) => box.SelectAll();
+        var dialog = new ContentDialog
+        {
+            Title = "Rename",
+            Content = box,
+            PrimaryButtonText = "Rename",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = RootGrid.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        var newName = box.Text.Trim();
+        if (string.IsNullOrEmpty(newName) || newName == item.Name) return;
+        try
+        {
+            if (item.IsFolder)
+            {
+                var folder = await StorageFolder.GetFolderFromPathAsync(item.Path);
+                await folder.RenameAsync(newName, NameCollisionOption.FailIfExists);
+            }
+            else
+            {
+                var file = await StorageFile.GetFileFromPathAsync(item.Path);
+                await file.RenameAsync(newName, NameCollisionOption.FailIfExists);
+            }
+            LoadCurrentFolder();
+        }
+        catch (Exception ex) { StatusText.Text = $"Rename failed: {ex.Message}"; }
+    }
+
+    private async System.Threading.Tasks.Task DeleteExplorerAsync(ExplorerItem item)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Delete",
+            Content = $"Move \"{item.Name}\" to the Recycle Bin?",
+            PrimaryButtonText = "Delete",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = RootGrid.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        try
+        {
+            if (item.IsFolder)
+            {
+                var folder = await StorageFolder.GetFolderFromPathAsync(item.Path);
+                await folder.DeleteAsync(StorageDeleteOption.Default);
+            }
+            else
+            {
+                var file = await StorageFile.GetFileFromPathAsync(item.Path);
+                await file.DeleteAsync(StorageDeleteOption.Default);
+            }
+            LoadCurrentFolder();
+        }
+        catch (Exception ex) { StatusText.Text = $"Delete failed: {ex.Message}"; }
     }
 
     // ===================== Right-click context menu =====================
@@ -1054,7 +1625,7 @@ public sealed partial class MainWindow : Window
         RefreshView();
         if (InViewer && wasCurrent)
         {
-            if (_view.Count == 0) { ShowGallery(); return; }
+            if (_view.Count == 0) { ShowExplorer(); return; }
             _currentIndex = Math.Min(_currentIndex, _view.Count - 1);
             _ = LoadCurrentAsync();
         }
@@ -1099,7 +1670,7 @@ public sealed partial class MainWindow : Window
 
         if (InViewer && wasCurrent)
         {
-            if (_view.Count == 0) { ShowGallery(); return; }
+            if (_view.Count == 0) { ShowExplorer(); return; }
             _currentIndex = Math.Min(_currentIndex, _view.Count - 1);
             await LoadCurrentAsync();
         }
@@ -1206,9 +1777,9 @@ public sealed partial class MainWindow : Window
             case VirtualKey.Escape when SettingsOverlay.Visibility == Visibility.Visible:
                 CloseSettings(); e.Handled = true; break;
             case VirtualKey.Escape when InCollage:
-                ShowGallery(); e.Handled = true; break;
+                ShowExplorer(); e.Handled = true; break;
             case VirtualKey.Escape when InViewer:
-                if (_isFullScreen) ToggleFullScreen(); else ShowGallery();
+                if (_isFullScreen) ToggleFullScreen(); else ShowExplorer();
                 e.Handled = true; break;
             case VirtualKey.F11:
             case VirtualKey.F:
