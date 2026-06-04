@@ -1297,7 +1297,7 @@ public sealed partial class MainWindow : Window
 
     // ---- File operations ----
 
-    private void NewFolder_Click(object sender, RoutedEventArgs e)
+    private async void NewFolder_Click(object sender, RoutedEventArgs e)
     {
         if (_currentFolder is null) { StatusText.Text = "Pick a folder first."; return; }
         try
@@ -1305,8 +1305,13 @@ public sealed partial class MainWindow : Window
             var name = "New folder";
             var n = 2;
             while (Directory.Exists(Path.Combine(_currentFolder, name))) name = $"New folder ({n++})";
-            Directory.CreateDirectory(Path.Combine(_currentFolder, name));
+            var full = Path.Combine(_currentFolder, name);
+            Directory.CreateDirectory(full);
             LoadCurrentFolder();
+
+            // Immediately prompt to name it, like Explorer's inline rename.
+            var item = _explorerItems.FirstOrDefault(i => string.Equals(i.Path, full, StringComparison.OrdinalIgnoreCase));
+            if (item is not null) await RenameExplorerAsync(item);
         }
         catch (Exception ex) { StatusText.Text = $"Couldn't create folder: {ex.Message}"; }
     }
@@ -1457,33 +1462,76 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { StatusText.Text = $"Rename failed: {ex.Message}"; }
     }
 
+    /// <summary>True while Shift is held — used to bypass the Recycle Bin (permanent delete).</summary>
+    private static bool IsShiftDown()
+    {
+        var state = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift);
+        return (state & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
+    }
+
     private async System.Threading.Tasks.Task DeleteExplorerAsync(ExplorerItem item)
     {
+        var permanent = IsShiftDown();
         var dialog = new ContentDialog
         {
-            Title = "Delete",
-            Content = $"Move \"{item.Name}\" to the Recycle Bin?",
+            Title = permanent ? "Permanently delete" : "Delete",
+            Content = permanent
+                ? $"Permanently delete \"{item.Name}\"? This can't be undone."
+                : $"Move \"{item.Name}\" to the Recycle Bin?",
             PrimaryButtonText = "Delete",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = RootGrid.XamlRoot
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var option = permanent ? StorageDeleteOption.PermanentDelete : StorageDeleteOption.Default;
         try
         {
             if (item.IsFolder)
-            {
-                var folder = await StorageFolder.GetFolderFromPathAsync(item.Path);
-                await folder.DeleteAsync(StorageDeleteOption.Default);
-            }
+                await (await StorageFolder.GetFolderFromPathAsync(item.Path)).DeleteAsync(option);
             else
-            {
-                var file = await StorageFile.GetFileFromPathAsync(item.Path);
-                await file.DeleteAsync(StorageDeleteOption.Default);
-            }
+                await (await StorageFile.GetFileFromPathAsync(item.Path)).DeleteAsync(option);
             LoadCurrentFolder();
         }
         catch (Exception ex) { StatusText.Text = $"Delete failed: {ex.Message}"; }
+    }
+
+    /// <summary>Deletes the explorer selection (Del key). Shift = permanent.</summary>
+    private async System.Threading.Tasks.Task DeleteSelectedExplorerAsync()
+    {
+        var active = ExplorerIconsView.Visibility == Visibility.Visible
+            ? (ListViewBase)ExplorerIconsView : ExplorerDetailsList;
+        var selection = active.SelectedItems.OfType<ExplorerItem>().ToList();
+        if (selection.Count == 0) return;
+
+        var permanent = IsShiftDown();
+        var dialog = new ContentDialog
+        {
+            Title = permanent ? "Permanently delete" : "Delete",
+            Content = permanent
+                ? $"Permanently delete {selection.Count} item(s)? This can't be undone."
+                : $"Move {selection.Count} item(s) to the Recycle Bin?",
+            PrimaryButtonText = "Delete",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = RootGrid.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var option = permanent ? StorageDeleteOption.PermanentDelete : StorageDeleteOption.Default;
+        foreach (var item in selection)
+        {
+            try
+            {
+                if (item.IsFolder)
+                    await (await StorageFolder.GetFolderFromPathAsync(item.Path)).DeleteAsync(option);
+                else
+                    await (await StorageFile.GetFileFromPathAsync(item.Path)).DeleteAsync(option);
+            }
+            catch (Exception ex) { StatusText.Text = $"Delete failed: {ex.Message}"; }
+        }
+        LoadCurrentFolder();
     }
 
     // ===================== Right-click context menu =====================
@@ -1639,10 +1687,13 @@ public sealed partial class MainWindow : Window
 
     private async System.Threading.Tasks.Task DeleteItemAsync(PhotoItem item)
     {
+        var permanent = IsShiftDown();
         var dialog = new ContentDialog
         {
-            Title = "Delete photo",
-            Content = $"Move \"{item.FileName}\" to the Recycle Bin?",
+            Title = permanent ? "Permanently delete" : "Delete photo",
+            Content = permanent
+                ? $"Permanently delete \"{item.FileName}\"? This can't be undone."
+                : $"Move \"{item.FileName}\" to the Recycle Bin?",
             PrimaryButtonText = "Delete",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
@@ -1653,7 +1704,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var file = await StorageFile.GetFileFromPathAsync(item.Path);
-            await file.DeleteAsync(StorageDeleteOption.Default); // to Recycle Bin
+            await file.DeleteAsync(permanent ? StorageDeleteOption.PermanentDelete : StorageDeleteOption.Default);
         }
         catch (Exception ex)
         {
@@ -1767,7 +1818,11 @@ public sealed partial class MainWindow : Window
         switch (e.Key)
         {
             case VirtualKey.F5:
-                StartSlideshow(); e.Handled = true; break;
+                if (ExplorerView.Visibility == Visibility.Visible) LoadCurrentFolder();
+                else StartSlideshow();
+                e.Handled = true; break;
+            case VirtualKey.Delete when ExplorerView.Visibility == Visibility.Visible:
+                _ = DeleteSelectedExplorerAsync(); e.Handled = true; break;
             case VirtualKey.H when InViewer:
                 ToggleObscure(); e.Handled = true; break;
             case VirtualKey.Left when InViewer:

@@ -63,10 +63,11 @@ public partial class ExplorerItem : ObservableObject
         var px = (int)Math.Clamp(size, 32u, 256u);
         try
         {
-            // Folders & drives: shell icon (transparent, orientation-corrected).
+            // Folders & drives: shell image (transparent, orientation-corrected). Drives use the
+            // plain icon; folders use the content thumbnail (preview of contents, like Explorer).
             if (Kind != ExplorerItemKind.File)
             {
-                var (pixels, w, h) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: true));
+                var (pixels, w, h) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: Kind == ExplorerItemKind.Drive));
                 if (pixels is not null && w > 0 && h > 0)
                 {
                     var wb = new WriteableBitmap(w, h);
