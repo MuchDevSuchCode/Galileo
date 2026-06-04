@@ -226,7 +226,7 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
         
         private void InitTypeTables()
         {
-            _typeNameTable = new string[15];
+            _typeNameTable = new string[25];
             _typeNameTable[0] = "Microsoft.UI.Xaml.Controls.XamlControlsResources";
             _typeNameTable[1] = "Microsoft.UI.Xaml.ResourceDictionary";
             _typeNameTable[2] = "Object";
@@ -235,15 +235,25 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
             _typeNameTable[5] = "Microsoft.UI.Xaml.Controls.MenuFlyoutItem";
             _typeNameTable[6] = "String";
             _typeNameTable[7] = "Microsoft.UI.Xaml.Controls.MenuFlyoutSubItem";
-            _typeNameTable[8] = "PhotosPlus.MainWindow";
-            _typeNameTable[9] = "Microsoft.UI.Xaml.Window";
-            _typeNameTable[10] = "PhotosPlus.SlideshowWindow";
-            _typeNameTable[11] = "Microsoft.UI.Xaml.Controls.TreeViewNode";
-            _typeNameTable[12] = "Microsoft.UI.Xaml.DependencyObject";
-            _typeNameTable[13] = "System.Collections.Generic.IList`1<Microsoft.UI.Xaml.Controls.TreeViewNode>";
-            _typeNameTable[14] = "Int32";
+            _typeNameTable[8] = "Microsoft.UI.Xaml.Controls.TabView";
+            _typeNameTable[9] = "Microsoft.UI.Xaml.Controls.Control";
+            _typeNameTable[10] = "System.Collections.Generic.IList`1<Object>";
+            _typeNameTable[11] = "Microsoft.UI.Xaml.Controls.TabViewWidthMode";
+            _typeNameTable[12] = "System.Enum";
+            _typeNameTable[13] = "System.ValueType";
+            _typeNameTable[14] = "System.Windows.Input.ICommand";
+            _typeNameTable[15] = "Microsoft.UI.Xaml.Controls.TabViewCloseButtonOverlayMode";
+            _typeNameTable[16] = "Int32";
+            _typeNameTable[17] = "Microsoft.UI.Xaml.DataTemplate";
+            _typeNameTable[18] = "Microsoft.UI.Xaml.Controls.DataTemplateSelector";
+            _typeNameTable[19] = "PhotosPlus.MainWindow";
+            _typeNameTable[20] = "Microsoft.UI.Xaml.Window";
+            _typeNameTable[21] = "PhotosPlus.SlideshowWindow";
+            _typeNameTable[22] = "Microsoft.UI.Xaml.Controls.TreeViewNode";
+            _typeNameTable[23] = "Microsoft.UI.Xaml.DependencyObject";
+            _typeNameTable[24] = "System.Collections.Generic.IList`1<Microsoft.UI.Xaml.Controls.TreeViewNode>";
 
-            _typeTable = new global::System.Type[15];
+            _typeTable = new global::System.Type[25];
             _typeTable[0] = typeof(global::Microsoft.UI.Xaml.Controls.XamlControlsResources);
             _typeTable[1] = typeof(global::Microsoft.UI.Xaml.ResourceDictionary);
             _typeTable[2] = typeof(global::System.Object);
@@ -252,13 +262,23 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
             _typeTable[5] = typeof(global::Microsoft.UI.Xaml.Controls.MenuFlyoutItem);
             _typeTable[6] = typeof(global::System.String);
             _typeTable[7] = typeof(global::Microsoft.UI.Xaml.Controls.MenuFlyoutSubItem);
-            _typeTable[8] = typeof(global::PhotosPlus.MainWindow);
-            _typeTable[9] = typeof(global::Microsoft.UI.Xaml.Window);
-            _typeTable[10] = typeof(global::PhotosPlus.SlideshowWindow);
-            _typeTable[11] = typeof(global::Microsoft.UI.Xaml.Controls.TreeViewNode);
-            _typeTable[12] = typeof(global::Microsoft.UI.Xaml.DependencyObject);
-            _typeTable[13] = typeof(global::System.Collections.Generic.IList<global::Microsoft.UI.Xaml.Controls.TreeViewNode>);
-            _typeTable[14] = typeof(global::System.Int32);
+            _typeTable[8] = typeof(global::Microsoft.UI.Xaml.Controls.TabView);
+            _typeTable[9] = typeof(global::Microsoft.UI.Xaml.Controls.Control);
+            _typeTable[10] = typeof(global::System.Collections.Generic.IList<global::System.Object>);
+            _typeTable[11] = typeof(global::Microsoft.UI.Xaml.Controls.TabViewWidthMode);
+            _typeTable[12] = typeof(global::System.Enum);
+            _typeTable[13] = typeof(global::System.ValueType);
+            _typeTable[14] = typeof(global::System.Windows.Input.ICommand);
+            _typeTable[15] = typeof(global::Microsoft.UI.Xaml.Controls.TabViewCloseButtonOverlayMode);
+            _typeTable[16] = typeof(global::System.Int32);
+            _typeTable[17] = typeof(global::Microsoft.UI.Xaml.DataTemplate);
+            _typeTable[18] = typeof(global::Microsoft.UI.Xaml.Controls.DataTemplateSelector);
+            _typeTable[19] = typeof(global::PhotosPlus.MainWindow);
+            _typeTable[20] = typeof(global::Microsoft.UI.Xaml.Window);
+            _typeTable[21] = typeof(global::PhotosPlus.SlideshowWindow);
+            _typeTable[22] = typeof(global::Microsoft.UI.Xaml.Controls.TreeViewNode);
+            _typeTable[23] = typeof(global::Microsoft.UI.Xaml.DependencyObject);
+            _typeTable[24] = typeof(global::System.Collections.Generic.IList<global::Microsoft.UI.Xaml.Controls.TreeViewNode>);
         }
 
         private int LookupTypeIndexByName(string typeName)
@@ -295,13 +315,21 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
 
         private object Activate_0_XamlControlsResources() { return new global::Microsoft.UI.Xaml.Controls.XamlControlsResources(); }
         private object Activate_4_RadioMenuFlyoutItem() { return new global::Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem(); }
-        private object Activate_11_TreeViewNode() { return new global::Microsoft.UI.Xaml.Controls.TreeViewNode(); }
+        private object Activate_8_TabView() { return new global::Microsoft.UI.Xaml.Controls.TabView(); }
+        private object Activate_22_TreeViewNode() { return new global::Microsoft.UI.Xaml.Controls.TreeViewNode(); }
         private void StaticInitializer_0_XamlControlsResources() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::Microsoft.UI.Xaml.Controls.XamlControlsResources).TypeHandle);
         private void StaticInitializer_4_RadioMenuFlyoutItem() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem).TypeHandle);
-        private void StaticInitializer_8_MainWindow() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::PhotosPlus.MainWindow).TypeHandle);
-        private void StaticInitializer_10_SlideshowWindow() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::PhotosPlus.SlideshowWindow).TypeHandle);
-        private void StaticInitializer_11_TreeViewNode() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::Microsoft.UI.Xaml.Controls.TreeViewNode).TypeHandle);
-        private void StaticInitializer_13_IList() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::System.Collections.Generic.IList<global::Microsoft.UI.Xaml.Controls.TreeViewNode>).TypeHandle);
+        private void StaticInitializer_8_TabView() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::Microsoft.UI.Xaml.Controls.TabView).TypeHandle);
+        private void StaticInitializer_10_IList() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::System.Collections.Generic.IList<global::System.Object>).TypeHandle);
+        private void StaticInitializer_11_TabViewWidthMode() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::Microsoft.UI.Xaml.Controls.TabViewWidthMode).TypeHandle);
+        private void StaticInitializer_12_Enum() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::System.Enum).TypeHandle);
+        private void StaticInitializer_13_ValueType() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::System.ValueType).TypeHandle);
+        private void StaticInitializer_14_ICommand() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::System.Windows.Input.ICommand).TypeHandle);
+        private void StaticInitializer_15_TabViewCloseButtonOverlayMode() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::Microsoft.UI.Xaml.Controls.TabViewCloseButtonOverlayMode).TypeHandle);
+        private void StaticInitializer_19_MainWindow() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::PhotosPlus.MainWindow).TypeHandle);
+        private void StaticInitializer_21_SlideshowWindow() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::PhotosPlus.SlideshowWindow).TypeHandle);
+        private void StaticInitializer_22_TreeViewNode() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::Microsoft.UI.Xaml.Controls.TreeViewNode).TypeHandle);
+        private void StaticInitializer_24_IList() => global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(global::System.Collections.Generic.IList<global::Microsoft.UI.Xaml.Controls.TreeViewNode>).TypeHandle);
         private void MapAdd_0_XamlControlsResources(object instance, object key, object item)
         {
             var collection = (global::System.Collections.Generic.IDictionary<global::System.Object, global::System.Object>)instance;
@@ -309,7 +337,13 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
             var newItem = (global::System.Object)item;
             collection.Add(newKey, newItem);
         }
-        private void VectorAdd_13_IList(object instance, object item)
+        private void VectorAdd_10_IList(object instance, object item)
+        {
+            var collection = (global::System.Collections.Generic.ICollection<global::System.Object>)instance;
+            var newItem = (global::System.Object)item;
+            collection.Add(newItem);
+        }
+        private void VectorAdd_24_IList(object instance, object item)
         {
             var collection = (global::System.Collections.Generic.ICollection<global::Microsoft.UI.Xaml.Controls.TreeViewNode>)instance;
             var newItem = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)item;
@@ -369,28 +403,116 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
                 xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
                 break;
 
-            case 8:   //  PhotosPlus.MainWindow
-                userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("Microsoft.UI.Xaml.Window"));
-                userType.StaticInitializer = StaticInitializer_8_MainWindow;
-                userType.SetIsLocalType();
+            case 8:   //  Microsoft.UI.Xaml.Controls.TabView
+                userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("Microsoft.UI.Xaml.Controls.Control"));
+                userType.Activator = Activate_8_TabView;
+                userType.StaticInitializer = StaticInitializer_8_TabView;
+                userType.SetContentPropertyName("Microsoft.UI.Xaml.Controls.TabView.TabItems");
+                userType.AddMemberName("TabItems");
+                userType.AddMemberName("IsAddTabButtonVisible");
+                userType.AddMemberName("TabWidthMode");
+                userType.AddMemberName("AddTabButtonCommand");
+                userType.AddMemberName("AddTabButtonCommandParameter");
+                userType.AddMemberName("AllowDropTabs");
+                userType.AddMemberName("CanDragTabs");
+                userType.AddMemberName("CanReorderTabs");
+                userType.AddMemberName("CanTearOutTabs");
+                userType.AddMemberName("CloseButtonOverlayMode");
+                userType.AddMemberName("SelectedIndex");
+                userType.AddMemberName("SelectedItem");
+                userType.AddMemberName("TabItemTemplate");
+                userType.AddMemberName("TabItemTemplateSelector");
+                userType.AddMemberName("TabItemsSource");
+                userType.AddMemberName("TabStripFooter");
+                userType.AddMemberName("TabStripFooterTemplate");
+                userType.AddMemberName("TabStripHeader");
+                userType.AddMemberName("TabStripHeaderTemplate");
                 xamlType = userType;
                 break;
 
-            case 9:   //  Microsoft.UI.Xaml.Window
+            case 9:   //  Microsoft.UI.Xaml.Controls.Control
                 xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
                 break;
 
-            case 10:   //  PhotosPlus.SlideshowWindow
+            case 10:   //  System.Collections.Generic.IList`1<Object>
+                userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, null);
+                userType.StaticInitializer = StaticInitializer_10_IList;
+                userType.CollectionAdd = VectorAdd_10_IList;
+                userType.SetIsReturnTypeStub();
+                xamlType = userType;
+                break;
+
+            case 11:   //  Microsoft.UI.Xaml.Controls.TabViewWidthMode
+                userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("System.Enum"));
+                userType.StaticInitializer = StaticInitializer_11_TabViewWidthMode;
+                userType.AddEnumValue("Equal", global::Microsoft.UI.Xaml.Controls.TabViewWidthMode.Equal);
+                userType.AddEnumValue("SizeToContent", global::Microsoft.UI.Xaml.Controls.TabViewWidthMode.SizeToContent);
+                userType.AddEnumValue("Compact", global::Microsoft.UI.Xaml.Controls.TabViewWidthMode.Compact);
+                xamlType = userType;
+                break;
+
+            case 12:   //  System.Enum
+                userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("System.ValueType"));
+                userType.StaticInitializer = StaticInitializer_12_Enum;
+                xamlType = userType;
+                break;
+
+            case 13:   //  System.ValueType
+                userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("Object"));
+                userType.StaticInitializer = StaticInitializer_13_ValueType;
+                xamlType = userType;
+                break;
+
+            case 14:   //  System.Windows.Input.ICommand
+                userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, null);
+                userType.StaticInitializer = StaticInitializer_14_ICommand;
+                userType.SetIsReturnTypeStub();
+                xamlType = userType;
+                break;
+
+            case 15:   //  Microsoft.UI.Xaml.Controls.TabViewCloseButtonOverlayMode
+                userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("System.Enum"));
+                userType.StaticInitializer = StaticInitializer_15_TabViewCloseButtonOverlayMode;
+                userType.AddEnumValue("Auto", global::Microsoft.UI.Xaml.Controls.TabViewCloseButtonOverlayMode.Auto);
+                userType.AddEnumValue("OnPointerOver", global::Microsoft.UI.Xaml.Controls.TabViewCloseButtonOverlayMode.OnPointerOver);
+                userType.AddEnumValue("Always", global::Microsoft.UI.Xaml.Controls.TabViewCloseButtonOverlayMode.Always);
+                xamlType = userType;
+                break;
+
+            case 16:   //  Int32
+                xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
+                break;
+
+            case 17:   //  Microsoft.UI.Xaml.DataTemplate
+                xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
+                break;
+
+            case 18:   //  Microsoft.UI.Xaml.Controls.DataTemplateSelector
+                xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
+                break;
+
+            case 19:   //  PhotosPlus.MainWindow
                 userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("Microsoft.UI.Xaml.Window"));
-                userType.StaticInitializer = StaticInitializer_10_SlideshowWindow;
+                userType.StaticInitializer = StaticInitializer_19_MainWindow;
                 userType.SetIsLocalType();
                 xamlType = userType;
                 break;
 
-            case 11:   //  Microsoft.UI.Xaml.Controls.TreeViewNode
+            case 20:   //  Microsoft.UI.Xaml.Window
+                xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
+                break;
+
+            case 21:   //  PhotosPlus.SlideshowWindow
+                userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("Microsoft.UI.Xaml.Window"));
+                userType.StaticInitializer = StaticInitializer_21_SlideshowWindow;
+                userType.SetIsLocalType();
+                xamlType = userType;
+                break;
+
+            case 22:   //  Microsoft.UI.Xaml.Controls.TreeViewNode
                 userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, GetXamlTypeByName("Microsoft.UI.Xaml.DependencyObject"));
-                userType.Activator = Activate_11_TreeViewNode;
-                userType.StaticInitializer = StaticInitializer_11_TreeViewNode;
+                userType.Activator = Activate_22_TreeViewNode;
+                userType.StaticInitializer = StaticInitializer_22_TreeViewNode;
                 userType.AddMemberName("Children");
                 userType.AddMemberName("Content");
                 userType.AddMemberName("Depth");
@@ -402,20 +524,16 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
                 xamlType = userType;
                 break;
 
-            case 12:   //  Microsoft.UI.Xaml.DependencyObject
+            case 23:   //  Microsoft.UI.Xaml.DependencyObject
                 xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
                 break;
 
-            case 13:   //  System.Collections.Generic.IList`1<Microsoft.UI.Xaml.Controls.TreeViewNode>
+            case 24:   //  System.Collections.Generic.IList`1<Microsoft.UI.Xaml.Controls.TreeViewNode>
                 userType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType(this, typeName, type, null);
-                userType.StaticInitializer = StaticInitializer_13_IList;
-                userType.CollectionAdd = VectorAdd_13_IList;
+                userType.StaticInitializer = StaticInitializer_24_IList;
+                userType.CollectionAdd = VectorAdd_24_IList;
                 userType.SetIsReturnTypeStub();
                 xamlType = userType;
-                break;
-
-            case 14:   //  Int32
-                xamlType = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlSystemBaseType(typeName, type);
                 break;
             }
             return xamlType;
@@ -514,52 +632,237 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
         {
             global::Microsoft.UI.Xaml.Controls.RadioMenuFlyoutItem.SetAreCheckStatesEnabled((global::Microsoft.UI.Xaml.Controls.MenuFlyoutSubItem)instance, (global::System.Boolean)Value);
         }
-        private object get_4_TreeViewNode_Children(object instance)
+        private object get_4_TabView_TabItems(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.TabItems;
+        }
+        private object get_5_TabView_IsAddTabButtonVisible(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.IsAddTabButtonVisible;
+        }
+        private void set_5_TabView_IsAddTabButtonVisible(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.IsAddTabButtonVisible = (global::System.Boolean)Value;
+        }
+        private object get_6_TabView_TabWidthMode(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.TabWidthMode;
+        }
+        private void set_6_TabView_TabWidthMode(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.TabWidthMode = (global::Microsoft.UI.Xaml.Controls.TabViewWidthMode)Value;
+        }
+        private object get_7_TabView_AddTabButtonCommand(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.AddTabButtonCommand;
+        }
+        private void set_7_TabView_AddTabButtonCommand(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.AddTabButtonCommand = (global::System.Windows.Input.ICommand)Value;
+        }
+        private object get_8_TabView_AddTabButtonCommandParameter(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.AddTabButtonCommandParameter;
+        }
+        private void set_8_TabView_AddTabButtonCommandParameter(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.AddTabButtonCommandParameter = (global::System.Object)Value;
+        }
+        private object get_9_TabView_AllowDropTabs(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.AllowDropTabs;
+        }
+        private void set_9_TabView_AllowDropTabs(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.AllowDropTabs = (global::System.Boolean)Value;
+        }
+        private object get_10_TabView_CanDragTabs(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.CanDragTabs;
+        }
+        private void set_10_TabView_CanDragTabs(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.CanDragTabs = (global::System.Boolean)Value;
+        }
+        private object get_11_TabView_CanReorderTabs(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.CanReorderTabs;
+        }
+        private void set_11_TabView_CanReorderTabs(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.CanReorderTabs = (global::System.Boolean)Value;
+        }
+        private object get_12_TabView_CanTearOutTabs(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.CanTearOutTabs;
+        }
+        private void set_12_TabView_CanTearOutTabs(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.CanTearOutTabs = (global::System.Boolean)Value;
+        }
+        private object get_13_TabView_CloseButtonOverlayMode(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.CloseButtonOverlayMode;
+        }
+        private void set_13_TabView_CloseButtonOverlayMode(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.CloseButtonOverlayMode = (global::Microsoft.UI.Xaml.Controls.TabViewCloseButtonOverlayMode)Value;
+        }
+        private object get_14_TabView_SelectedIndex(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.SelectedIndex;
+        }
+        private void set_14_TabView_SelectedIndex(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.SelectedIndex = (global::System.Int32)Value;
+        }
+        private object get_15_TabView_SelectedItem(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.SelectedItem;
+        }
+        private void set_15_TabView_SelectedItem(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.SelectedItem = (global::System.Object)Value;
+        }
+        private object get_16_TabView_TabItemTemplate(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.TabItemTemplate;
+        }
+        private void set_16_TabView_TabItemTemplate(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.TabItemTemplate = (global::Microsoft.UI.Xaml.DataTemplate)Value;
+        }
+        private object get_17_TabView_TabItemTemplateSelector(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.TabItemTemplateSelector;
+        }
+        private void set_17_TabView_TabItemTemplateSelector(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.TabItemTemplateSelector = (global::Microsoft.UI.Xaml.Controls.DataTemplateSelector)Value;
+        }
+        private object get_18_TabView_TabItemsSource(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.TabItemsSource;
+        }
+        private void set_18_TabView_TabItemsSource(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.TabItemsSource = (global::System.Object)Value;
+        }
+        private object get_19_TabView_TabStripFooter(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.TabStripFooter;
+        }
+        private void set_19_TabView_TabStripFooter(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.TabStripFooter = (global::System.Object)Value;
+        }
+        private object get_20_TabView_TabStripFooterTemplate(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.TabStripFooterTemplate;
+        }
+        private void set_20_TabView_TabStripFooterTemplate(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.TabStripFooterTemplate = (global::Microsoft.UI.Xaml.DataTemplate)Value;
+        }
+        private object get_21_TabView_TabStripHeader(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.TabStripHeader;
+        }
+        private void set_21_TabView_TabStripHeader(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.TabStripHeader = (global::System.Object)Value;
+        }
+        private object get_22_TabView_TabStripHeaderTemplate(object instance)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            return that.TabStripHeaderTemplate;
+        }
+        private void set_22_TabView_TabStripHeaderTemplate(object instance, object Value)
+        {
+            var that = (global::Microsoft.UI.Xaml.Controls.TabView)instance;
+            that.TabStripHeaderTemplate = (global::Microsoft.UI.Xaml.DataTemplate)Value;
+        }
+        private object get_23_TreeViewNode_Children(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.Children;
         }
-        private object get_5_TreeViewNode_Content(object instance)
+        private object get_24_TreeViewNode_Content(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.Content;
         }
-        private void set_5_TreeViewNode_Content(object instance, object Value)
+        private void set_24_TreeViewNode_Content(object instance, object Value)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             that.Content = (global::System.Object)Value;
         }
-        private object get_6_TreeViewNode_Depth(object instance)
+        private object get_25_TreeViewNode_Depth(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.Depth;
         }
-        private object get_7_TreeViewNode_HasChildren(object instance)
+        private object get_26_TreeViewNode_HasChildren(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.HasChildren;
         }
-        private object get_8_TreeViewNode_HasUnrealizedChildren(object instance)
+        private object get_27_TreeViewNode_HasUnrealizedChildren(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.HasUnrealizedChildren;
         }
-        private void set_8_TreeViewNode_HasUnrealizedChildren(object instance, object Value)
+        private void set_27_TreeViewNode_HasUnrealizedChildren(object instance, object Value)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             that.HasUnrealizedChildren = (global::System.Boolean)Value;
         }
-        private object get_9_TreeViewNode_IsExpanded(object instance)
+        private object get_28_TreeViewNode_IsExpanded(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.IsExpanded;
         }
-        private void set_9_TreeViewNode_IsExpanded(object instance, object Value)
+        private void set_28_TreeViewNode_IsExpanded(object instance, object Value)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             that.IsExpanded = (global::System.Boolean)Value;
         }
-        private object get_10_TreeViewNode_Parent(object instance)
+        private object get_29_TreeViewNode_Parent(object instance)
         {
             var that = (global::Microsoft.UI.Xaml.Controls.TreeViewNode)instance;
             return that.Parent;
@@ -602,50 +905,183 @@ namespace PhotosPlus.PhotosPlus_App_XamlTypeInfo
                 xamlMember.Getter = get_3_RadioMenuFlyoutItem_AreCheckStatesEnabled;
                 xamlMember.Setter = set_3_RadioMenuFlyoutItem_AreCheckStatesEnabled;
                 break;
+            case "Microsoft.UI.Xaml.Controls.TabView.TabItems":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "TabItems", "System.Collections.Generic.IList`1<Object>");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_4_TabView_TabItems;
+                xamlMember.SetIsReadOnly();
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.IsAddTabButtonVisible":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "IsAddTabButtonVisible", "Boolean");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_5_TabView_IsAddTabButtonVisible;
+                xamlMember.Setter = set_5_TabView_IsAddTabButtonVisible;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.TabWidthMode":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "TabWidthMode", "Microsoft.UI.Xaml.Controls.TabViewWidthMode");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_6_TabView_TabWidthMode;
+                xamlMember.Setter = set_6_TabView_TabWidthMode;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.AddTabButtonCommand":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "AddTabButtonCommand", "System.Windows.Input.ICommand");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_7_TabView_AddTabButtonCommand;
+                xamlMember.Setter = set_7_TabView_AddTabButtonCommand;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.AddTabButtonCommandParameter":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "AddTabButtonCommandParameter", "Object");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_8_TabView_AddTabButtonCommandParameter;
+                xamlMember.Setter = set_8_TabView_AddTabButtonCommandParameter;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.AllowDropTabs":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "AllowDropTabs", "Boolean");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_9_TabView_AllowDropTabs;
+                xamlMember.Setter = set_9_TabView_AllowDropTabs;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.CanDragTabs":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "CanDragTabs", "Boolean");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_10_TabView_CanDragTabs;
+                xamlMember.Setter = set_10_TabView_CanDragTabs;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.CanReorderTabs":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "CanReorderTabs", "Boolean");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_11_TabView_CanReorderTabs;
+                xamlMember.Setter = set_11_TabView_CanReorderTabs;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.CanTearOutTabs":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "CanTearOutTabs", "Boolean");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_12_TabView_CanTearOutTabs;
+                xamlMember.Setter = set_12_TabView_CanTearOutTabs;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.CloseButtonOverlayMode":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "CloseButtonOverlayMode", "Microsoft.UI.Xaml.Controls.TabViewCloseButtonOverlayMode");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_13_TabView_CloseButtonOverlayMode;
+                xamlMember.Setter = set_13_TabView_CloseButtonOverlayMode;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.SelectedIndex":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "SelectedIndex", "Int32");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_14_TabView_SelectedIndex;
+                xamlMember.Setter = set_14_TabView_SelectedIndex;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.SelectedItem":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "SelectedItem", "Object");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_15_TabView_SelectedItem;
+                xamlMember.Setter = set_15_TabView_SelectedItem;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.TabItemTemplate":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "TabItemTemplate", "Microsoft.UI.Xaml.DataTemplate");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_16_TabView_TabItemTemplate;
+                xamlMember.Setter = set_16_TabView_TabItemTemplate;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.TabItemTemplateSelector":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "TabItemTemplateSelector", "Microsoft.UI.Xaml.Controls.DataTemplateSelector");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_17_TabView_TabItemTemplateSelector;
+                xamlMember.Setter = set_17_TabView_TabItemTemplateSelector;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.TabItemsSource":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "TabItemsSource", "Object");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_18_TabView_TabItemsSource;
+                xamlMember.Setter = set_18_TabView_TabItemsSource;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.TabStripFooter":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "TabStripFooter", "Object");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_19_TabView_TabStripFooter;
+                xamlMember.Setter = set_19_TabView_TabStripFooter;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.TabStripFooterTemplate":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "TabStripFooterTemplate", "Microsoft.UI.Xaml.DataTemplate");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_20_TabView_TabStripFooterTemplate;
+                xamlMember.Setter = set_20_TabView_TabStripFooterTemplate;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.TabStripHeader":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "TabStripHeader", "Object");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_21_TabView_TabStripHeader;
+                xamlMember.Setter = set_21_TabView_TabStripHeader;
+                break;
+            case "Microsoft.UI.Xaml.Controls.TabView.TabStripHeaderTemplate":
+                userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TabView");
+                xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "TabStripHeaderTemplate", "Microsoft.UI.Xaml.DataTemplate");
+                xamlMember.SetIsDependencyProperty();
+                xamlMember.Getter = get_22_TabView_TabStripHeaderTemplate;
+                xamlMember.Setter = set_22_TabView_TabStripHeaderTemplate;
+                break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.Children":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "Children", "System.Collections.Generic.IList`1<Microsoft.UI.Xaml.Controls.TreeViewNode>");
-                xamlMember.Getter = get_4_TreeViewNode_Children;
+                xamlMember.Getter = get_23_TreeViewNode_Children;
                 xamlMember.SetIsReadOnly();
                 break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.Content":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "Content", "Object");
                 xamlMember.SetIsDependencyProperty();
-                xamlMember.Getter = get_5_TreeViewNode_Content;
-                xamlMember.Setter = set_5_TreeViewNode_Content;
+                xamlMember.Getter = get_24_TreeViewNode_Content;
+                xamlMember.Setter = set_24_TreeViewNode_Content;
                 break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.Depth":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "Depth", "Int32");
                 xamlMember.SetIsDependencyProperty();
-                xamlMember.Getter = get_6_TreeViewNode_Depth;
+                xamlMember.Getter = get_25_TreeViewNode_Depth;
                 xamlMember.SetIsReadOnly();
                 break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.HasChildren":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "HasChildren", "Boolean");
                 xamlMember.SetIsDependencyProperty();
-                xamlMember.Getter = get_7_TreeViewNode_HasChildren;
+                xamlMember.Getter = get_26_TreeViewNode_HasChildren;
                 xamlMember.SetIsReadOnly();
                 break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.HasUnrealizedChildren":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "HasUnrealizedChildren", "Boolean");
-                xamlMember.Getter = get_8_TreeViewNode_HasUnrealizedChildren;
-                xamlMember.Setter = set_8_TreeViewNode_HasUnrealizedChildren;
+                xamlMember.Getter = get_27_TreeViewNode_HasUnrealizedChildren;
+                xamlMember.Setter = set_27_TreeViewNode_HasUnrealizedChildren;
                 break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.IsExpanded":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "IsExpanded", "Boolean");
                 xamlMember.SetIsDependencyProperty();
-                xamlMember.Getter = get_9_TreeViewNode_IsExpanded;
-                xamlMember.Setter = set_9_TreeViewNode_IsExpanded;
+                xamlMember.Getter = get_28_TreeViewNode_IsExpanded;
+                xamlMember.Setter = set_28_TreeViewNode_IsExpanded;
                 break;
             case "Microsoft.UI.Xaml.Controls.TreeViewNode.Parent":
                 userType = (global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlUserType)GetXamlTypeByName("Microsoft.UI.Xaml.Controls.TreeViewNode");
                 xamlMember = new global::PhotosPlus.PhotosPlus_App_XamlTypeInfo.XamlMember(this, "Parent", "Microsoft.UI.Xaml.Controls.TreeViewNode");
-                xamlMember.Getter = get_10_TreeViewNode_Parent;
+                xamlMember.Getter = get_29_TreeViewNode_Parent;
                 xamlMember.SetIsReadOnly();
                 break;
             }

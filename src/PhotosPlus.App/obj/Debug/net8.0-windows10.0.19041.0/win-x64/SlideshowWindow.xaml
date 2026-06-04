@@ -29,33 +29,33 @@
                 Background="#AA000000" CornerRadius="28" Padding="10,6" Margin="0,0,0,24">
             <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                 <Button x:ConnectionId='7' x:Name="PrevBtn"                    Width="44" Height="44" CornerRadius="22" Background="Transparent">
-                    <FontIcon Glyph="&#xE892;" FontFamily="Segoe MDL2 Assets" Foreground="White" />
+                    <FontIcon Glyph="&#xE892;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </Button>
                 <Button x:ConnectionId='8' x:Name="PlayBtn"                         Width="44" Height="44" CornerRadius="22" Background="Transparent">
-                    <FontIcon x:ConnectionId='15' x:Name="PlayIcon" Glyph="&#xE769;" FontFamily="Segoe MDL2 Assets" Foreground="White" />
+                    <FontIcon x:ConnectionId='15' x:Name="PlayIcon" Glyph="&#xE769;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </Button>
                 <Button x:ConnectionId='9' x:Name="NextBtn"                    Width="44" Height="44" CornerRadius="22" Background="Transparent">
-                    <FontIcon Glyph="&#xE893;" FontFamily="Segoe MDL2 Assets" Foreground="White" />
+                    <FontIcon Glyph="&#xE893;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </Button>
                 <AppBarSeparator Foreground="#55FFFFFF" />
                 <Button x:ConnectionId='10' x:Name="LessTimeBtn"                      Width="44" Height="44" CornerRadius="22" Background="Transparent"
                         ToolTipService.ToolTip="Less time per photo">
-                    <FontIcon Glyph="&#xE738;" FontFamily="Segoe MDL2 Assets" Foreground="White" />
+                    <FontIcon Glyph="&#xE738;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </Button>
                 <TextBlock x:ConnectionId='11' x:Name="SpeedText" Foreground="White" VerticalAlignment="Center" MinWidth="36"
                            TextAlignment="Center" />
                 <Button x:ConnectionId='12' x:Name="MoreTimeBtn"                      Width="44" Height="44" CornerRadius="22" Background="Transparent"
                         ToolTipService.ToolTip="More time per photo">
-                    <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" Foreground="White" />
+                    <FontIcon Glyph="&#xE710;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </Button>
                 <ToggleButton x:ConnectionId='13' x:Name="ShuffleBtn"                       Width="44" Height="44" CornerRadius="22" Background="Transparent"
                               ToolTipService.ToolTip="Shuffle">
-                    <FontIcon Glyph="&#xE8B1;" FontFamily="Segoe MDL2 Assets" Foreground="White" />
+                    <FontIcon Glyph="&#xE8B1;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </ToggleButton>
                 <AppBarSeparator Foreground="#55FFFFFF" />
                 <Button x:ConnectionId='14' x:Name="ExitBtn"                    Width="44" Height="44" CornerRadius="22" Background="Transparent"
                         ToolTipService.ToolTip="Exit (Esc)">
-                    <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" Foreground="White" />
+                    <FontIcon Glyph="&#xE711;" FontFamily="Segoe Fluent Icons" Foreground="White" />
                 </Button>
             </StackPanel>
         </Border>

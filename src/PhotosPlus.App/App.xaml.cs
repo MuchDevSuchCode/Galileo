@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
+using Microsoft.Windows.AppLifecycle;
 using PhotosPlus.Services;
 
 namespace PhotosPlus;
@@ -36,6 +38,66 @@ public partial class App : Application
     {
         _window = new MainWindow(GetInitialMediaPath());
         _window.Activate();
+    }
+
+    /// <summary>
+    /// Called (on a background thread) by the single-instance host when another launch is redirected
+    /// here. Opens the handed-off file/folder in the existing window and brings it forward.
+    /// </summary>
+    public void OnRedirected(AppActivationArguments e)
+    {
+        var path = PathFromActivation(e);
+        var window = _window;
+        if (window is null) return;
+        window.DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                if (window is MainWindow mw && !string.IsNullOrEmpty(path)) mw.OpenExternalPath(path!);
+                window.Activate();
+            }
+            catch (Exception ex) { Log("Redirected", ex); }
+        });
+    }
+
+    private static string? PathFromActivation(AppActivationArguments e)
+    {
+        try
+        {
+            if (e.Data is Windows.ApplicationModel.Activation.IFileActivatedEventArgs fa && fa.Files.Count > 0)
+                return fa.Files[0].Path;
+            if (e.Data is Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs la)
+                return FirstExistingPath(SplitArgs(la.Arguments));
+        }
+        catch { /* ignore */ }
+        return null;
+    }
+
+    private static string? FirstExistingPath(IEnumerable<string> args)
+    {
+        foreach (var a in args)
+        {
+            if (string.IsNullOrWhiteSpace(a)) continue;
+            if (File.Exists(a) || Directory.Exists(a)) return a;
+        }
+        return null;
+    }
+
+    private static IEnumerable<string> SplitArgs(string commandLine)
+    {
+        if (string.IsNullOrEmpty(commandLine)) yield break;
+        var sb = new System.Text.StringBuilder();
+        var inQuotes = false;
+        foreach (var c in commandLine)
+        {
+            if (c == '"') inQuotes = !inQuotes;
+            else if (c == ' ' && !inQuotes)
+            {
+                if (sb.Length > 0) { yield return sb.ToString(); sb.Clear(); }
+            }
+            else sb.Append(c);
+        }
+        if (sb.Length > 0) yield return sb.ToString();
     }
 
     /// <summary>Appends an exception (with stack trace) to the error log. Never throws.</summary>

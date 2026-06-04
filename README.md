@@ -2,20 +2,20 @@
 
 A modern, native **Windows Explorer + Photos** alternative — built with **WinUI 3 / .NET 8**. Galileo is a fast, local-first file manager and photo viewer with a clean Fluent UI.
 
-> **Branding note:** the user-facing app is **Galileo**. Internal identifiers (namespace, `PhotosPlus.App.exe`, `%LocalAppData%\PhotosPlus`, the registered ProgID) remain `PhotosPlus` to keep the build and default-app registration stable.
+> **Branding note:** the user-facing app and the built executable are **Galileo** (`Galileo.exe`, set via `<AssemblyName>`). Internal identifiers (the `PhotosPlus` namespace, the `%LocalAppData%\PhotosPlus` data folder, the registered ProgID) keep the `PhotosPlus` name to keep the build and default-app registration stable.
 
 Highlights over the stock apps:
 
 1. **👁 Eye toggle** — a one-click eye icon (shortcut **H**) that instantly **blacks out the photo in the viewer** for privacy, plus an optional **Hidden album** for photos you want kept out of the gallery.
 2. **▶ Slideshow** — a full-screen, configurable slideshow with adjustable timing, shuffle, loop, and transitions.
 
-> **Status:** working application. The core viewer, gallery, eye toggle, slideshow, settings, and a modern redesigned UI are implemented and building. Editing, video, and shell/default-app integration remain on the roadmap — see **[tasks.md](./tasks.md)**.
+> **Status:** working application. The file explorer, photo viewer, gallery, collage, embedded **video player**, eye toggle, slideshow, a full **Settings** panel (5 themes, sort/group, and more), and default-photo-app registration are all implemented and building. Image editing remains on the roadmap — see **[tasks.md](./tasks.md)**.
 
 ---
 
-## Why PhotosPlus
+## Why Galileo
 
-Windows Photos is capable but cluttered and increasingly cloud-driven. PhotosPlus is a **fast, local-first, privacy-respecting** viewer:
+Windows Photos and File Explorer are capable but cluttered and increasingly cloud-driven. Galileo is a **fast, local-first, privacy-respecting** file manager and viewer:
 
 - **Local-first** — no account, no cloud sync; your library stays on disk.
 - **Fast** — GPU-composited viewer, async/virtualized thumbnails.
@@ -26,16 +26,18 @@ Windows Photos is capable but cluttered and increasingly cloud-driven. PhotosPlu
 
 ## File Explorer (home)
 
-PhotosPlus now opens into a **Windows-Explorer-style file manager** (Win11 layout):
+Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 
 - **Sidebar** — Home (This PC), Quick access (Desktop/Downloads/Documents/Pictures/Music/Videos), and drives.
-- **Navigation** — back / forward / up, a clickable **breadcrumb**, and an editable **address bar** (pencil button or type a path + Enter).
-- **Views** — Large / Medium / Small icons with a **size slider**, plus a **Details** view (Name · Date modified · Type · Size). Real shell thumbnails/icons for every file type.
-- **Open** — folders navigate in; images open in the photo viewer; other files open in their default app. **Slideshow** and **Collage** buttons act on the current folder's images.
-- **File operations** — New folder, Copy, Copy path, Paste, Rename, Delete (Recycle Bin), and the native **Properties** dialog (right-click items or empty space).
+- **Navigation** — back / forward / up, a clickable **breadcrumb**, and an editable **address bar** (pencil button or type a path + Enter). **Backspace** goes back; **F5** refreshes.
+- **Views** — Large / Medium / Small icons with a **size slider**, plus a **Details** view (Name · Date modified · Type · Size). Real shell thumbnails/icons for every file type, with optional **folder content previews** (the first image painted onto the folder icon).
+- **Sort & Group** — sort by Name / Date modified / Type / Size (ascending or descending) and **group** by the same keys, mirroring Explorer's defaults. Saved across sessions.
+- **Show / hide file extensions** — toggle in Settings (on by default); affects display only — the real filename is preserved for rename, copy, and open.
+- **Open** — folders navigate in; images open in the photo viewer; **videos open in the embedded player**; other files open in their default app. **Slideshow** and **Collage** buttons act on the current folder's images. Single- or double-click to open (configurable).
+- **File operations** — New folder (with immediate rename), Copy, Copy path, Paste, Rename, Delete (Recycle Bin), **Shift+Delete** (permanent), drag files out to other apps, and the native **Properties** dialog (right-click items or empty space).
 - **⭐ Hide folder** — the **Hide folder** button (or a folder's right-click) makes a folder **appear empty when opened** and excludes it from its parent. Toggle **Show app-hidden** to reveal hidden folders (dimmed); **Unhide** to restore. App-only and reversible — the folder on disk is never modified.
 
-> Phase 1 of the explorer. Planned next: cut/move, drag-and-drop between folders, column sorting in Details, search, and an expandable folder tree in the sidebar.
+> Planned next: cut/move, drag-and-drop *between* folders, click-to-sort column headers in Details, search, and an expandable folder tree in the sidebar.
 
 ---
 
@@ -62,7 +64,18 @@ PhotosPlus now opens into a **Windows-Explorer-style file manager** (Win11 layou
 - **Choose what's in it:** *Select photos* in the gallery's More menu to hand-pick images, or **drag-and-drop** image files onto an open collage to add them.
 - **Shuffle** re-arranges to a fresh fit; a **− N +** stepper sets how many photos; **Save** exports to PNG; clicking a tile opens it in the viewer. Re-fits on window resize.
 
-**Settings** — a Settings panel to configure the slideshow (seconds per photo, shuffle, loop, transition). Persisted across sessions.
+**Video** — an **embedded video player** complements the image viewer. Single-click the file (or it opens automatically from the explorer) to play MP4/M4V/MOV/MKV/AVI/WMV/WEBM and more, with **single-click mute/unmute** and a **repeat** toggle. A back bar returns to the explorer.
+
+**Settings** — a Settings panel (gear in the title bar / command strip) with:
+- **Theme** — System, Light, Dark, **Terminal (green)**, or **Gray**.
+- **Open items with** — double-click (default) or single-click.
+- **Default icon size** — Small / Medium / Large.
+- **Folder content previews** — on/off.
+- **Show file extensions** — on/off (on by default).
+- **Default collage layout** — Justified / Grid / Hero.
+- **Slideshow** — seconds per photo (2–30 s), shuffle, loop, transition.
+
+All settings persist across sessions (`%LocalAppData%\PhotosPlus\state.json`). The panel header stays pinned and the body scrolls, so it never clips on small windows.
 
 ### ✨ The two headline features
 
@@ -103,12 +116,17 @@ PhotosPlus now opens into a **Windows-Explorer-style file manager** (Win11 layou
 PhotosPlus/
 ├─ global.json                 # pins .NET SDK 8.0.300
 ├─ src/
-│  └─ PhotosPlus.App/          # WinUI 3 app (single project)
-│     ├─ App.xaml(.cs)         # app + shared resources (GlyphButton style, PillBrush)
-│     ├─ MainWindow.xaml(.cs)  # gallery + viewer + settings + title bar
+│  └─ PhotosPlus.App/          # WinUI 3 app (single project; builds Galileo.exe)
+│     ├─ App.xaml(.cs)         # app + shared resources (GlyphButton, PillBrush, explorer templates)
+│     ├─ MainWindow.xaml(.cs)  # explorer + gallery + viewer + video + collage + settings + title bar
 │     ├─ SlideshowWindow.xaml(.cs)
-│     ├─ Models/PhotoItem.cs
-│     └─ Services/             # AppState (persistence), PhotoLibrary
+│     ├─ Models/               # PhotoItem, ExplorerItem, ExplorerGroup
+│     ├─ Services/             # AppState, PhotoLibrary, FileSystemService,
+│     │                        #   ShellImaging (icons via IShellItemImageFactory + GetDIBits),
+│     │                        #   ShellOps (clipboard / properties / wallpaper), ImageCompositor, CollageLayout
+│     ├─ Converters/           # BoolToVisibilityConverter
+│     └─ Assets/               # galileo.ico / galileo.png (app + taskbar icon)
+├─ tools/                      # install.ps1, register-default.ps1, unregister-default.ps1
 ├─ README.md
 └─ tasks.md
 ```
@@ -129,7 +147,9 @@ dotnet build src/PhotosPlus.App
 dotnet run --project src/PhotosPlus.App
 ```
 
-> ⚠️ Close any running PhotosPlus window before rebuilding — Windows locks the `.exe` while it runs (otherwise the build fails with an `MSB3021` file-lock error).
+The build produces **`Galileo.exe`** under `src/PhotosPlus.App/bin/Debug/net8.0-windows10.0.19041.0/win-x64/`.
+
+> ⚠️ Close any running Galileo window before rebuilding — Windows locks the `.exe` while it runs (otherwise the build fails with an `MSB3021` file-lock error). PowerShell: `Get-Process Galileo -ErrorAction SilentlyContinue | Stop-Process -Force`.
 
 **Build notes (already configured in the `.csproj`):**
 - `<WindowsSdkPackageVersion>10.0.19041.38</WindowsSdkPackageVersion>` — Windows App SDK 1.6 requires SDK.NET.Ref ≥ `.38`; the .NET 8.0.300 SDK ships `.31`.
@@ -140,7 +160,7 @@ dotnet run --project src/PhotosPlus.App
 
 ## Set as your default photo app
 
-PhotosPlus opens a file or folder passed on the command line (`PhotosPlus.App.exe "<file>"`), so it works as a Windows file handler.
+Galileo opens a file or folder passed on the command line (`Galileo.exe "<file>"`), so it works as a Windows file handler.
 
 1. **Install (and update).** One command publishes a stable, self-contained copy to
    `%LocalAppData%\PhotosPlus\app` and registers it with Windows (per-user, no admin, reversible):
@@ -151,14 +171,14 @@ PhotosPlus opens a file or folder passed on the command line (`PhotosPlus.App.ex
    running app, re-publishes, and re-registers. (Registration adds a ProgID, an *Open with*
    entry, and a *Default apps* capability for ~23 image extensions.)
 2. **Make it the default.** Windows 10/11 doesn't let an app silently take over defaults, so do it once:
-   - **Settings → Apps → Default apps** → pick PhotosPlus per file type, **or**
-   - right-click a photo → **Open with → Choose another app → PhotosPlus → Always**.
+   - **Settings → Apps → Default apps** → pick Galileo per file type, **or**
+   - right-click a photo → **Open with → Choose another app → Galileo → Always**.
 
 **Keep the default always on your latest build (dev mode).** Point the registration at the
 `bin\Debug` exe instead of the published copy — then a normal `dotnet build` updates the very
 exe Windows launches, with no re-publish/re-register:
 ```powershell
-.\tools\register-default.ps1 -ExePath "src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\PhotosPlus.App.exe"
+.\tools\register-default.ps1 -ExePath "src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Galileo.exe"
 ```
 Trade-offs: the repo must stay in place (the path is registered), and the Debug exe needs the
 .NET 8 Desktop Runtime installed (fine on a dev machine). To go back to the stable, fully
@@ -176,24 +196,26 @@ self-contained copy, just run `.\tools\install.ps1` again.
 
 | Key | Action |
 |-----|--------|
-| `←` / `→` | Previous / next image |
+| `←` / `→` | Previous / next image (in viewer) |
 | Mouse wheel | Zoom in / out (toward cursor) |
 | `+` / `-` | Zoom in / out |
 | `0` | Fit to window |
 | `R` | Rotate 90° (auto-fit) |
 | `H` | **Black out / reveal current photo (eye toggle)** |
-| `F5` | **Start slideshow** |
+| `F` | Toggle full screen (viewer only) |
+| `F11` | Toggle full screen (anywhere) |
+| `Del` | Delete (to Recycle Bin) |
+| `Backspace` | Back (in explorer) |
+| `F5` | Refresh folder (explorer) · **start slideshow** (viewer/gallery) |
 | `Space` | Slideshow play / pause |
 | `←` `→` `↑` `↓` | (in slideshow) prev / next / speed |
-| `Esc` | Close settings · exit slideshow / full screen · back to gallery |
-| `F` / `F11` | Toggle full screen |
-| `Del` | Delete (to Recycle Bin) |
+| `Esc` | Close settings · exit slideshow / full screen · back to explorer |
 
 ---
 
 ## Roadmap
 
-See **[tasks.md](./tasks.md)** for the full phased breakdown. Not yet implemented: image editing (crop/adjust/filters/markup), video playback, set-as-default-photo-app / MSIX packaging, Windows Hello gate on the Hidden album, slideshow background music, and splitting into `Core`/`Tests` projects.
+See **[tasks.md](./tasks.md)** for the full phased breakdown. Not yet implemented: image editing (crop/adjust/filters/markup), cut/move and drag-and-drop *between* folders, in-explorer search, MSIX packaging, single-instance window reuse, a Windows Hello gate on the Hidden album, slideshow background music, and splitting into `Core`/`Tests` projects.
 
 ## License
 

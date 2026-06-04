@@ -12,6 +12,7 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using PhotosPlus.Models;
 using PhotosPlus.Services;
@@ -27,7 +28,7 @@ namespace PhotosPlus;
 
 public sealed partial class MainWindow : Window
 {
-    // Segoe MDL2 Assets glyphs for the eye toggle.
+    // Segoe Fluent Icons glyphs for the eye toggle.
     private const string GlyphEyeOpen = "";  // View
     private const string GlyphEyeOff = "";   // Hide
 
@@ -42,6 +43,7 @@ public sealed partial class MainWindow : Window
     private readonly HashSet<string> _obscured = new(StringComparer.OrdinalIgnoreCase);
 
     private int _currentIndex = -1;
+    private int _loadToken;           // bumped per LoadCurrentAsync; lets a stale decode bail out
     private double _rotation;
     private bool _isFullScreen;
     private bool _showHiddenAlbum;
@@ -61,6 +63,21 @@ public sealed partial class MainWindow : Window
     private string _explorerViewMode = "Large";
     private double _iconSize = 110;
     private ExplorerItem? _explorerContextItem;
+
+    // Search
+    private string _searchQuery = "";
+    private bool _searchRecursive;
+    private List<ExplorerItem> _searchResults = new();
+    private bool _suppressSearchEvent;
+
+    // Tabs
+    private bool _switchingTabs;
+
+    // Privacy gate (unlocked once per session after a successful Hello check)
+    private bool _helloUnlocked;
+
+    // True between a gallery click and the viewer image opening, to run the connected animation.
+    private bool _pendingConnectedAnim;
 
     // Collage mode state
     private readonly Random _rng = new();
@@ -118,23 +135,45 @@ public sealed partial class MainWindow : Window
         ApplyTheme();
         ApplyClickMode();
         SyncSortGroupRadios();
+        UpdateSortHeaders();
 
         // Windows may launch us with a file (default app) or folder to open.
         if (!string.IsNullOrEmpty(initialPath) && System.IO.File.Exists(initialPath))
         {
             var dir = System.IO.Path.GetDirectoryName(initialPath);
-            NavigateTo(dir);
-            var match = _explorerItems.FirstOrDefault(i => string.Equals(i.Path, initialPath, StringComparison.OrdinalIgnoreCase));
-            if (match is not null) OpenImageFromExplorer(match);
+            NewTab(dir);
+            OpenPathInCurrentTab(initialPath);
         }
         else if (!string.IsNullOrEmpty(initialPath) && System.IO.Directory.Exists(initialPath))
         {
-            NavigateTo(initialPath);
+            NewTab(initialPath);
         }
         else
         {
-            NavigateTo(null); // This PC / home
+            NewTab(null); // This PC / home
         }
+    }
+
+    /// <summary>Opens a file path that lives in the current folder (image → viewer, video → player, else default app).</summary>
+    private void OpenPathInCurrentTab(string path)
+    {
+        var match = _explorerItems.FirstOrDefault(i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase));
+        if (match is not null) OpenExplorerItem(match);
+    }
+
+    /// <summary>Opens a file/folder handed to us by another (redirected) instance, in a new tab.</summary>
+    public void OpenExternalPath(string path)
+    {
+        try
+        {
+            if (System.IO.Directory.Exists(path)) NewTab(path);
+            else if (System.IO.File.Exists(path))
+            {
+                NewTab(System.IO.Path.GetDirectoryName(path));
+                OpenPathInCurrentTab(path);
+            }
+        }
+        catch (Exception ex) { App.Log("OpenExternalPath", ex); }
     }
 
     // 'new' intentionally hides the (unused) Window.Current; this is the currently viewed photo.
@@ -314,6 +353,8 @@ public sealed partial class MainWindow : Window
         if (e.ClickedItem is PhotoItem item)
         {
             _currentIndex = _view.IndexOf(item);
+            try { PhotoGrid.PrepareConnectedAnimation("toViewer", item, "PhotoThumb"); _pendingConnectedAnim = true; }
+            catch { _pendingConnectedAnim = false; }
             ShowViewer();
             _ = LoadCurrentAsync();
         }
@@ -402,9 +443,14 @@ public sealed partial class MainWindow : Window
         _rotation = 0;
         _bmpW = _bmpH = 0;
 
+        // Generation token: if the user flips to the next photo while this one is still
+        // decoding, the older (possibly slower) decode must not overwrite the newer image.
+        var token = ++_loadToken;
+
         try
         {
             var file = await StorageFile.GetFileFromPathAsync(item.Path);
+            if (token != _loadToken) return;
 
             // Cap the decoded size on the longer side. Decoding at full resolution can exceed the
             // GPU's max texture size on large images (panoramas/huge screenshots) and crash the
@@ -412,9 +458,11 @@ public sealed partial class MainWindow : Window
             // ~16384 D3D limit and still sharp for screen + zoom.
             const int maxSide = 8000;
             var props = await file.Properties.GetImagePropertiesAsync();
+            if (token != _loadToken) return;
             uint w = props.Width, h = props.Height;
 
             using var stream = await file.OpenReadAsync();
+            if (token != _loadToken) return;
             var bmp = new BitmapImage { DecodePixelType = DecodePixelType.Logical };
             if (w > 0 && h > 0 && Math.Max(w, h) > maxSide)
             {
@@ -422,12 +470,14 @@ public sealed partial class MainWindow : Window
                 else bmp.DecodePixelHeight = maxSide;
             }
             await bmp.SetSourceAsync(stream);
+            if (token != _loadToken) return; // a newer photo won the race — drop this one
             ViewerImage.Source = bmp;
             _bmpW = bmp.PixelWidth;
             _bmpH = bmp.PixelHeight;
         }
         catch (Exception ex)
         {
+            if (token != _loadToken) return;
             App.Log("LoadCurrent", ex);
             StatusText.Text = $"Could not open {item.FileName}: {ex.Message}";
             ViewerImage.Source = null;
@@ -606,6 +656,12 @@ public sealed partial class MainWindow : Window
             _bmpH = b.PixelHeight;
             if (IsAtFit) ResetView();
         }
+        if (_pendingConnectedAnim)
+        {
+            _pendingConnectedAnim = false;
+            try { ConnectedAnimationService.GetForCurrentView().GetAnimation("toViewer")?.TryStart(ViewerImage); }
+            catch { /* animation is best-effort */ }
+        }
     }
 
     private void Rotate_Click(object sender, RoutedEventArgs e)
@@ -664,8 +720,13 @@ public sealed partial class MainWindow : Window
         if (Current is { } item) HideItemPermanently(item);
     }
 
-    private void HiddenAlbum_Click(object sender, RoutedEventArgs e)
+    private async void HiddenAlbum_Click(object sender, RoutedEventArgs e)
     {
+        if (HiddenAlbumButton.IsChecked == true && !await EnsureHiddenUnlockedAsync())
+        {
+            HiddenAlbumButton.IsChecked = false;
+            return;
+        }
         _showHiddenAlbum = HiddenAlbumButton.IsChecked == true;
         ShowExplorer();
         RefreshView();
@@ -1015,6 +1076,7 @@ public sealed partial class MainWindow : Window
 
     private void NavigateTo(string? path, bool addHistory = true)
     {
+        ClearSearch();
         _currentFolder = path;
         if (addHistory)
         {
@@ -1026,6 +1088,7 @@ public sealed partial class MainWindow : Window
         LoadCurrentFolder();
         UpdateNavButtons();
         BuildBreadcrumb();
+        SyncActiveTab();
     }
 
     private void LoadCurrentFolder()
@@ -1049,7 +1112,6 @@ public sealed partial class MainWindow : Window
             _explorerRaw = new List<ExplorerItem>();
             ApplySortAndGroup();
             ApplyViewMode();
-            ExplorerEmpty.Visibility = Visibility.Visible;
             UpdateHideFolderButton();
             StatusText.Text = "0 item(s)";
             return;
@@ -1058,7 +1120,6 @@ public sealed partial class MainWindow : Window
         _explorerRaw = _fs.List(_currentFolder, showWindowsHidden: false, _showAppHidden);
         ApplySortAndGroup();
         ApplyViewMode();
-        ExplorerEmpty.Visibility = _explorerRaw.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateHideFolderButton();
         StatusText.Text = $"{_explorerRaw.Count} item(s)";
     }
@@ -1067,7 +1128,8 @@ public sealed partial class MainWindow : Window
 
     private void ApplySortAndGroup()
     {
-        var sorted = SortItems(_explorerRaw);
+        var basis = SearchBasis();
+        var sorted = SortItems(basis);
 
         // Keep the flat collection current (used by image/collage/slideshow code).
         _explorerItems.Clear();
@@ -1077,12 +1139,49 @@ public sealed partial class MainWindow : Window
         {
             ExplorerIconsView.ItemsSource = _explorerItems;
             ExplorerDetailsList.ItemsSource = _explorerItems;
-            return;
+        }
+        else
+        {
+            var groups = BuildGroups(sorted);
+            ExplorerIconsView.ItemsSource = new CollectionViewSource { IsSourceGrouped = true, Source = groups }.View;
+            ExplorerDetailsList.ItemsSource = new CollectionViewSource { IsSourceGrouped = true, Source = groups }.View;
         }
 
-        var groups = BuildGroups(sorted);
-        ExplorerIconsView.ItemsSource = new CollectionViewSource { IsSourceGrouped = true, Source = groups }.View;
-        ExplorerDetailsList.ItemsSource = new CollectionViewSource { IsSourceGrouped = true, Source = groups }.View;
+        UpdateSortHeaders();
+        UpdateExplorerEmptyState();
+    }
+
+    /// <summary>The items to display: the current folder, or search results when a query is active.</summary>
+    private List<ExplorerItem> SearchBasis()
+    {
+        if (string.IsNullOrEmpty(_searchQuery)) return _explorerRaw;
+        return _searchRecursive
+            ? _searchResults
+            : _explorerRaw.Where(i => i.Name.IndexOf(_searchQuery, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+    }
+
+    private void UpdateExplorerEmptyState()
+    {
+        // The hidden-folder placeholder, when shown, owns the empty area instead.
+        if (HiddenFolderPlaceholder.Visibility == Visibility.Visible)
+        {
+            ExplorerEmpty.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var searching = !string.IsNullOrEmpty(_searchQuery);
+        var empty = _explorerItems.Count == 0 && _currentFolder is not null;
+        ExplorerEmpty.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+        if (!empty) return;
+        if (searching)
+        {
+            ExplorerEmptyTitle.Text = "No matches";
+            ExplorerEmptySubtitle.Text = $"Nothing here matches “{_searchQuery}”.";
+        }
+        else
+        {
+            ExplorerEmptyTitle.Text = "This folder is empty";
+            ExplorerEmptySubtitle.Text = "Drop files here, or use New folder to get started.";
+        }
     }
 
     private List<ExplorerItem> SortItems(List<ExplorerItem> items)
@@ -1327,7 +1426,7 @@ public sealed partial class MainWindow : Window
         var picked = e.Items.OfType<ExplorerItem>().Select(i => (i.Path, i.IsFolder)).ToList();
         if (picked.Count == 0) { e.Cancel = true; return; }
 
-        e.Data.RequestedOperation = DataPackageOperation.Copy;
+        e.Data.RequestedOperation = DataPackageOperation.Copy | DataPackageOperation.Move;
         // Path text fallback (terminals/editors that accept text).
         e.Data.SetText(string.Join(" ", picked.Select(p => $"\"{p.Path}\"")));
 
@@ -1450,7 +1549,11 @@ public sealed partial class MainWindow : Window
         try
         {
             VideoPlayer.MediaPlayer?.Pause();
+            // CreateFromStorageFile hands us a MediaSource we own; the element won't dispose it,
+            // so release it here or we leak one native source per video opened.
+            var previous = VideoPlayer.Source as MediaSource;
             VideoPlayer.Source = null;
+            previous?.Dispose();
         }
         catch { /* ignore */ }
     }
@@ -1498,8 +1601,13 @@ public sealed partial class MainWindow : Window
         _state.Save();
     }
 
-    private void ShowAppHidden_Click(object sender, RoutedEventArgs e)
+    private async void ShowAppHidden_Click(object sender, RoutedEventArgs e)
     {
+        if (ShowHiddenToggle.IsChecked == true && !await EnsureHiddenUnlockedAsync())
+        {
+            ShowHiddenToggle.IsChecked = false;
+            return;
+        }
         _showAppHidden = ShowHiddenToggle.IsChecked == true;
         LoadCurrentFolder();
     }
@@ -1599,8 +1707,10 @@ public sealed partial class MainWindow : Window
             if (!item.IsFolder)
                 menu.Items.Add(SMI("Open with…", null, (_, _) => OpenWithItem2(item.Path)));
             menu.Items.Add(new MenuFlyoutSeparator());
+            menu.Items.Add(SMI("Cut", Symbol.Cut, async (_, _) => await CutToClipboardAsync(item.Path)));
             menu.Items.Add(SMI("Copy", Symbol.Copy, async (_, _) => await CopyFileToClipboardAsync(item.Path)));
             menu.Items.Add(SMI("Copy path", Symbol.Link, (_, _) => CopyTextToClipboard(item.Path)));
+            menu.Items.Add(SMI("Paste", Symbol.Paste, async (_, _) => await PasteIntoCurrentAsync()));
             menu.Items.Add(new MenuFlyoutSeparator());
             if (item.IsFolder)
             {
@@ -1658,15 +1768,13 @@ public sealed partial class MainWindow : Window
         {
             var content = Clipboard.GetContent();
             if (!content.Contains(StandardDataFormats.StorageItems)) { StatusText.Text = "Nothing to paste."; return; }
-            var dest = await StorageFolder.GetFolderFromPathAsync(_currentFolder);
+            var move = content.RequestedOperation.HasFlag(DataPackageOperation.Move); // set by Cut
             var items = await content.GetStorageItemsAsync();
-            var count = 0;
-            foreach (var i in items)
-            {
-                if (i is StorageFile f) { await f.CopyAsync(dest, f.Name, NameCollisionOption.GenerateUniqueName); count++; }
-            }
+            var paths = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
+            var dest = _currentFolder;
+            var count = await Task.Run(() => TransferInto(dest, paths, move));
             LoadCurrentFolder();
-            StatusText.Text = $"Pasted {count} file(s)";
+            StatusText.Text = $"{(move ? "Moved" : "Pasted")} {count} item(s)";
         }
         catch (Exception ex) { StatusText.Text = $"Paste failed: {ex.Message}"; }
     }
@@ -1801,7 +1909,7 @@ public sealed partial class MainWindow : Window
         var item = _contextItem;
         if (item is null) return;
 
-        var seg = new FontFamily("Segoe MDL2 Assets");
+        var seg = new FontFamily("Segoe Fluent Icons");
         MenuFlyoutItem MI(string text, string glyph, RoutedEventHandler click)
         {
             var i = new MenuFlyoutItem { Text = text, Icon = new FontIcon { Glyph = glyph, FontFamily = seg } };
@@ -2001,6 +2109,343 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // ===================== Sortable column headers (Details) =====================
+
+    private void SortHeader_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button b || b.Tag is not string key) return;
+        if (_state.SortBy == key) _state.SortDescending = !_state.SortDescending;
+        else { _state.SortBy = key; _state.SortDescending = false; }
+        _state.Save();
+        ApplySortAndGroup();
+        SyncSortGroupRadios();
+    }
+
+    private void UpdateSortHeaders()
+    {
+        void Set(Button b, string label, string key)
+        {
+            var arrow = _state.SortDescending ? " ▾" : " ▴"; // ▾ / ▴
+            b.Content = _state.SortBy == key ? label + arrow : label;
+        }
+        Set(HdrName, "Name", "Name");
+        Set(HdrDate, "Date modified", "Date");
+        Set(HdrType, "Type", "Type");
+        Set(HdrSize, "Size", "Size");
+    }
+
+    // ===================== Search =====================
+
+    private void SearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        if (_suppressSearchEvent) return;
+        _searchQuery = sender.Text?.Trim() ?? "";
+        _ = RunSearchAsync();
+    }
+
+    private void SearchRecursive_Click(object sender, RoutedEventArgs e)
+    {
+        _searchRecursive = SearchRecursiveToggle.IsChecked == true;
+        if (!string.IsNullOrEmpty(_searchQuery)) _ = RunSearchAsync();
+    }
+
+    /// <summary>Clears the search box quietly (no reload); callers reload as needed.</summary>
+    private void ClearSearch()
+    {
+        _searchResults = new();
+        if (string.IsNullOrEmpty(_searchQuery) && (SearchBox is null || SearchBox.Text.Length == 0)) return;
+        _searchQuery = "";
+        if (SearchBox is not null && SearchBox.Text.Length > 0)
+        {
+            _suppressSearchEvent = true;
+            SearchBox.Text = "";
+            _suppressSearchEvent = false;
+        }
+    }
+
+    private async Task RunSearchAsync()
+    {
+        if (string.IsNullOrEmpty(_searchQuery))
+        {
+            _searchResults = new();
+            ApplySortAndGroup();
+            ApplyViewMode();
+            StatusText.Text = _currentFolder is null ? "This PC" : $"{_explorerRaw.Count} item(s)";
+            return;
+        }
+
+        if (_searchRecursive && _currentFolder is not null)
+        {
+            var q = _searchQuery;
+            var root = _currentFolder;
+            StatusText.Text = $"Searching {System.IO.Path.GetFileName(root.TrimEnd('\\'))}…";
+            var results = await Task.Run(() => _fs.Search(root, q));
+            if (q != _searchQuery || root != _currentFolder) return; // a newer query/folder superseded us
+            _searchResults = results;
+        }
+
+        ApplySortAndGroup();
+        ApplyViewMode();
+        StatusText.Text = $"{_explorerItems.Count} result(s) for “{_searchQuery}”";
+    }
+
+    // ===================== Folder tabs =====================
+
+    private sealed class ExplorerTab
+    {
+        public List<string?> History { get; } = new();
+        public int Index { get; set; } = -1;
+        public string? Current => Index >= 0 && Index < History.Count ? History[Index] : null;
+    }
+
+    private void NewTab(string? path)
+    {
+        var tvi = new TabViewItem { Tag = new ExplorerTab(), Header = "This PC", IconSource = new SymbolIconSource { Symbol = Symbol.Folder } };
+        _switchingTabs = true;
+        ExplorerTabs.TabItems.Add(tvi);
+        ExplorerTabs.SelectedItem = tvi;
+        _switchingTabs = false;
+
+        // Fresh navigation state for the new tab, then go.
+        _navHistory.Clear();
+        _navIndex = -1;
+        _currentFolder = null;
+        ShowExplorer();
+        NavigateTo(path);
+    }
+
+    private void SyncActiveTab()
+    {
+        if (ExplorerTabs?.SelectedItem is not TabViewItem tvi || tvi.Tag is not ExplorerTab tab) return;
+        tab.History.Clear();
+        tab.History.AddRange(_navHistory);
+        tab.Index = _navIndex;
+        tvi.Header = TabHeaderFor(_currentFolder);
+    }
+
+    private static string TabHeaderFor(string? folder)
+    {
+        if (folder is null) return "This PC";
+        var name = System.IO.Path.GetFileName(folder.TrimEnd('\\'));
+        return string.IsNullOrEmpty(name) ? folder : name;
+    }
+
+    private void ExplorerTabs_AddClick(TabView sender, object args) => NewTab(null);
+
+    private void ExplorerTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_switchingTabs) return;
+        if (ExplorerTabs.SelectedItem is not TabViewItem tvi || tvi.Tag is not ExplorerTab tab) return;
+
+        // Load the selected tab's navigation state into the live fields.
+        _navHistory.Clear();
+        _navHistory.AddRange(tab.History);
+        _navIndex = tab.Index;
+        _currentFolder = tab.Current;
+        ClearSearch();
+        ShowExplorer();
+        LoadCurrentFolder();
+        UpdateNavButtons();
+        BuildBreadcrumb();
+    }
+
+    private void ExplorerTabs_CloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
+    {
+        if (sender.TabItems.Count <= 1) return; // always keep one tab
+        sender.TabItems.Remove(args.Tab);       // removal re-selects a neighbour → SelectionChanged loads it
+    }
+
+    // ===================== Cut / move / drop between folders =====================
+
+    private async Task CutToClipboardAsync(string path)
+    {
+        try
+        {
+            IStorageItem si = Directory.Exists(path)
+                ? await StorageFolder.GetFolderFromPathAsync(path)
+                : await StorageFile.GetFileFromPathAsync(path);
+            var data = new DataPackage { RequestedOperation = DataPackageOperation.Move };
+            data.SetStorageItems(new[] { si });
+            Clipboard.SetContent(data);
+            StatusText.Text = "Cut to clipboard";
+        }
+        catch (Exception ex) { StatusText.Text = $"Cut failed: {ex.Message}"; }
+    }
+
+    private string? GetDropTargetFolder(object? originalSource)
+    {
+        var item = (originalSource as FrameworkElement)?.DataContext as ExplorerItem;
+        if (item is not null && item.IsFolder) return item.Path; // drop onto a folder/drive row
+        return _currentFolder;                                    // otherwise into the current folder
+    }
+
+    private void ExplorerList_DragOver(object sender, DragEventArgs e)
+    {
+        var target = GetDropTargetFolder(e.OriginalSource);
+        if (target is null || !e.DataView.Contains(StandardDataFormats.StorageItems))
+        {
+            e.AcceptedOperation = DataPackageOperation.None;
+            return;
+        }
+        var move = IsShiftDown();
+        e.AcceptedOperation = move ? DataPackageOperation.Move : DataPackageOperation.Copy;
+        if (e.DragUIOverride is not null)
+        {
+            e.DragUIOverride.Caption = move ? "Move here" : "Copy here";
+            e.DragUIOverride.IsCaptionVisible = true;
+            e.DragUIOverride.IsGlyphVisible = true;
+        }
+        e.Handled = true; // keep RootGrid's "open" drop from also firing
+    }
+
+    private async void ExplorerList_Drop(object sender, DragEventArgs e)
+    {
+        if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+        var target = GetDropTargetFolder(e.OriginalSource);
+        if (target is null) return;
+        var move = IsShiftDown();
+        e.Handled = true;
+
+        var deferral = e.GetDeferral();
+        try
+        {
+            var items = await e.DataView.GetStorageItemsAsync();
+            var paths = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
+            if (paths.Count == 0) return;
+            var count = await Task.Run(() => TransferInto(target, paths, move));
+            LoadCurrentFolder();
+            StatusText.Text = $"{(move ? "Moved" : "Copied")} {count} item(s) to {TabHeaderFor(target)}";
+        }
+        catch (Exception ex) { StatusText.Text = $"Drop failed: {ex.Message}"; App.Log("Drop", ex); }
+        finally { deferral.Complete(); }
+    }
+
+    /// <summary>Copies or moves files/folders into a destination directory. Runs off the UI thread.</summary>
+    private static int TransferInto(string destDir, List<string> paths, bool move)
+    {
+        var n = 0;
+        foreach (var src in paths)
+        {
+            try
+            {
+                var name = System.IO.Path.GetFileName(src.TrimEnd('\\', '/'));
+                if (string.IsNullOrEmpty(name)) continue;
+
+                if (Directory.Exists(src))
+                {
+                    var srcParent = System.IO.Path.GetDirectoryName(src.TrimEnd('\\', '/'));
+                    if (string.Equals(srcParent, destDir, StringComparison.OrdinalIgnoreCase) && move) continue; // no-op
+                    var dest = UniquePath(System.IO.Path.Combine(destDir, name), isDir: true);
+                    if (IsSubPath(src, dest)) continue; // don't move a folder into itself
+                    if (move)
+                    {
+                        try { Directory.Move(src, dest); }
+                        catch { CopyDir(src, dest); Directory.Delete(src, true); } // cross-volume fallback
+                    }
+                    else CopyDir(src, dest);
+                    n++;
+                }
+                else if (File.Exists(src))
+                {
+                    var srcParent = System.IO.Path.GetDirectoryName(src);
+                    if (string.Equals(srcParent, destDir, StringComparison.OrdinalIgnoreCase) && move) continue; // no-op
+                    var dest = UniquePath(System.IO.Path.Combine(destDir, name), isDir: false);
+                    if (move) File.Move(src, dest);
+                    else File.Copy(src, dest);
+                    n++;
+                }
+            }
+            catch { /* skip the offending item, keep going */ }
+        }
+        return n;
+    }
+
+    private static string UniquePath(string path, bool isDir)
+    {
+        if (isDir ? !Directory.Exists(path) : !File.Exists(path)) return path;
+        var dir = System.IO.Path.GetDirectoryName(path)!;
+        var stem = isDir ? System.IO.Path.GetFileName(path) : System.IO.Path.GetFileNameWithoutExtension(path);
+        var ext = isDir ? "" : System.IO.Path.GetExtension(path);
+        for (var i = 2; i < 10000; i++)
+        {
+            var candidate = System.IO.Path.Combine(dir, $"{stem} ({i}){ext}");
+            if (isDir ? !Directory.Exists(candidate) : !File.Exists(candidate)) return candidate;
+        }
+        return path;
+    }
+
+    private static void CopyDir(string source, string dest)
+    {
+        Directory.CreateDirectory(dest);
+        foreach (var file in Directory.EnumerateFiles(source))
+            File.Copy(file, System.IO.Path.Combine(dest, System.IO.Path.GetFileName(file)), overwrite: false);
+        foreach (var dir in Directory.EnumerateDirectories(source))
+            CopyDir(dir, System.IO.Path.Combine(dest, System.IO.Path.GetFileName(dir)));
+    }
+
+    private static bool IsSubPath(string parent, string child)
+    {
+        var p = System.IO.Path.GetFullPath(parent).TrimEnd('\\', '/') + System.IO.Path.DirectorySeparatorChar;
+        var c = System.IO.Path.GetFullPath(child).TrimEnd('\\', '/') + System.IO.Path.DirectorySeparatorChar;
+        return c.StartsWith(p, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ===================== Privacy gate (Windows Hello) =====================
+
+    /// <summary>
+    /// Returns true if the Hidden album / app-hidden folders may be revealed. When the lock is on,
+    /// prompts Windows Hello (falling back to a confirmation if Hello isn't available).
+    /// </summary>
+    private async Task<bool> EnsureHiddenUnlockedAsync()
+    {
+        if (!_state.LockHiddenAlbum || _helloUnlocked) return true;
+
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var hello = await HelloAuth.VerifyAsync(hwnd, "Verify your identity to reveal hidden items");
+        bool ok;
+        if (hello.HasValue) ok = hello.Value;
+        else
+        {
+            // No Hello on this device — fall back to an explicit confirmation.
+            var dialog = new ContentDialog
+            {
+                Title = "Reveal hidden items?",
+                Content = "Windows Hello isn't set up, so identity can't be verified. Reveal hidden items anyway?",
+                PrimaryButtonText = "Reveal",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = RootGrid.XamlRoot
+            };
+            ok = await dialog.ShowAsync() == ContentDialogResult.Primary;
+        }
+        if (ok) _helloUnlocked = true;
+        return ok;
+    }
+
+    // ===================== Entrance animations =====================
+
+    private void AnimateSettingsIn()
+    {
+        SettingsCard.Opacity = 0;
+        SettingsCardTransform.ScaleX = SettingsCardTransform.ScaleY = 0.96;
+        SettingsCardTransform.TranslateY = 14;
+
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var sb = new Storyboard();
+        void Add(DependencyObject target, string prop, double to)
+        {
+            var anim = new DoubleAnimation { To = to, Duration = TimeSpan.FromMilliseconds(180), EasingFunction = ease };
+            Storyboard.SetTarget(anim, target);
+            Storyboard.SetTargetProperty(anim, prop);
+            sb.Children.Add(anim);
+        }
+        Add(SettingsCard, "Opacity", 1);
+        Add(SettingsCardTransform, "ScaleX", 1);
+        Add(SettingsCardTransform, "ScaleY", 1);
+        Add(SettingsCardTransform, "TranslateY", 0);
+        sb.Begin();
+    }
+
     // ===================== Settings =====================
 
     private void Settings_Click(object sender, RoutedEventArgs e)
@@ -2011,6 +2456,8 @@ public sealed partial class MainWindow : Window
         IconSizeCombo.SelectedIndex = _iconSize <= 85 ? 0 : _iconSize >= 140 ? 2 : 1;
         FolderPreviewSwitch.IsOn = _state.FolderPreviews;
         ShowExtensionsSwitch.IsOn = _state.ShowExtensions;
+        SingleInstanceSwitch.IsOn = _state.SingleInstance;
+        LockHiddenSwitch.IsOn = _state.LockHiddenAlbum;
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
         SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
         SlideshowSecondsValue.Text = $"{_state.SlideshowSeconds}s";
@@ -2020,6 +2467,22 @@ public sealed partial class MainWindow : Window
         _loadingSettings = false;
 
         SettingsOverlay.Visibility = Visibility.Visible;
+        AnimateSettingsIn();
+    }
+
+    private void SingleInstanceSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.SingleInstance = SingleInstanceSwitch.IsOn;
+        _state.Save();
+    }
+
+    private void LockHiddenSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.LockHiddenAlbum = LockHiddenSwitch.IsOn;
+        if (!_state.LockHiddenAlbum) _helloUnlocked = false; // re-arm the gate when turned off
+        _state.Save();
     }
 
     private void ThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2248,7 +2711,8 @@ public sealed partial class MainWindow : Window
                 if (_isFullScreen) ToggleFullScreen(); else ShowExplorer();
                 e.Handled = true; break;
             case VirtualKey.F11:
-            case VirtualKey.F:
+                ToggleFullScreen(); e.Handled = true; break;
+            case VirtualKey.F when InViewer: // 'f' elsewhere is just typing (e.g. the address bar)
                 ToggleFullScreen(); e.Handled = true; break;
             case VirtualKey.Add when InViewer:
             case (VirtualKey)187 when InViewer: // '='/'+'

@@ -86,6 +86,37 @@ public sealed class FileSystemService
         return folders;
     }
 
+    /// <summary>Recursively finds items under <paramref name="root"/> whose name contains the query.</summary>
+    public List<ExplorerItem> Search(string root, string query, int max = 4000)
+    {
+        var results = new List<ExplorerItem>();
+        if (string.IsNullOrWhiteSpace(query)) return results;
+        try
+        {
+            var opts = new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true,
+                AttributesToSkip = FileAttributes.System
+            };
+            foreach (var info in new DirectoryInfo(root).EnumerateFileSystemInfos("*", opts))
+            {
+                if (results.Count >= max) break;
+                if (info.Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                if (info.Attributes.HasFlag(FileAttributes.Hidden)) continue;
+                if (info is DirectoryInfo d)
+                    results.Add(new ExplorerItem(d.FullName, ExplorerItemKind.Folder, 0, SafeWrite(d), "Folder"));
+                else if (info is FileInfo f)
+                    results.Add(new ExplorerItem(f.FullName, ExplorerItemKind.File, SafeLength(f), SafeWrite(f), TypeName(f.Extension)));
+            }
+        }
+        catch
+        {
+            // Return whatever we gathered before the error.
+        }
+        return results;
+    }
+
     private static ExplorerItem Drive(string root, string name) =>
         new(root, ExplorerItemKind.Drive, 0, default, "Drive", name);
 

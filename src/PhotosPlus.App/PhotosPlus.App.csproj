@@ -24,6 +24,8 @@
          instantiations (e.g. drag-drop's GetStorageItemsAsync). -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- We provide our own Program.Main so single-instance redirection can run before XAML inits. -->
+    <DefineConstants>DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

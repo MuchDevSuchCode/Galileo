@@ -90,6 +90,7 @@ public static class ShellImaging
     {
         IShellItemImageFactory? factory = null;
         var hbitmap = IntPtr.Zero;
+        var hdc = IntPtr.Zero;
         try
         {
             var iid = typeof(IShellItemImageFactory).GUID;
@@ -114,10 +115,20 @@ public static class ShellImaging
             bi.bmiHeader.biBitCount = 32;
             bi.bmiHeader.biCompression = BI_RGB;
 
-            var hdc = GetDC(IntPtr.Zero);
+            hdc = GetDC(IntPtr.Zero);
             var lines = GetDIBits(hdc, hbitmap, 0, (uint)h, bytes, ref bi, DIB_RGB_COLORS);
-            ReleaseDC(IntPtr.Zero, hdc);
             if (lines == 0) return (null, 0, 0);
+
+            // Device-dependent bitmaps (some shortcut/file icons) have no alpha channel, so
+            // GetDIBits leaves every alpha byte at 0 — which would render the icon fully
+            // transparent (invisible). If the whole image came back transparent, treat it as
+            // opaque. Genuinely-transparent icons always have at least one opaque pixel, so
+            // this never flattens a real alpha channel.
+            var anyOpaque = false;
+            for (var i = 3; i < bytes.Length; i += 4)
+                if (bytes[i] != 0) { anyOpaque = true; break; }
+            if (!anyOpaque)
+                for (var i = 3; i < bytes.Length; i += 4) bytes[i] = 255;
 
             return (bytes, w, h);
         }
@@ -127,6 +138,7 @@ public static class ShellImaging
         }
         finally
         {
+            if (hdc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, hdc);
             if (hbitmap != IntPtr.Zero) DeleteObject(hbitmap);
             if (factory is not null) Marshal.ReleaseComObject(factory);
         }

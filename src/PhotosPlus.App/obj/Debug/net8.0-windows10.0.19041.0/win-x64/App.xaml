@@ -17,12 +17,25 @@
                 <Setter Property="Height" Value="44" />
                 <Setter Property="CornerRadius" Value="22" />
                 <Setter Property="Padding" Value="0" />
-                <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+                <Setter Property="FontFamily" Value="Segoe Fluent Icons" />
                 <Setter Property="FontSize" Value="16" />
                 <Setter Property="HorizontalContentAlignment" Value="Center" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
             </Style>
             <SolidColorBrush x:Key="PillBrush" Color="#E6262626" />
+
+            <!-- Clickable Details-view column header -->
+            <Style x:Key="ColumnHeaderButton" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="2,0" />
+                <Setter Property="HorizontalAlignment" Value="Stretch" />
+                <Setter Property="HorizontalContentAlignment" Value="Left" />
+                <Setter Property="VerticalAlignment" Value="Stretch" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Style>
 
             <!-- Explorer: icon-view tile (cell size set via ItemsWrapGrid.ItemWidth/Height) -->
             <DataTemplate x:Key="ExplorerIconTemplate">

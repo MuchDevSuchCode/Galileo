@@ -40,6 +40,12 @@ public sealed class AppState
     public bool SortDescending { get; set; }
     public string GroupBy { get; set; } = "None";             // None | Name | Date | Type | Size
 
+    /// <summary>Reuse a single window for files opened from the shell (off by default).</summary>
+    public bool SingleInstance { get; set; }
+
+    /// <summary>Require Windows Hello / PIN before revealing the Hidden album or app-hidden folders.</summary>
+    public bool LockHiddenAlbum { get; set; }
+
     // Slideshow settings
     public int SlideshowSeconds { get; set; } = 4;
     public bool SlideshowShuffle { get; set; }
