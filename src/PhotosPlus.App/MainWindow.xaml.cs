@@ -1378,6 +1378,9 @@ public sealed partial class MainWindow : Window
 
     // ---- Embedded video player ----
 
+    private bool _videoMuted;
+    private bool _videoRepeat;
+
     private async void OpenVideoFromExplorer(ExplorerItem item)
     {
         try
@@ -1386,10 +1389,38 @@ public sealed partial class MainWindow : Window
             ShowViewer();
             EnterVideoMode();
             VideoPlayer.Source = MediaSource.CreateFromStorageFile(file);
-            VideoPlayer.MediaPlayer?.Play();
+            var mp = VideoPlayer.MediaPlayer;
+            if (mp is not null)
+            {
+                mp.IsMuted = _videoMuted;
+                mp.IsLoopingEnabled = _videoRepeat;
+                mp.Play();
+            }
+            UpdateVideoToggleIcons();
             ModeLabel.Text = item.Name;
         }
         catch (Exception ex) { StatusText.Text = $"Couldn't play video: {ex.Message}"; App.Log("OpenVideo", ex); }
+    }
+
+    private void VideoMute_Click(object sender, RoutedEventArgs e)
+    {
+        _videoMuted = !_videoMuted;
+        if (VideoPlayer.MediaPlayer is not null) VideoPlayer.MediaPlayer.IsMuted = _videoMuted;
+        UpdateVideoToggleIcons();
+    }
+
+    private void VideoRepeat_Click(object sender, RoutedEventArgs e)
+    {
+        _videoRepeat = !_videoRepeat;
+        if (VideoPlayer.MediaPlayer is not null) VideoPlayer.MediaPlayer.IsLoopingEnabled = _videoRepeat;
+        UpdateVideoToggleIcons();
+    }
+
+    private void UpdateVideoToggleIcons()
+    {
+        VideoMuteIcon.Glyph = _videoMuted ? "" : ""; // Mute / Volume
+        VideoRepeatIcon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+            _videoRepeat ? Microsoft.UI.Colors.Gold : Microsoft.UI.Colors.White);
     }
 
     private void EnterVideoMode()
@@ -1400,6 +1431,7 @@ public sealed partial class MainWindow : Window
         InfoPanel.Visibility = Visibility.Collapsed;
         VideoPlayer.Visibility = Visibility.Visible;
         VideoBackBar.Visibility = Visibility.Visible;
+        VideoControlsBar.Visibility = Visibility.Visible;
     }
 
     private void EnterImageMode()
@@ -1407,6 +1439,7 @@ public sealed partial class MainWindow : Window
         StopVideo();
         VideoPlayer.Visibility = Visibility.Collapsed;
         VideoBackBar.Visibility = Visibility.Collapsed;
+        VideoControlsBar.Visibility = Visibility.Collapsed;
         ImageHost.Visibility = Visibility.Visible;
         ViewerChrome.Visibility = Visibility.Visible;
     }
