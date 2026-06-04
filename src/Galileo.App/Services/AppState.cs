@@ -59,6 +59,8 @@ public sealed class AppState
     public bool VaultWipeOnFailure { get; set; }
     /// <summary>Number of consecutive wrong passphrases that triggers a wipe (when enabled).</summary>
     public int VaultWipeAfterAttempts { get; set; } = 10;
+    /// <summary>UTC ticks of the last successful Google Drive vault backup (0 = never).</summary>
+    public long LastVaultBackupUtcTicks { get; set; }
 
     // Slideshow settings
     public int SlideshowSeconds { get; set; } = 4;

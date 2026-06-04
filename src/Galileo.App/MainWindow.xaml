@@ -899,6 +899,30 @@
                                     </Grid>
                                 </Border>
                             </StackPanel>
+
+                            <!-- Backup -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="BACKUP" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <StackPanel Spacing="14">
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Google Drive" />
+                                                <TextBlock x:Name="BackupStatusText" Text="Not connected" Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <Button Grid.Column="1" x:Name="BackupConnectBtn" Content="Sign in with Google"
+                                                    VerticalAlignment="Center" Click="BackupConnect_Click" />
+                                        </Grid>
+                                        <StackPanel Orientation="Horizontal" Spacing="10">
+                                            <Button x:Name="BackupNowBtn" Content="Back up all vaults now" Click="BackupNow_Click" IsEnabled="False" />
+                                            <Button x:Name="BackupRestoreBtn" Content="Restore from Drive…" Click="BackupRestore_Click" IsEnabled="False" />
+                                        </StackPanel>
+                                        <TextBlock x:Name="LastBackupText" Style="{StaticResource SettingDesc}" />
+                                        <TextBlock Text="Only fully-encrypted vault files (obfuscated names) are uploaded. The key never leaves your device."
+                                                   Style="{StaticResource SettingDesc}" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
 

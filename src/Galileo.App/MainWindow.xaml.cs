@@ -63,6 +63,7 @@ public sealed partial class MainWindow : Window
 
     // Secure vault state.
     private readonly VaultManager _vaults = new();
+    private readonly GoogleDriveBackup _drive = new();
     private readonly ObservableCollection<Models.VaultInfo> _vaultList = new();
     private readonly DispatcherTimer _vaultIdleTimer = new();
     private bool _closingForVaultLock;  // guards the re-entrant AppWindow.Closing lock flow
@@ -159,6 +160,9 @@ public sealed partial class MainWindow : Window
         RefreshVaults();
         _vaultIdleTimer.Tick += VaultIdle_Tick;
         _appWindow.Closing += AppWindow_Closing;
+
+        // Stay signed in to Google Drive across launches (silent token refresh; no browser).
+        if (GoogleDriveBackup.IsConfigured) _ = SilentReconnectDriveAsync();
 
         IconSizeSlider.Value = _iconSize;
         ApplyIconSize();
@@ -2774,6 +2778,168 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // ===================== Google Drive backup =====================
+
+    private void UpdateBackupUi()
+    {
+        var configured = GoogleDriveBackup.IsConfigured;
+        var connected = _drive.IsConnected;
+        BackupStatusText.Text = !configured ? "Sign-in unavailable — no Google OAuth client configured"
+            : connected
+                ? (string.IsNullOrEmpty(_drive.ConnectedEmail) ? "Signed in" : $"Signed in as {_drive.ConnectedEmail}")
+                : "Not signed in";
+        BackupConnectBtn.Content = connected ? "Sign out" : "Sign in with Google";
+        BackupNowBtn.IsEnabled = connected;
+        BackupRestoreBtn.IsEnabled = connected;
+        LastBackupText.Text = _state.LastVaultBackupUtcTicks > 0
+            ? $"Last backup: {new DateTime(_state.LastVaultBackupUtcTicks, DateTimeKind.Utc).ToLocalTime():yyyy-MM-dd HH:mm}"
+            : "";
+    }
+
+    private async Task SilentReconnectDriveAsync()
+    {
+        try { await _drive.TryReconnectAsync(); }
+        catch (Exception ex) { App.Log("DriveReconnect", ex); }
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (SettingsOverlay.Visibility == Visibility.Visible) UpdateBackupUi();
+        });
+    }
+
+    private async void BackupConnect_Click(object sender, RoutedEventArgs e)
+    {
+        if (!GoogleDriveBackup.IsConfigured) { await ShowBackupSetupHelpAsync(); return; }
+        if (_drive.IsConnected) { await _drive.DisconnectAsync(); UpdateBackupUi(); return; }
+
+        BackupStatusText.Text = "Opening your browser to sign in…";
+        try { await _drive.ConnectAsync(); }
+        catch (Exception ex) { BackupStatusText.Text = "Connect failed: " + ex.Message; App.Log("DriveConnect", ex); }
+        UpdateBackupUi();
+    }
+
+    private async void BackupNow_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_drive.IsConnected) return;
+        var vaults = _vaults.List();
+        if (vaults.Count == 0) { BackupStatusText.Text = "No vaults to back up."; return; }
+
+        BackupNowBtn.IsEnabled = false;
+        var progress = new Progress<string>(m => BackupStatusText.Text = m);
+        try
+        {
+            var n = 0;
+            foreach (var v in vaults)
+            {
+                BackupStatusText.Text = $"Backing up “{v.Name}” ({++n}/{vaults.Count})…";
+                await _drive.BackupVaultAsync(v, progress);
+            }
+            _state.LastVaultBackupUtcTicks = DateTime.UtcNow.Ticks;
+            ForceSaveState();
+            UpdateBackupUi();
+            BackupStatusText.Text = $"Backed up {vaults.Count} vault(s).";
+        }
+        catch (Exception ex) { BackupStatusText.Text = "Backup failed: " + ex.Message; App.Log("DriveBackup", ex); }
+        finally { BackupNowBtn.IsEnabled = _drive.IsConnected; }
+    }
+
+    private async void BackupRestore_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_drive.IsConnected) return;
+
+        BackupStatusText.Text = "Listing backups…";
+        IReadOnlyList<RemoteVault> backups;
+        try { backups = await _drive.ListBackupsAsync(); }
+        catch (Exception ex) { BackupStatusText.Text = "Couldn't list backups: " + ex.Message; return; }
+        if (backups.Count == 0) { BackupStatusText.Text = "No backups found in Drive."; return; }
+
+        var list = new ListView { SelectionMode = ListViewSelectionMode.Single, MaxHeight = 300 };
+        foreach (var b in backups)
+        {
+            var local = Directory.Exists(System.IO.Path.Combine(VaultManager.VaultsRoot, b.Id));
+            list.Items.Add(new TextBlock { Text = $"{b.Id}  ·  {b.FileCount} files{(local ? "  (already on this PC)" : "")}" });
+        }
+        list.SelectedIndex = 0;
+
+        var dlg = new ContentDialog
+        {
+            Title = "Restore vault from Drive",
+            Content = list,
+            PrimaryButtonText = "Restore",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = RootGrid.XamlRoot,
+        };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary || list.SelectedIndex < 0) return;
+
+        var chosen = backups[list.SelectedIndex];
+        BackupStatusText.Text = "Restoring…";
+        try
+        {
+            await _drive.RestoreVaultAsync(chosen.Id, new Progress<string>(m => BackupStatusText.Text = m));
+            RefreshVaults();
+            BackupStatusText.Text = "Restored — unlock it from the sidebar.";
+        }
+        catch (Exception ex) { BackupStatusText.Text = "Restore failed: " + ex.Message; App.Log("DriveRestore", ex); }
+    }
+
+    private async Task BackupSingleVaultAsync(string vaultId)
+    {
+        Vault v;
+        try
+        {
+            v = _vaults.Current?.Id == vaultId ? _vaults.Current
+                : Vault.Load(System.IO.Path.Combine(VaultManager.VaultsRoot, vaultId));
+        }
+        catch (Exception ex) { StatusText.Text = "Backup failed: " + ex.Message; return; }
+
+        if (!_drive.IsConnected)
+        {
+            if (!GoogleDriveBackup.IsConfigured) { await ShowBackupSetupHelpAsync(); return; }
+            StatusText.Text = "Connecting to Google Drive…";
+            try { await _drive.ConnectAsync(); }
+            catch (Exception ex) { StatusText.Text = "Connect failed: " + ex.Message; return; }
+        }
+
+        StatusText.Text = $"Backing up “{v.Name}”…";
+        try
+        {
+            await _drive.BackupVaultAsync(v, new Progress<string>(m => StatusText.Text = m));
+            _state.LastVaultBackupUtcTicks = DateTime.UtcNow.Ticks;
+            ForceSaveState();
+            StatusText.Text = $"Backed up “{v.Name}” to Google Drive.";
+        }
+        catch (Exception ex) { StatusText.Text = "Backup failed: " + ex.Message; App.Log("DriveBackup", ex); }
+    }
+
+    /// <summary>Persists state even while the Settings dialog has Save suppressed (for the backup timestamp).</summary>
+    private void ForceSaveState()
+    {
+        var prev = _state.SuppressSave;
+        _state.SuppressSave = false;
+        _state.Save();
+        _state.SuppressSave = prev;
+    }
+
+    private async Task ShowBackupSetupHelpAsync()
+    {
+        var msg = "Sign-in needs a Google OAuth client. Build Galileo with one embedded " +
+                  "(GoogleDriveBackup.EmbeddedClientId/Secret) so anyone can just sign in, or for a " +
+                  "one-off setup:\n\n" +
+                  "1. Create a project at console.cloud.google.com\n" +
+                  "2. Enable the Google Drive API\n" +
+                  "3. Create an OAuth client ID of type “Desktop app”\n" +
+                  "4. Download its JSON and save it as:\n" +
+                  GoogleDriveBackup.OAuthConfigPath + "\n\n" +
+                  "Then reopen Settings and click Sign in with Google.";
+        await new ContentDialog
+        {
+            Title = "Set up Google Drive sign-in",
+            Content = new TextBlock { Text = msg, TextWrapping = TextWrapping.Wrap },
+            CloseButtonText = "OK",
+            XamlRoot = RootGrid.XamlRoot,
+        }.ShowAsync();
+    }
+
     // ===================== Settings =====================
 
     private void Settings_Click(object sender, RoutedEventArgs e)
@@ -2800,6 +2966,7 @@ public sealed partial class MainWindow : Window
         VaultWipeCountBox.Value = _state.VaultWipeAfterAttempts;
         VaultWipeCountRow.Visibility = _state.VaultWipeOnFailure ? Visibility.Visible : Visibility.Collapsed;
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
+        UpdateBackupUi();
         SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
         SlideshowSecondsValue.Text = $"{_state.SlideshowSeconds}s";
         ShuffleSwitch.IsOn = _state.SlideshowShuffle;
@@ -3506,6 +3673,18 @@ public sealed partial class MainWindow : Window
         var rename = new MenuFlyoutItem { Text = "Rename…", Icon = new SymbolIcon(Symbol.Rename) };
         rename.Click += async (_, _) => await RenameVaultAsync(vi);
         menu.Items.Add(rename);
+
+        if (GoogleDriveBackup.IsConfigured)
+        {
+            var backup = new MenuFlyoutItem
+            {
+                Text = "Back up to Google Drive",
+                Icon = new FontIcon { Glyph = char.ConvertFromUtf32(0xE753), FontFamily = new FontFamily("Segoe Fluent Icons") },
+            };
+            backup.Click += async (_, _) => await BackupSingleVaultAsync(vi.Id);
+            menu.Items.Add(backup);
+        }
+
         var target = (FrameworkElement)sender;
         menu.ShowAt(target, new FlyoutShowOptions { Position = e.GetPosition(target) });
         e.Handled = true;
