@@ -1585,7 +1585,7 @@ public sealed partial class MainWindow : Window
     {
         if (item.IsFolder) NavigateTo(item.Path);
         else if (item.IsImage) OpenImageFromExplorer(item);
-        else if (PhotoLibrary.IsVideo(item.Path)) OpenVideoFromExplorer(item);
+        else if (PhotoLibrary.IsMedia(item.Path)) OpenVideoFromExplorer(item);
         else
         {
             try
@@ -1616,6 +1616,9 @@ public sealed partial class MainWindow : Window
             var file = await StorageFile.GetFileFromPathAsync(item.Path);
             ShowViewer();
             EnterVideoMode();
+            var isAudio = PhotoLibrary.IsAudio(item.Path);
+            AudioOverlay.Visibility = isAudio ? Visibility.Visible : Visibility.Collapsed;
+            AudioTitle.Text = isAudio ? item.Name : "";
             VideoPlayer.Source = MediaSource.CreateFromStorageFile(file);
             var mp = VideoPlayer.MediaPlayer;
             if (mp is not null)
@@ -1660,6 +1663,7 @@ public sealed partial class MainWindow : Window
         VideoPlayer.Visibility = Visibility.Visible;
         VideoBackBar.Visibility = Visibility.Visible;
         VideoControlsBar.Visibility = Visibility.Visible;
+        AudioOverlay.Visibility = Visibility.Collapsed; // set by the caller when the file is audio
     }
 
     private void EnterImageMode()
@@ -1668,6 +1672,7 @@ public sealed partial class MainWindow : Window
         VideoPlayer.Visibility = Visibility.Collapsed;
         VideoBackBar.Visibility = Visibility.Collapsed;
         VideoControlsBar.Visibility = Visibility.Collapsed;
+        AudioOverlay.Visibility = Visibility.Collapsed;
         ImageHost.Visibility = Visibility.Visible;
         ViewerChrome.Visibility = Visibility.Visible;
     }
@@ -3477,7 +3482,7 @@ public sealed partial class MainWindow : Window
                 PeekImage.Source = bmp;
                 PeekImage.Visibility = Visibility.Visible;
             }
-            else if (item.Kind == ExplorerItemKind.File && PhotoLibrary.IsVideo(item.Path))
+            else if (item.Kind == ExplorerItemKind.File && PhotoLibrary.IsMedia(item.Path))
             {
                 var file = await StorageFile.GetFileFromPathAsync(item.Path);
                 if (token != _peekToken) return;

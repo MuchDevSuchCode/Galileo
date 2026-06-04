@@ -28,6 +28,12 @@ public sealed class PhotoLibrary
         ".mpg", ".mpeg", ".m2ts", ".ts", ".3gp", ".ogv"
     };
 
+    public static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".oga", ".opus",
+        ".wma", ".aiff", ".aif", ".alac", ".mka"
+    };
+
     public PhotoLibrary(AppState state) => _state = state;
 
     public static bool IsSupported(string path) =>
@@ -35,6 +41,12 @@ public sealed class PhotoLibrary
 
     public static bool IsVideo(string path) =>
         VideoExtensions.Contains(Path.GetExtension(path));
+
+    public static bool IsAudio(string path) =>
+        AudioExtensions.Contains(Path.GetExtension(path));
+
+    /// <summary>Audio or video — anything the embedded media player handles.</summary>
+    public static bool IsMedia(string path) => IsVideo(path) || IsAudio(path);
 
     /// <summary>Loads all supported images in a folder, newest first.</summary>
     public List<PhotoItem> Load(string folder)

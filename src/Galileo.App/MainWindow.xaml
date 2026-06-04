@@ -481,9 +481,16 @@
                 </Image>
             </Grid>
 
-            <!-- Embedded video player (shown for video files) -->
+            <!-- Embedded media player (shown for video and audio files) -->
             <MediaPlayerElement x:Name="VideoPlayer" Visibility="Collapsed"
                                 AreTransportControlsEnabled="True" AutoPlay="True" Stretch="Uniform" />
+            <!-- "Now playing" art for audio (no video frame); clicks pass through to the controls -->
+            <StackPanel x:Name="AudioOverlay" Visibility="Collapsed" IsHitTestVisible="False"
+                        HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="18">
+                <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe Fluent Icons" FontSize="80" Foreground="White" Opacity="0.85" />
+                <TextBlock x:Name="AudioTitle" Foreground="White" FontSize="18" MaxWidth="560"
+                           HorizontalAlignment="Center" TextAlignment="Center" TextTrimming="CharacterEllipsis" />
+            </StackPanel>
             <Border x:Name="VideoBackBar" Visibility="Collapsed"
                     HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,48,0,0"
                     CornerRadius="22" Padding="4" Background="{StaticResource PillBrush}">
