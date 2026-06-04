@@ -57,6 +57,10 @@ public sealed partial class MainWindow : Window
     private ExplorerItem? _peekItem;
     private int _peekToken;            // bumped per preview load so a fast nav cancels a stale decode
 
+    // Rubber-band (marquee) selection state for the icon view.
+    private bool _marqueeActive;
+    private Windows.Foundation.Point _marqueeStart;
+
     // Secure vault state.
     private readonly VaultManager _vaults = new();
     private readonly ObservableCollection<Models.VaultInfo> _vaultList = new();
@@ -1092,6 +1096,13 @@ public sealed partial class MainWindow : Window
 
         // Any pointer/key activity resets the vault idle auto-lock countdown.
         RootGrid.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler((_, _) => ResetVaultIdle()), true);
+
+        // Rubber-band selection on the icon view (handledEventsToo so it fires even though the
+        // GridView handles pointer events for its own scrolling/selection).
+        ExplorerIconsView.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(ExplorerIcons_PointerPressed), true);
+        ExplorerIconsView.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler(ExplorerIcons_PointerMoved), true);
+        ExplorerIconsView.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(ExplorerIcons_PointerReleased), true);
+        ExplorerIconsView.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(ExplorerIcons_PointerCaptureLost), true);
     }
 
     /// <summary>A cheap fingerprint of the current drives (letter + ready state) to detect changes.</summary>
@@ -2480,6 +2491,85 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { StatusText.Text = $"Cut failed: {ex.Message}"; }
     }
 
+    // ===================== Rubber-band (marquee) selection =====================
+
+    private static GridViewItem? FindAncestorGridViewItem(DependencyObject? node)
+    {
+        while (node is not null)
+        {
+            if (node is GridViewItem gvi) return gvi;
+            node = VisualTreeHelper.GetParent(node);
+        }
+        return null;
+    }
+
+    private void ExplorerIcons_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var pt = e.GetCurrentPoint(ExplorerIconsView);
+        if (e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Mouse && !pt.Properties.IsLeftButtonPressed)
+            return;
+        // A press on an item belongs to selection/drag; only empty space starts a marquee.
+        if (FindAncestorGridViewItem(e.OriginalSource as DependencyObject) is not null) return;
+
+        _marqueeActive = true;
+        _marqueeStart = e.GetCurrentPoint(ExplorerContentArea).Position;
+        if (!IsCtrlDown()) ExplorerIconsView.SelectedItems.Clear();
+        ExplorerIconsView.CapturePointer(e.Pointer);
+        UpdateMarquee(_marqueeStart);
+        MarqueeRect.Visibility = Visibility.Visible;
+        e.Handled = true;
+    }
+
+    private void ExplorerIcons_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_marqueeActive) return;
+        UpdateMarquee(e.GetCurrentPoint(ExplorerContentArea).Position);
+        SelectWithinMarquee();
+        e.Handled = true;
+    }
+
+    private void ExplorerIcons_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_marqueeActive) return;
+        EndMarquee(e.Pointer);
+        e.Handled = true;
+    }
+
+    private void ExplorerIcons_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        if (_marqueeActive) EndMarquee(null);
+    }
+
+    private void EndMarquee(Pointer? pointer)
+    {
+        _marqueeActive = false;
+        MarqueeRect.Visibility = Visibility.Collapsed;
+        if (pointer is not null) ExplorerIconsView.ReleasePointerCapture(pointer);
+    }
+
+    private void UpdateMarquee(Windows.Foundation.Point cur)
+    {
+        var x = Math.Min(_marqueeStart.X, cur.X);
+        var y = Math.Min(_marqueeStart.Y, cur.Y);
+        MarqueeRect.Margin = new Thickness(x, y, 0, 0);
+        MarqueeRect.Width = Math.Abs(cur.X - _marqueeStart.X);
+        MarqueeRect.Height = Math.Abs(cur.Y - _marqueeStart.Y);
+    }
+
+    private void SelectWithinMarquee()
+    {
+        var box = new Windows.Foundation.Rect(MarqueeRect.Margin.Left, MarqueeRect.Margin.Top, MarqueeRect.Width, MarqueeRect.Height);
+        foreach (var item in _explorerItems)
+        {
+            if (ExplorerIconsView.ContainerFromItem(item) is not GridViewItem c) continue; // realized containers only
+            var b = c.TransformToVisual(ExplorerContentArea).TransformBounds(new Windows.Foundation.Rect(0, 0, c.ActualWidth, c.ActualHeight));
+            var hit = !(b.Right < box.Left || b.Left > box.Right || b.Bottom < box.Top || b.Top > box.Bottom);
+            var selected = ExplorerIconsView.SelectedItems.Contains(item);
+            if (hit && !selected) ExplorerIconsView.SelectedItems.Add(item);
+            else if (!hit && selected) ExplorerIconsView.SelectedItems.Remove(item);
+        }
+    }
+
     private string? GetDropTargetFolder(object? originalSource)
     {
         var item = (originalSource as FrameworkElement)?.DataContext as ExplorerItem;
@@ -2495,11 +2585,12 @@ public sealed partial class MainWindow : Window
             e.AcceptedOperation = DataPackageOperation.None;
             return;
         }
-        var move = IsShiftDown();
-        e.AcceptedOperation = move ? DataPackageOperation.Move : DataPackageOperation.Copy;
+        // Explorer convention: dragging into a folder MOVES by default; hold Ctrl to copy.
+        var copy = IsCtrlDown();
+        e.AcceptedOperation = copy ? DataPackageOperation.Copy : DataPackageOperation.Move;
         if (e.DragUIOverride is not null)
         {
-            e.DragUIOverride.Caption = move ? "Move here" : "Copy here";
+            e.DragUIOverride.Caption = copy ? "Copy here" : "Move here";
             e.DragUIOverride.IsCaptionVisible = true;
             e.DragUIOverride.IsGlyphVisible = true;
         }
@@ -2511,7 +2602,7 @@ public sealed partial class MainWindow : Window
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
         var target = GetDropTargetFolder(e.OriginalSource);
         if (target is null) return;
-        var move = IsShiftDown();
+        var move = !IsCtrlDown(); // default move; Ctrl copies
         e.Handled = true;
 
         var deferral = e.GetDeferral();

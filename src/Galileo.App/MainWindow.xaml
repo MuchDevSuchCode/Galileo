@@ -257,7 +257,7 @@
                 </Grid>
 
                 <!-- Content area -->
-                <Grid Grid.Row="3">
+                <Grid Grid.Row="3" x:Name="ExplorerContentArea">
                     <GridView x:Name="ExplorerIconsView" Padding="12,0,12,12"
                               SelectionMode="Extended"
                               IsItemClickEnabled="True"
@@ -352,6 +352,12 @@
                                    Opacity="0.65" FontSize="13" TextWrapping="Wrap" TextAlignment="Center" HorizontalAlignment="Center" />
                         <Button Content="New folder" Click="NewFolder_Click" HorizontalAlignment="Center" Margin="0,4,0,0" />
                     </StackPanel>
+
+                    <!-- Rubber-band (marquee) selection box, drawn over the icon view. -->
+                    <Rectangle x:Name="MarqueeRect" Visibility="Collapsed" IsHitTestVisible="False"
+                               HorizontalAlignment="Left" VerticalAlignment="Top"
+                               Fill="{ThemeResource AccentFillColorDefaultBrush}" Opacity="0.20"
+                               Stroke="{ThemeResource AccentFillColorDefaultBrush}" StrokeThickness="1" />
                 </Grid>
             </Grid>
         </Grid>
