@@ -5,6 +5,7 @@
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>PhotosPlus</RootNamespace>
+    <ApplicationIcon>Assets\galileo.ico</ApplicationIcon>
     <!-- WindowsAppSDK 1.6 requires SDK.NET.Ref >= 10.0.19041.38; the .NET 8.0.300 SDK
          bundles .31, so pin a compatible ref version explicitly (per build guidance). -->
     <WindowsSdkPackageVersion>10.0.19041.38</WindowsSdkPackageVersion>
@@ -23,6 +24,10 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\galileo.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250108002" />

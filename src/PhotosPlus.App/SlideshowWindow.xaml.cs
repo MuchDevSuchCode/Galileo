@@ -42,6 +42,7 @@ public sealed partial class SlideshowWindow : Window
         var id = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
         _appWindow = AppWindow.GetFromWindowId(id);
         _appWindow.Title = "Galileo — Slideshow";
+        try { _appWindow.SetIcon(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "galileo.ico")); } catch { }
         _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
 
         _order = Enumerable.Range(0, _photos.Count).ToList();

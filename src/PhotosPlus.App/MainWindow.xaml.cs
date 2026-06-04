@@ -76,6 +76,7 @@ public sealed partial class MainWindow : Window
         var id = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
         _appWindow = AppWindow.GetFromWindowId(id);
         _appWindow.Title = "Galileo";
+        try { _appWindow.SetIcon(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "galileo.ico")); } catch { }
 
         // Mica backdrop for a modern translucent window.
         SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();

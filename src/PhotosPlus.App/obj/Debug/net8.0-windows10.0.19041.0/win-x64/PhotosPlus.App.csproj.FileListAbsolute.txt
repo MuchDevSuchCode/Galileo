@@ -301,3 +301,5 @@ C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\SlideshowWindow.g.cs
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\SlideshowWindow.xaml
 C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\obj\Debug\net8.0-windows10.0.19041.0\win-x64\SlideshowWindow.xbf
+C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Assets\galileo.ico
+C:\Users\engineer\code\PhotosPlus\src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Assets\galileo.png
