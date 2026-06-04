@@ -52,6 +52,11 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _chromeTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     private bool _loadingSettings;
 
+    // Polls for mounted/removed drives so the sidebar and This PC view stay current
+    // (WinUI 3 doesn't surface WM_DEVICECHANGE directly).
+    private readonly DispatcherTimer _driveWatcher = new() { Interval = TimeSpan.FromSeconds(2) };
+    private HashSet<string> _knownDrives = new(StringComparer.OrdinalIgnoreCase);
+
     // File-explorer state
     private FileSystemService _fs = null!;
     private readonly ObservableCollection<ExplorerItem> _explorerItems = new();
@@ -136,6 +141,11 @@ public sealed partial class MainWindow : Window
         ApplyClickMode();
         SyncSortGroupRadios();
         UpdateSortHeaders();
+
+        // Watch for drives being mounted/removed and keep the UI in sync.
+        _knownDrives = CurrentDriveSignature();
+        _driveWatcher.Tick += DriveWatcher_Tick;
+        _driveWatcher.Start();
 
         // Windows may launch us with a file (default app) or folder to open.
         if (!string.IsNullOrEmpty(initialPath) && System.IO.File.Exists(initialPath))
@@ -1048,10 +1058,62 @@ public sealed partial class MainWindow : Window
         foreach (var i in quick.Concat(drives)) _ = i.LoadIconAsync(32);
         ExplorerIconsView.Loaded += (_, _) => ApplyIconSize();
 
+        _knownDrives = CurrentDriveSignature();
+
         // Ctrl + mouse wheel resizes the thumbnails (handledEventsToo so it fires even though
         // the list scrolls the wheel internally).
         ExplorerIconsView.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(Explorer_PointerWheelChanged), true);
         ExplorerDetailsList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(Explorer_PointerWheelChanged), true);
+    }
+
+    /// <summary>A cheap fingerprint of the current drives (letter + ready state) to detect changes.</summary>
+    private static HashSet<string> CurrentDriveSignature()
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var d in System.IO.DriveInfo.GetDrives())
+            {
+                bool ready;
+                try { ready = d.IsReady; } catch { ready = false; }
+                set.Add(d.Name + (ready ? "+" : "-"));
+            }
+        }
+        catch { /* enumeration can momentarily fail while a device settles */ }
+        return set;
+    }
+
+    /// <summary>Polls for drive arrival/removal and refreshes the sidebar + This PC view on change.</summary>
+    private async void DriveWatcher_Tick(object? sender, object e)
+    {
+        HashSet<string> sig;
+        List<ExplorerItem> drives;
+        try
+        {
+            sig = await Task.Run(CurrentDriveSignature); // IsReady can block, so poll off the UI thread
+            if (sig.SetEquals(_knownDrives)) return;     // nothing changed
+            drives = await Task.Run(() => _fs.GetDrives());
+        }
+        catch { return; }
+
+        // Marshal the UI updates explicitly onto the UI thread. Relying on the await-captured
+        // context is unsafe here (a cross-thread ItemsSource assignment hard-crashes the XAML core).
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                _knownDrives = sig;
+                DrivesList.ItemsSource = drives;
+                foreach (var i in drives) _ = i.LoadIconAsync(32);
+
+                // If This PC is on screen (not searching), refresh it so the drive shows there too.
+                if (_currentFolder is null && ExplorerView.Visibility == Visibility.Visible && string.IsNullOrEmpty(_searchQuery))
+                    LoadCurrentFolder();
+
+                StatusText.Text = "Drives updated";
+            }
+            catch (Exception ex) { App.Log("DriveWatcher", ex); }
+        });
     }
 
     private void Explorer_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
@@ -2426,24 +2488,41 @@ public sealed partial class MainWindow : Window
 
     private void AnimateSettingsIn()
     {
-        SettingsCard.Opacity = 0;
-        SettingsCardTransform.ScaleX = SettingsCardTransform.ScaleY = 0.96;
-        SettingsCardTransform.TranslateY = 14;
+        // Guaranteed final state first, so the card is always visible even if the animation no-ops.
+        SettingsCard.Opacity = 1;
+        SettingsCardTransform.ScaleX = SettingsCardTransform.ScaleY = 1;
+        SettingsCardTransform.TranslateY = 0;
 
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        var sb = new Storyboard();
-        void Add(DependencyObject target, string prop, double to)
+        try
         {
-            var anim = new DoubleAnimation { To = to, Duration = TimeSpan.FromMilliseconds(180), EasingFunction = ease };
-            Storyboard.SetTarget(anim, target);
-            Storyboard.SetTargetProperty(anim, prop);
-            sb.Children.Add(anim);
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var sb = new Storyboard();
+
+            // Animations must target the element with a full property path; targeting a bare
+            // CompositeTransform object does not resolve in WinUI 3 (and can failfast the render thread).
+            void Add(string path, double from, double to)
+            {
+                var anim = new DoubleAnimation
+                {
+                    From = from,
+                    To = to,
+                    Duration = TimeSpan.FromMilliseconds(180),
+                    EasingFunction = ease
+                };
+                Storyboard.SetTarget(anim, SettingsCard);
+                Storyboard.SetTargetProperty(anim, path);
+                sb.Children.Add(anim);
+            }
+            Add("Opacity", 0, 1);
+            Add("(UIElement.RenderTransform).(CompositeTransform.ScaleX)", 0.97, 1);
+            Add("(UIElement.RenderTransform).(CompositeTransform.ScaleY)", 0.97, 1);
+            Add("(UIElement.RenderTransform).(CompositeTransform.TranslateY)", 14, 0);
+            sb.Begin();
         }
-        Add(SettingsCard, "Opacity", 1);
-        Add(SettingsCardTransform, "ScaleX", 1);
-        Add(SettingsCardTransform, "ScaleY", 1);
-        Add(SettingsCardTransform, "TranslateY", 0);
-        sb.Begin();
+        catch (Exception ex)
+        {
+            App.Log("AnimateSettingsIn", ex); // final state is already applied above
+        }
     }
 
     // ===================== Settings =====================
@@ -2466,6 +2545,9 @@ public sealed partial class MainWindow : Window
         TransitionCombo.SelectedIndex = (int)_state.SlideshowTransition;
         _loadingSettings = false;
 
+        // Cap the card to the current window height (so it scrolls on short windows) using a
+        // known-laid-out element — ActualHeight bindings don't update reliably in WinUI.
+        SettingsCard.MaxHeight = Math.Max(320, RootGrid.ActualHeight - 40);
         SettingsOverlay.Visibility = Visibility.Visible;
         AnimateSettingsIn();
     }

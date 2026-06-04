@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<!--
+  Galileo — GitHub Pages landing page.
+  ⚠️ Replace the repository URL below (search for "REPLACE_REPO_URL") with your real repo,
+     e.g. https://github.com/your-username/galileo, then enable Pages from the /docs folder
+     (Settings → Pages → Source: Deploy from a branch → /docs).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Galileo — a modern Windows Explorer + Photos alternative</title>
+  <meta name="description" content="Galileo is a fast, local-first, privacy-respecting file manager and photo viewer for Windows 11, built with WinUI 3 and .NET 8." />
+
+  <!-- Social / GitHub link previews -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Galileo — Windows Explorer + Photos, reimagined" />
+  <meta property="og:description" content="A fast, local-first file manager and photo viewer for Windows 11. WinUI 3 · .NET 8. Tabs, search, collage, slideshow, an embedded video player, and a private Hidden album." />
+  <meta property="og:image" content="galileo.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <link rel="icon" href="galileo.png" />
+  <style>
+    :root {
+      --bg: #0b0d12;
+      --bg-2: #11141b;
+      --panel: #171b24;
+      --panel-2: #1d2230;
+      --stroke: #262c3a;
+      --text: #e7eaf0;
+      --muted: #9aa3b5;
+      --accent: #6ea8ff;
+      --accent-2: #b58bff;
+      --gold: #ffce63;
+      --green: #5ad19a;
+      --radius: 16px;
+      --max: 1080px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1100px 600px at 80% -10%, rgba(110,168,255,.18), transparent 60%),
+        radial-gradient(900px 500px at 0% 0%, rgba(181,139,255,.14), transparent 55%),
+        var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+    .muted { color: var(--muted); }
+
+    /* Nav */
+    header.nav {
+      position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(14px);
+      background: rgba(11,13,18,.7);
+      border-bottom: 1px solid var(--stroke);
+    }
+    .nav-inner { display: flex; align-items: center; gap: 14px; height: 60px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .2px; }
+    .brand img { width: 26px; height: 26px; border-radius: 6px; }
+    .nav-links { margin-left: auto; display: flex; gap: 22px; align-items: center; }
+    .nav-links a { color: var(--muted); font-size: 14px; }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 10px 16px; border-radius: 10px; font-weight: 600; font-size: 14px;
+      border: 1px solid var(--stroke); color: var(--text); background: var(--panel);
+      transition: transform .12s ease, border-color .12s ease, background .12s ease;
+    }
+    .btn:hover { text-decoration: none; transform: translateY(-1px); border-color: #36405a; }
+    .btn.primary {
+      border: 0;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #0b0d12;
+    }
+    .btn.primary:hover { filter: brightness(1.05); }
+
+    /* Hero */
+    .hero { padding: 86px 0 56px; text-align: center; }
+    .hero img.logo { width: 96px; height: 96px; border-radius: 22px; box-shadow: 0 18px 50px rgba(0,0,0,.5); }
+    .hero h1 { font-size: clamp(40px, 7vw, 68px); margin: 22px 0 6px; letter-spacing: -1px; line-height: 1.05; }
+    .hero .grad {
+      background: linear-gradient(120deg, var(--accent), var(--accent-2) 60%, var(--gold));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .hero p.tag { font-size: clamp(17px, 2.4vw, 22px); color: var(--text); margin: 0 auto; max-width: 720px; }
+    .hero p.sub { color: var(--muted); max-width: 640px; margin: 14px auto 0; }
+    .cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 30px; }
+    .badges { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 26px; }
+    .badge {
+      font-size: 12.5px; color: var(--muted); padding: 6px 12px; border-radius: 999px;
+      border: 1px solid var(--stroke); background: rgba(255,255,255,.02);
+    }
+
+    /* App mockup */
+    .mock {
+      margin: 44px auto 0; max-width: 920px;
+      border: 1px solid var(--stroke); border-radius: 14px; overflow: hidden;
+      background: var(--bg-2); box-shadow: 0 30px 80px rgba(0,0,0,.55);
+    }
+    .mock .titlebar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--stroke); }
+    .mock .dot { width: 11px; height: 11px; border-radius: 50%; }
+    .mock .mtitle { margin: 0 auto; font-size: 12.5px; color: var(--muted); }
+    .mock .tabs { display: flex; gap: 6px; padding: 8px 12px 0; background: var(--bg-2); }
+    .mock .tab { font-size: 12.5px; padding: 7px 14px; border-radius: 9px 9px 0 0; color: var(--muted); background: var(--panel); border: 1px solid var(--stroke); border-bottom: 0; }
+    .mock .tab.active { color: var(--text); background: var(--panel-2); }
+    .mock .toolbar { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--stroke); background: var(--panel-2); flex-wrap: wrap; }
+    .mock .pill { font-size: 12px; color: var(--muted); padding: 5px 10px; border: 1px solid var(--stroke); border-radius: 8px; }
+    .mock .crumb { color: var(--accent); }
+    .mock .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 14px; padding: 20px; }
+    .mock .file { text-align: center; font-size: 11.5px; color: var(--muted); }
+    .mock .thumb { height: 70px; border-radius: 10px; margin-bottom: 7px; background: linear-gradient(135deg, #2a3145, #1b2030); border: 1px solid var(--stroke); }
+    .mock .thumb.folder { background: linear-gradient(135deg, #f0c264, #d99a3c); }
+    .mock .thumb.img1 { background: linear-gradient(135deg, #5ad19a, #2f7d8f); }
+    .mock .thumb.img2 { background: linear-gradient(135deg, #b58bff, #6e57c9); }
+    .mock .thumb.img3 { background: linear-gradient(135deg, #ff9a7a, #d65a8f); }
+    .mock .thumb.img4 { background: linear-gradient(135deg, #6ea8ff, #4b6ad6); }
+
+    /* Sections */
+    section { padding: 64px 0; }
+    .section-head { text-align: center; margin-bottom: 40px; }
+    .section-head h2 { font-size: clamp(26px, 4vw, 38px); margin: 0 0 8px; letter-spacing: -.5px; }
+    .section-head p { color: var(--muted); margin: 0 auto; max-width: 640px; }
+    .eyebrow { text-transform: uppercase; letter-spacing: 2px; font-size: 12px; color: var(--accent); font-weight: 700; }
+
+    /* Headline features */
+    .headline { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+    .headline .card {
+      padding: 30px; border-radius: var(--radius); border: 1px solid var(--stroke);
+      background: linear-gradient(180deg, var(--panel), var(--bg-2));
+    }
+    .headline .icon { font-size: 30px; }
+    .headline h3 { margin: 14px 0 8px; font-size: 22px; }
+    .headline p { color: var(--muted); margin: 0; }
+    kbd {
+      font-family: "Cascadia Code", "Consolas", monospace; font-size: 12px;
+      background: var(--panel-2); border: 1px solid var(--stroke); border-bottom-width: 2px;
+      border-radius: 6px; padding: 2px 7px; color: var(--text);
+    }
+
+    /* Feature grid */
+    .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    .feature {
+      padding: 22px; border-radius: var(--radius); border: 1px solid var(--stroke);
+      background: var(--panel); transition: transform .14s ease, border-color .14s ease;
+    }
+    .feature:hover { transform: translateY(-3px); border-color: #36405a; }
+    .feature .fi { font-size: 22px; }
+    .feature h3 { margin: 12px 0 6px; font-size: 16.5px; }
+    .feature p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+    /* Two-column band */
+    .band { background: linear-gradient(180deg, transparent, rgba(255,255,255,.02)); border-top: 1px solid var(--stroke); border-bottom: 1px solid var(--stroke); }
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; }
+
+    /* Keyboard table */
+    table.keys { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+    table.keys td { padding: 9px 10px; border-bottom: 1px solid var(--stroke); vertical-align: top; }
+    table.keys td.k { width: 160px; white-space: nowrap; }
+    .stack { display: flex; flex-wrap: wrap; gap: 10px; }
+    .chip { font-size: 13px; color: var(--text); padding: 8px 13px; border-radius: 10px; border: 1px solid var(--stroke); background: var(--panel); }
+
+    /* Code */
+    pre {
+      background: #0a0c11; border: 1px solid var(--stroke); border-radius: 12px;
+      padding: 18px; overflow-x: auto; font-size: 13.5px; color: #d6dcea;
+      font-family: "Cascadia Code", "Consolas", monospace;
+    }
+    pre .c { color: var(--muted); }
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 22px; }
+    .step { padding: 20px; border: 1px solid var(--stroke); border-radius: var(--radius); background: var(--panel); }
+    .step .n { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #0b0d12; margin-bottom: 12px; }
+
+    /* Footer */
+    footer { border-top: 1px solid var(--stroke); padding: 40px 0 56px; color: var(--muted); }
+    .foot-inner { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+    .foot-inner .brand { color: var(--text); }
+    .foot-links { margin-left: auto; display: flex; gap: 20px; }
+    .note { font-size: 12.5px; color: var(--muted); margin-top: 18px; }
+
+    @media (max-width: 820px) {
+      .headline, .cols, .features, .steps { grid-template-columns: 1fr; }
+      .nav-links a:not(.btn) { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <span class="brand"><img src="galileo.png" alt="Galileo logo" /> Galileo</span>
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#shortcuts">Shortcuts</a>
+        <a href="#start">Get started</a>
+        <!-- REPLACE_REPO_URL -->
+        <a class="btn" href="https://github.com/your-username/galileo">GitHub ↗</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- HERO -->
+  <div class="wrap hero">
+    <img class="logo" src="galileo.png" alt="Galileo app icon" />
+    <h1>Windows Explorer + Photos,<br /><span class="grad">reimagined.</span></h1>
+    <p class="tag">Galileo is a fast, local-first file manager and photo viewer for Windows 11.</p>
+    <p class="sub">No account. No cloud sync. Your library stays on your disk — with a tabbed explorer, a buttery photo viewer, collage &amp; slideshow, an embedded video player, and a private Hidden album.</p>
+
+    <div class="cta">
+      <!-- REPLACE_REPO_URL -->
+      <a class="btn primary" href="https://github.com/your-username/galileo">★ View on GitHub</a>
+      <a class="btn" href="#start">Build it yourself</a>
+    </div>
+
+    <div class="badges">
+      <span class="badge">WinUI 3 · Windows App SDK 1.6</span>
+      <span class="badge">.NET 8 · C# 12</span>
+      <span class="badge">Windows 11</span>
+      <span class="badge">Local-first · Private</span>
+      <span class="badge">Unpackaged · Self-contained</span>
+    </div>
+
+    <!-- App mockup -->
+    <div class="mock" aria-hidden="true">
+      <div class="titlebar">
+        <span class="dot" style="background:#ff5f57"></span>
+        <span class="dot" style="background:#febc2e"></span>
+        <span class="dot" style="background:#28c840"></span>
+        <span class="mtitle">Galileo — Pictures</span>
+      </div>
+      <div class="tabs">
+        <span class="tab active">📁 Pictures</span>
+        <span class="tab">📁 Downloads</span>
+        <span class="tab">📁 This PC</span>
+        <span class="tab" style="background:transparent;border:0;color:var(--muted)">＋</span>
+      </div>
+      <div class="toolbar">
+        <span class="pill">← →  ↑</span>
+        <span class="pill">This PC <span class="crumb">›</span> Pictures</span>
+        <span class="pill">🔍 Search</span>
+        <span class="pill" style="margin-left:auto">⤴ Sort</span>
+        <span class="pill">▦ View</span>
+        <span class="pill">⚙</span>
+      </div>
+      <div class="grid">
+        <div class="file"><div class="thumb folder"></div>Camera Roll</div>
+        <div class="file"><div class="thumb img1"></div>beach.jpg</div>
+        <div class="file"><div class="thumb img2"></div>sunset.png</div>
+        <div class="file"><div class="thumb img3"></div>trip.heic</div>
+        <div class="file"><div class="thumb img4"></div>clip.mp4</div>
+        <div class="file"><div class="thumb folder"></div>Wallpapers</div>
+        <div class="file"><div class="thumb img2"></div>art.webp</div>
+        <div class="file"><div class="thumb img1"></div>graph.png</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HEADLINE FEATURES -->
+  <section class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">What makes it different</div>
+      <h2>Two headline features</h2>
+      <p>The reasons Galileo started — privacy and a great full-screen show.</p>
+    </div>
+    <div class="headline">
+      <div class="card">
+        <div class="icon">👁️</div>
+        <h3>The eye toggle &amp; Hidden album</h3>
+        <p>One click (or <kbd>H</kbd>) drops a solid black curtain over the current photo — a glance over your shoulder reveals nothing. Or move photos to a persistent <strong>Hidden album</strong>, optionally gated behind <strong>Windows Hello</strong>. Originals are never modified; hidden state lives only in app data.</p>
+      </div>
+      <div class="card">
+        <div class="icon">▶️</div>
+        <h3>Full-screen slideshow</h3>
+        <p>Launch from the toolbar or <kbd>F5</kbd>. Adjustable per-slide timing (2–30s), shuffle, loop, and transitions including <strong>Ken Burns</strong> pan &amp; zoom. Auto-hiding controls, captions, and hidden photos are always skipped.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURE GRID -->
+  <section id="features" class="band">
+    <div class="wrap">
+      <div class="section-head">
+        <div class="eyebrow">Everything in one app</div>
+        <h2>A full file manager &amp; photo studio</h2>
+        <p>Built to replace both Windows Explorer and the Photos app — without the clutter or the cloud.</p>
+      </div>
+      <div class="features">
+        <div class="feature"><div class="fi">🗂️</div><h3>Tabbed explorer</h3><p>Win11-style folder tabs, each with its own back/forward history. Sidebar for Quick access &amp; drives.</p></div>
+        <div class="feature"><div class="fi">🔍</div><h3>Search</h3><p>Filter the current folder by name, or flip on recursive search to sweep every subfolder.</p></div>
+        <div class="feature"><div class="fi">↕️</div><h3>Sort &amp; group</h3><p>Sort/group by name, date, type, or size — or click a Details column header. Choices persist.</p></div>
+        <div class="feature"><div class="fi">✂️</div><h3>Cut, copy &amp; move</h3><p>Move-aware paste, plus drag files between folders (Shift to move) or out to any app.</p></div>
+        <div class="feature"><div class="fi">🖼️</div><h3>Photo viewer</h3><p>Fit-to-window, cursor-anchored wheel zoom, drag-pan, rotate with auto-refit, and a metadata panel.</p></div>
+        <div class="feature"><div class="fi">🎞️</div><h3>Video player</h3><p>Embedded playback for MP4/MOV/MKV/WEBM and more, with mute and repeat toggles.</p></div>
+        <div class="feature"><div class="fi">🧩</div><h3>Collage</h3><p>Auto-arranged Justified, Grid, or Hero layouts that fill the screen. Shuffle, resize, export to PNG.</p></div>
+        <div class="feature"><div class="fi">🎨</div><h3>5 themes</h3><p>System, Light, Dark, Terminal (green), and Gray — applied live, no restart.</p></div>
+        <div class="feature"><div class="fi">💾</div><h3>Drives, live</h3><p>Mount or remove a drive and it appears (or disappears) in the sidebar automatically.</p></div>
+        <div class="feature"><div class="fi">🔒</div><h3>Hide folders</h3><p>Make a folder appear empty in-app — reversible and disk-safe — optionally behind Windows Hello.</p></div>
+        <div class="feature"><div class="fi">🖱️</div><h3>Default photo app</h3><p>Registers as a Windows file handler so you can set Galileo as your default image viewer.</p></div>
+        <div class="feature"><div class="fi">⚡</div><h3>Fast &amp; fluid</h3><p>GPU-composited viewer, virtualized thumbnails, and throttled decoding for smooth fast-scrolling.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SHORTCUTS + TECH -->
+  <section id="shortcuts" class="wrap">
+    <div class="cols">
+      <div>
+        <div class="eyebrow">Keyboard</div>
+        <h2 style="margin:6px 0 18px">Shortcuts</h2>
+        <table class="keys">
+          <tr><td class="k"><kbd>←</kbd> / <kbd>→</kbd></td><td>Previous / next image</td></tr>
+          <tr><td class="k">Mouse wheel</td><td>Zoom toward the cursor</td></tr>
+          <tr><td class="k"><kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd></td><td>Zoom in / out / fit</td></tr>
+          <tr><td class="k"><kbd>R</kbd></td><td>Rotate 90° (auto-fit)</td></tr>
+          <tr><td class="k"><kbd>H</kbd></td><td>Black out / reveal (eye toggle)</td></tr>
+          <tr><td class="k"><kbd>F</kbd> / <kbd>F11</kbd></td><td>Full screen</td></tr>
+          <tr><td class="k"><kbd>F5</kbd></td><td>Refresh (explorer) · slideshow (viewer)</td></tr>
+          <tr><td class="k"><kbd>Backspace</kbd></td><td>Back</td></tr>
+          <tr><td class="k"><kbd>Del</kbd> / <kbd>Shift</kbd>+<kbd>Del</kbd></td><td>Recycle / permanent delete</td></tr>
+          <tr><td class="k"><kbd>Esc</kbd></td><td>Exit slideshow / full screen / back</td></tr>
+        </table>
+      </div>
+      <div>
+        <div class="eyebrow">Under the hood</div>
+        <h2 style="margin:6px 0 18px">Built with</h2>
+        <div class="stack">
+          <span class="chip">WinUI 3</span>
+          <span class="chip">Windows App SDK 1.6</span>
+          <span class="chip">.NET 8</span>
+          <span class="chip">C# 12</span>
+          <span class="chip">CommunityToolkit.Mvvm</span>
+          <span class="chip">Mica backdrop</span>
+          <span class="chip">CompositeTransform viewer</span>
+          <span class="chip">IShellItemImageFactory</span>
+          <span class="chip">Windows Hello</span>
+          <span class="chip">System.Text.Json state</span>
+        </div>
+        <p class="muted" style="margin-top:20px">
+          Local-first by design: no telemetry, no account, no network calls. Hidden &amp; favorite
+          state and all settings live in a single JSON file under <kbd>%LocalAppData%</kbd>.
+          Original files are never modified.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- GET STARTED -->
+  <section id="start" class="band">
+    <div class="wrap">
+      <div class="section-head">
+        <div class="eyebrow">For developers</div>
+        <h2>Build it yourself</h2>
+        <p>Galileo is an unpackaged, self-contained WinUI 3 desktop app. Clone, build, run.</p>
+      </div>
+      <div class="steps">
+        <div class="step"><div class="n">1</div><strong>Prerequisites</strong><p class="muted" style="margin:6px 0 0">Windows 11 and the .NET 8 SDK (<kbd>winget install Microsoft.DotNet.SDK.8</kbd>).</p></div>
+        <div class="step"><div class="n">2</div><strong>Build</strong><p class="muted" style="margin:6px 0 0">Compile the WinUI 3 project — produces <kbd>Galileo.exe</kbd>.</p></div>
+        <div class="step"><div class="n">3</div><strong>Run</strong><p class="muted" style="margin:6px 0 0">Launch it, or set it as your default image viewer via the included scripts.</p></div>
+      </div>
+<pre><span class="c"># clone, then from the repo root:</span>
+dotnet build src/PhotosPlus.App
+dotnet run   --project src/PhotosPlus.App
+
+<span class="c"># optional: install + register as the default photo app (per-user, no admin)</span>
+./tools/install.ps1</pre>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="wrap">
+    <div class="foot-inner">
+      <span class="brand"><img src="galileo.png" alt="" style="width:22px;height:22px;border-radius:5px;vertical-align:middle" /> Galileo</span>
+      <span class="muted">A Windows Explorer + Photos alternative · WinUI 3 · .NET 8</span>
+      <span class="foot-links">
+        <!-- REPLACE_REPO_URL -->
+        <a href="https://github.com/your-username/galileo">GitHub</a>
+        <a href="https://github.com/your-username/galileo#readme">README</a>
+      </span>
+    </div>
+    <p class="note">
+      Not affiliated with Microsoft. “Windows”, “Windows 11”, and “Photos” are trademarks of Microsoft Corporation.
+      Edit <code>docs/index.html</code> and replace <code>your-username/galileo</code> with your repository, then enable GitHub Pages from the <code>/docs</code> folder.
+    </p>
+  </footer>
+
+</body>
+</html>

@@ -71,21 +71,25 @@ public partial class PhotoItem : ObservableObject
         if (_thumbnailRequested) return;
         _thumbnailRequested = true;
 
-        try
+        // Throttle concurrent decodes so a fast scroll can't flood the render thread.
+        await Services.DecodeThrottle.RunAsync(async () =>
         {
-            var file = await StorageFile.GetFileFromPathAsync(Path);
-            using StorageItemThumbnail thumb =
-                await file.GetThumbnailAsync(ThumbnailMode.PicturesView, size, ThumbnailOptions.ResizeThumbnail);
+            try
+            {
+                var file = await StorageFile.GetFileFromPathAsync(Path);
+                using StorageItemThumbnail thumb =
+                    await file.GetThumbnailAsync(ThumbnailMode.PicturesView, size, ThumbnailOptions.ResizeThumbnail);
 
-            var bmp = new BitmapImage { DecodePixelWidth = (int)size };
-            await bmp.SetSourceAsync(thumb);
-            Thumbnail = bmp;
-        }
-        catch
-        {
-            // Unreadable / unsupported file — leave thumbnail null (placeholder shows).
-            _thumbnailRequested = false;
-        }
+                var bmp = new BitmapImage { DecodePixelWidth = (int)size };
+                await bmp.SetSourceAsync(thumb);
+                Thumbnail = bmp;
+            }
+            catch
+            {
+                // Unreadable / unsupported file — leave thumbnail null (placeholder shows).
+                _thumbnailRequested = false;
+            }
+        });
     }
 
     public DateTime LastModifiedUtc

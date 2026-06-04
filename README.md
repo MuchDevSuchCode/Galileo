@@ -9,7 +9,7 @@ Highlights over the stock apps:
 1. **👁 Eye toggle** — a one-click eye icon (shortcut **H**) that instantly **blacks out the photo in the viewer** for privacy, plus an optional **Hidden album** for photos you want kept out of the gallery.
 2. **▶ Slideshow** — a full-screen, configurable slideshow with adjustable timing, shuffle, loop, and transitions.
 
-> **Status:** working application. The file explorer, photo viewer, gallery, collage, embedded **video player**, eye toggle, slideshow, a full **Settings** panel (5 themes, sort/group, and more), and default-photo-app registration are all implemented and building. Image editing remains on the roadmap — see **[tasks.md](./tasks.md)**.
+> **Status:** working application. The tabbed file explorer (search, sort/group, cut-move, drive auto-detect, Windows Hello gate), photo viewer, gallery, collage, embedded **video player**, eye toggle, slideshow, a full **Settings** panel (5 themes and more), and default-photo-app registration are all implemented and building. Image editing remains on the roadmap — see **[tasks.md](./tasks.md)**.
 
 ---
 
@@ -28,16 +28,18 @@ Windows Photos and File Explorer are capable but cluttered and increasingly clou
 
 Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 
-- **Sidebar** — Home (This PC), Quick access (Desktop/Downloads/Documents/Pictures/Music/Videos), and drives.
+- **Tabs** — Win11-style **folder tabs**: open multiple locations at once, each with its own back/forward history. New-tab (`+`) and close buttons included.
+- **Sidebar** — Home (This PC), Quick access (Desktop/Downloads/Documents/Pictures/Music/Videos), and drives. **Newly mounted/removed drives are detected automatically** and appear without a manual refresh.
 - **Navigation** — back / forward / up, a clickable **breadcrumb**, and an editable **address bar** (pencil button or type a path + Enter). **Backspace** goes back; **F5** refreshes.
+- **Search** — a search box filters the current folder by name, with a toggle to **include subfolders** (recursive).
 - **Views** — Large / Medium / Small icons with a **size slider**, plus a **Details** view (Name · Date modified · Type · Size). Real shell thumbnails/icons for every file type, with optional **folder content previews** (the first image painted onto the folder icon).
-- **Sort & Group** — sort by Name / Date modified / Type / Size (ascending or descending) and **group** by the same keys, mirroring Explorer's defaults. Saved across sessions.
+- **Sort & Group** — sort by Name / Date modified / Type / Size (ascending or descending) and **group** by the same keys, mirroring Explorer's defaults. **Click a Details column header** to sort by it (arrow shows direction). Saved across sessions.
 - **Show / hide file extensions** — toggle in Settings (on by default); affects display only — the real filename is preserved for rename, copy, and open.
 - **Open** — folders navigate in; images open in the photo viewer; **videos open in the embedded player**; other files open in their default app. **Slideshow** and **Collage** buttons act on the current folder's images. Single- or double-click to open (configurable).
-- **File operations** — New folder (with immediate rename), Copy, Copy path, Paste, Rename, Delete (Recycle Bin), **Shift+Delete** (permanent), drag files out to other apps, and the native **Properties** dialog (right-click items or empty space).
-- **⭐ Hide folder** — the **Hide folder** button (or a folder's right-click) makes a folder **appear empty when opened** and excludes it from its parent. Toggle **Show app-hidden** to reveal hidden folders (dimmed); **Unhide** to restore. App-only and reversible — the folder on disk is never modified.
+- **File operations** — New folder (with immediate rename), **Cut / Copy / Paste** (move-aware), Copy path, Rename, Delete (Recycle Bin), **Shift+Delete** (permanent), **drag files between folders** (drop onto a folder to copy, hold **Shift** to move) or out to other apps, and the native **Properties** dialog (right-click items or empty space).
+- **⭐ Hide folder** — the **Hide folder** button (or a folder's right-click) makes a folder **appear empty when opened** and excludes it from its parent. Toggle **Show app-hidden** to reveal hidden folders (dimmed); **Unhide** to restore. App-only and reversible — the folder on disk is never modified. A **Windows Hello** gate can be required before hidden items are revealed (see Settings → Privacy).
 
-> Planned next: cut/move, drag-and-drop *between* folders, click-to-sort column headers in Details, search, and an expandable folder tree in the sidebar.
+> Planned next: an expandable folder tree in the sidebar, in-place Details column resizing, and a recents/pinned list.
 
 ---
 
@@ -72,10 +74,12 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 - **Default icon size** — Small / Medium / Large.
 - **Folder content previews** — on/off.
 - **Show file extensions** — on/off (on by default).
+- **Reuse one window** — single-instance mode: open shell-launched files in the running window instead of a new one (off by default).
+- **Privacy → Lock Hidden album** — require **Windows Hello / PIN** before revealing the Hidden album or app-hidden folders (falls back to a confirmation when Hello isn't set up).
 - **Default collage layout** — Justified / Grid / Hero.
 - **Slideshow** — seconds per photo (2–30 s), shuffle, loop, transition.
 
-All settings persist across sessions (`%LocalAppData%\PhotosPlus\state.json`). The panel header stays pinned and the body scrolls, so it never clips on small windows.
+All settings persist across sessions (`%LocalAppData%\PhotosPlus\state.json`). The panel opens with a fade/scale animation; its header stays pinned and the body scrolls, so it never clips on small windows.
 
 ### ✨ The two headline features
 
@@ -97,8 +101,11 @@ All settings persist across sessions (`%LocalAppData%\PhotosPlus\state.json`). T
 ## Modern UI
 
 - **Mica** backdrop and **extended title bar** for a seamless Win11 look — no chunky command bar.
+- **Segoe Fluent Icons** throughout for crisp, native Win11 glyphs.
 - **Floating, auto-hiding controls:** a translucent pill toolbar in the gallery; back / actions / nav-zoom pills in the viewer that fade out after a few seconds of inactivity.
-- Rounded thumbnails, a proper empty-state, dark/light aware.
+- **Motion:** a settings fade/scale entrance and a gallery→viewer connected animation.
+- Rounded thumbnails, illustrated empty-states, dark/light/custom-theme aware.
+- **Smooth under load:** thumbnail/icon decoding is throttled so fast-scrolling a folder of hundreds of media files stays fluid (and never overruns the render pipeline).
 
 ---
 
@@ -117,13 +124,15 @@ PhotosPlus/
 ├─ global.json                 # pins .NET SDK 8.0.300
 ├─ src/
 │  └─ PhotosPlus.App/          # WinUI 3 app (single project; builds Galileo.exe)
+│     ├─ Program.cs            # custom Main (single-instance redirection before XAML init)
 │     ├─ App.xaml(.cs)         # app + shared resources (GlyphButton, PillBrush, explorer templates)
-│     ├─ MainWindow.xaml(.cs)  # explorer + gallery + viewer + video + collage + settings + title bar
+│     ├─ MainWindow.xaml(.cs)  # explorer + tabs + gallery + viewer + video + collage + settings + title bar
 │     ├─ SlideshowWindow.xaml(.cs)
 │     ├─ Models/               # PhotoItem, ExplorerItem, ExplorerGroup
 │     ├─ Services/             # AppState, PhotoLibrary, FileSystemService,
 │     │                        #   ShellImaging (icons via IShellItemImageFactory + GetDIBits),
-│     │                        #   ShellOps (clipboard / properties / wallpaper), ImageCompositor, CollageLayout
+│     │                        #   ShellOps (clipboard / properties / wallpaper), ImageCompositor, CollageLayout,
+│     │                        #   HelloAuth (Windows Hello), DecodeThrottle (scroll-safe thumbnail decoding)
 │     ├─ Converters/           # BoolToVisibilityConverter
 │     └─ Assets/               # galileo.ico / galileo.png (app + taskbar icon)
 ├─ tools/                      # install.ps1, register-default.ps1, unregister-default.ps1
@@ -188,7 +197,8 @@ self-contained copy, just run `.\tools\install.ps1` again.
 
 > Helper scripts live in `tools/`: `install.ps1` (publish + register), `register-default.ps1` /
 > `unregister-default.ps1` (registry only, e.g. to point at a custom `-ExePath`).
-> Each opened file currently launches its own window (no single-instance reuse yet).
+> By default each opened file launches its own window; enable **Settings → Reuse one window**
+> for single-instance behaviour (opened files reuse the running window).
 
 ---
 
@@ -215,7 +225,7 @@ self-contained copy, just run `.\tools\install.ps1` again.
 
 ## Roadmap
 
-See **[tasks.md](./tasks.md)** for the full phased breakdown. Not yet implemented: image editing (crop/adjust/filters/markup), cut/move and drag-and-drop *between* folders, in-explorer search, MSIX packaging, single-instance window reuse, a Windows Hello gate on the Hidden album, slideshow background music, and splitting into `Core`/`Tests` projects.
+See **[tasks.md](./tasks.md)** for the full phased breakdown. Not yet implemented: image editing (crop/adjust/filters/markup), an expandable folder tree in the sidebar, MSIX packaging, slideshow background music, and splitting into `Core`/`Tests` projects.
 
 ## License
 

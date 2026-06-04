@@ -19,6 +19,14 @@ public partial class App : Application
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "PhotosPlus", "logs", "error.log");
 
+    /// <summary>Diagnostic trail of every thrown exception — the last entry before a hard crash
+    /// (0xc000027b XAML failfast) is the real culprit, since those bypass the handlers above.</summary>
+    public static string FirstChancePath { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "PhotosPlus", "logs", "firstchance.log");
+
+    private static readonly object _fcLock = new();
+
     private Window? _window;
 
     public App()
@@ -32,6 +40,24 @@ public partial class App : Application
         };
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Log("AppDomain", e.ExceptionObject as Exception);
         TaskScheduler.UnobservedTaskException += (_, e) => { Log("Task", e.Exception); e.SetObserved(); };
+
+        // Capture every first-chance exception. WinUI render/dispatcher failfasts (0xc000027b)
+        // skip the handlers above, but the underlying managed exception is still thrown first —
+        // so the tail of this file pinpoints the crash. Best-effort; must never throw.
+        AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
+        {
+            try
+            {
+                var ex = e.Exception;
+                var line = $"[{DateTimeOffset.Now:HH:mm:ss.fff}] {ex.GetType().FullName}: {ex.Message}{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}{Environment.NewLine}";
+                lock (_fcLock)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(FirstChancePath)!);
+                    File.AppendAllText(FirstChancePath, line);
+                }
+            }
+            catch { /* diagnostics must never crash the app */ }
+        };
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)

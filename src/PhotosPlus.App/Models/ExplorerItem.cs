@@ -73,6 +73,11 @@ public partial class ExplorerItem : ObservableObject
 
         var path = Path;
         var px = (int)Math.Clamp(size, 32u, 256u);
+
+        // Throttle concurrent decodes — a fast scroll through hundreds of media files otherwise
+        // floods the decode pipeline and crashes the render thread.
+        await DecodeThrottle.RunAsync(async () =>
+        {
         try
         {
             // Folders & drives: clean shell icon (transparent, orientation-corrected). For folders
@@ -135,6 +140,7 @@ public partial class ExplorerItem : ObservableObject
         {
             _iconRequested = false; // allow a retry later
         }
+        });
     }
 
     private static async Task TryOverlayFirstImageAsync(string folderPath, byte[] folderPixels, int fw, int fh, int px)

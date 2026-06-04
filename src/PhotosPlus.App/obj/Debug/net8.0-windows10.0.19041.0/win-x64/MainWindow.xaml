@@ -616,7 +616,7 @@
         <!-- ===================== Settings overlay ===================== -->
         <Grid x:ConnectionId='7' x:Name="SettingsOverlay" Visibility="Collapsed" Background="#AA000000"
                                            >
-            <Border x:ConnectionId='12' x:Name="SettingsCard" Width="420" MaxHeight="{Binding ActualHeight, ElementName=SettingsOverlay}"
+            <Border x:ConnectionId='12' x:Name="SettingsCard" Width="420" MaxHeight="760"
                     VerticalAlignment="Center" HorizontalAlignment="Center" RenderTransformOrigin="0.5,0.5"
                     Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" CornerRadius="14"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
