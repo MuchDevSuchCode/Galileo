@@ -59,15 +59,26 @@ public sealed class GoogleDriveBackup
 
     // ---------- Connect / disconnect ----------
 
-    public async Task<bool> ConnectAsync(CancellationToken ct = default)
+    public async Task<bool> ConnectAsync(bool forcePrompt = false, CancellationToken ct = default)
     {
         if (!IsConfigured) return false;
+
+        // Force the browser sign-in by clearing any cached token first — otherwise the Google
+        // library silently reuses a stored token and no browser ever appears.
+        if (forcePrompt)
+        {
+            try { if (Directory.Exists(TokenDir)) Directory.Delete(TokenDir, recursive: true); } catch { /* ignore */ }
+        }
+
+        // Don't hang forever if the user closes the browser without finishing.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
 
         var credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
             await GetClientSecretsAsync(),
             new[] { DriveService.Scope.DriveFile },
             "user",
-            ct,
+            linked.Token,
             new FileDataStore(TokenDir, fullPath: true));
 
         _service = new DriveService(new BaseClientService.Initializer

@@ -175,6 +175,7 @@ public sealed partial class MainWindow : Window
         if (GoogleDriveBackup.IsConfigured) _ = SilentReconnectDriveAsync();
 
         ApplyDeveloperMode(); // show/hide the Terminal button per the saved setting
+        SetResizeCursor(TerminalSplitter); // ↔ cursor on the explorer/terminal divider
 
         IconSizeSlider.Value = _iconSize;
         ApplyIconSize();
@@ -2941,7 +2942,8 @@ public sealed partial class MainWindow : Window
         if (_drive.IsConnected) { await _drive.DisconnectAsync(); UpdateBackupUi(); return; }
 
         BackupStatusText.Text = "Opening your browser to sign in…";
-        try { await _drive.ConnectAsync(); }
+        try { await _drive.ConnectAsync(forcePrompt: true); }
+        catch (OperationCanceledException) { BackupStatusText.Text = "Sign-in canceled or timed out."; }
         catch (Exception ex) { BackupStatusText.Text = "Connect failed: " + ex.Message; App.Log("DriveConnect", ex); }
         UpdateBackupUi();
     }
@@ -3237,6 +3239,19 @@ public sealed partial class MainWindow : Window
             catch { }
         }
         return null;
+    }
+
+    /// <summary>Gives an element the ↔ resize cursor. (WinUI's ProtectedCursor is protected and
+    /// Border is sealed, so we set it via reflection.)</summary>
+    private static void SetResizeCursor(UIElement element)
+    {
+        try
+        {
+            var prop = typeof(UIElement).GetProperty("ProtectedCursor",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            prop?.SetValue(element, Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.SizeWestEast));
+        }
+        catch { /* cosmetic only */ }
     }
 
     private void TerminalSplitter_ManipulationDelta(object sender, ManipulationDeltaRoutedEventArgs e)
