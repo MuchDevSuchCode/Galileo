@@ -2570,16 +2570,28 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private string? GetDropTargetFolder(object? originalSource)
+    /// <summary>Finds the folder/drive whose item sits under the drop point (the drag event's
+    /// OriginalSource is the list itself, not the row, so we hit-test by position instead). Falls
+    /// back to the current folder when the drop isn't over a folder.</summary>
+    private string? DropTargetFolder(DragEventArgs e)
     {
-        var item = (originalSource as FrameworkElement)?.DataContext as ExplorerItem;
-        if (item is not null && item.IsFolder) return item.Path; // drop onto a folder/drive row
-        return _currentFolder;                                    // otherwise into the current folder
+        var view = ExplorerIconsView.Visibility == Visibility.Visible
+            ? (ItemsControl)ExplorerIconsView : ExplorerDetailsList;
+        var pos = e.GetPosition((UIElement)view);
+        foreach (var item in _explorerItems)
+        {
+            if (!item.IsFolder) continue;
+            if (view.ContainerFromItem(item) is not FrameworkElement c) continue; // realized rows only
+            var tl = c.TransformToVisual((UIElement)view).TransformPoint(new Windows.Foundation.Point(0, 0));
+            if (pos.X >= tl.X && pos.X <= tl.X + c.ActualWidth && pos.Y >= tl.Y && pos.Y <= tl.Y + c.ActualHeight)
+                return item.Path; // dropped onto this folder/drive
+        }
+        return _currentFolder;
     }
 
     private void ExplorerList_DragOver(object sender, DragEventArgs e)
     {
-        var target = GetDropTargetFolder(e.OriginalSource);
+        var target = DropTargetFolder(e);
         if (target is null || !e.DataView.Contains(StandardDataFormats.StorageItems))
         {
             e.AcceptedOperation = DataPackageOperation.None;
@@ -2600,7 +2612,7 @@ public sealed partial class MainWindow : Window
     private async void ExplorerList_Drop(object sender, DragEventArgs e)
     {
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
-        var target = GetDropTargetFolder(e.OriginalSource);
+        var target = DropTargetFolder(e);
         if (target is null) return;
         var move = !IsCtrlDown(); // default move; Ctrl copies
         e.Handled = true;
