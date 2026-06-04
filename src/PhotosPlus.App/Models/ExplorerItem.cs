@@ -89,28 +89,35 @@ public partial class ExplorerItem : ObservableObject
                 return;
             }
 
-            // Files: WinRT thumbnail (correct orientation; photos are opaque so no alpha concern).
+            // Files: prefer a real preview thumbnail (photo/doc) — correct orientation.
             var file = await StorageFile.GetFileFromPathAsync(path);
-            var thumb = await file.GetThumbnailAsync(ThumbnailMode.SingleItem, size, ThumbnailOptions.ResizeThumbnail);
-            if (thumb is not null)
+            StorageItemThumbnail? thumb = null;
+            try { thumb = await file.GetThumbnailAsync(ThumbnailMode.SingleItem, size, ThumbnailOptions.ResizeThumbnail); }
+            catch { }
+
+            if (thumb is not null && thumb.Type != ThumbnailType.Icon)
             {
-                using (thumb)
-                {
-                    var bmp = new BitmapImage();
-                    await bmp.SetSourceAsync(thumb);
-                    Icon = bmp;
-                }
+                using (thumb) { var b = new BitmapImage(); await b.SetSourceAsync(thumb); Icon = b; }
                 return;
             }
 
-            // No thumbnail (e.g. .lnk / .url / unknown types) → fall back to the shell's file icon
-            // so the item is never blank.
-            var (iconPixels, iw, ih) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: true));
-            if (iconPixels is not null && iw > 0 && ih > 0)
+            // Otherwise resolve a proper file-type / shortcut icon via the shell so it's never blank
+            // (covers .lnk, .url, .exe, and unknown types). Try a thumbnail-or-icon, then icon-only.
+            var (ip, iw, ih) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: false));
+            if (ip is null) (ip, iw, ih) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: true));
+            if (ip is not null && iw > 0 && ih > 0)
             {
                 var wb = new WriteableBitmap(iw, ih);
-                using (var s = wb.PixelBuffer.AsStream()) s.Write(iconPixels, 0, iconPixels.Length);
+                using (var s = wb.PixelBuffer.AsStream()) s.Write(ip, 0, ip.Length);
                 Icon = wb;
+                thumb?.Dispose();
+                return;
+            }
+
+            // Last resort: whatever icon thumbnail we got.
+            if (thumb is not null)
+            {
+                using (thumb) { var b = new BitmapImage(); await b.SetSourceAsync(thumb); Icon = b; }
             }
         }
         catch

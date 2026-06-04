@@ -78,6 +78,7 @@ public sealed partial class MainWindow : Window
         _appWindow = AppWindow.GetFromWindowId(id);
         _appWindow.Title = "Galileo";
         try { _appWindow.SetIcon(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "galileo.ico")); } catch { }
+        try { TitleLogo.Source = new BitmapImage(new Uri(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "galileo.png"))); } catch { }
 
         // Mica backdrop for a modern translucent window.
         SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
@@ -1915,6 +1916,9 @@ public sealed partial class MainWindow : Window
                 e.Handled = true; break;
             case VirtualKey.Delete when ExplorerView.Visibility == Visibility.Visible:
                 _ = DeleteSelectedExplorerAsync(); e.Handled = true; break;
+            case VirtualKey.Back when ExplorerView.Visibility == Visibility.Visible
+                    && FocusManager.GetFocusedElement(RootGrid.XamlRoot) is not TextBox:
+                NavBack_Click(sender, e); e.Handled = true; break;
             case VirtualKey.H when InViewer:
                 ToggleObscure(); e.Handled = true; break;
             case VirtualKey.Left when InViewer:
