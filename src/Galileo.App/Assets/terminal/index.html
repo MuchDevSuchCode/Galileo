@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <!-- xterm.js from the jsDelivr CDN (cached by WebView2 after first load). For fully-offline use,
+       drop xterm's css/js next to this file and point these tags at them. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+  <style>
+    html, body, #term { height: 100%; margin: 0; background: #0b0d12; }
+    #term { padding: 6px; }
+  </style>
+</head>
+<body>
+  <div id="term"></div>
+  <script>
+    const enc = new TextEncoder();
+    const b64FromBytes = b => { let s = ''; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s); };
+    const bytesFromB64 = b => { const s = atob(b); const a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; };
+
+    function start() {
+      if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined') { setTimeout(start, 100); return; }
+      const term = new Terminal({
+        fontFamily: 'Cascadia Mono, Consolas, monospace', fontSize: 14, cursorBlink: true,
+        theme: { background: '#0b0d12', foreground: '#e7eaf0' }
+      });
+      const fit = new FitAddon.FitAddon();
+      term.loadAddon(fit);
+      term.open(document.getElementById('term'));
+      fit.fit();
+
+      const post = o => chrome.webview.postMessage(JSON.stringify(o));
+      const sendSize = () => post({ t: 'size', cols: term.cols, rows: term.rows });
+
+      term.onData(d => post({ t: 'in', d: b64FromBytes(enc.encode(d)) }));
+      window.addEventListener('resize', () => { fit.fit(); sendSize(); });
+      chrome.webview.addEventListener('message', e => {
+        let o; try { o = JSON.parse(e.data); } catch { return; }
+        if (o.t === 'out') term.write(bytesFromB64(o.d));
+      });
+
+      setTimeout(() => { fit.fit(); sendSize(); }, 60); // first size triggers the shell start in C#
+    }
+    start();
+  </script>
+</body>
+</html>

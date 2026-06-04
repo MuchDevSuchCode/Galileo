@@ -31,6 +31,7 @@
   <ItemGroup>
     <Content Include="Assets\galileo.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\galileo.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\terminal\index.html" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

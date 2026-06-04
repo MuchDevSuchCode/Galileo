@@ -63,6 +63,10 @@ public sealed class AppState
     /// <summary>UTC ticks of the last successful Google Drive vault backup (0 = never).</summary>
     public long LastVaultBackupUtcTicks { get; set; }
 
+    // Developer mode (embedded terminal)
+    public bool DeveloperMode { get; set; }
+    public string TerminalShell { get; set; } = "cmd";   // cmd | powershell | wsl
+
     // Slideshow settings
     public int SlideshowSeconds { get; set; } = 4;
     public bool SlideshowShuffle { get; set; }
@@ -182,5 +186,7 @@ public sealed class AppState
         SlideshowShuffle = o.SlideshowShuffle;
         SlideshowLoop = o.SlideshowLoop;
         SlideshowTransition = o.SlideshowTransition;
+        DeveloperMode = o.DeveloperMode;
+        TerminalShell = o.TerminalShell;
     }
 }

@@ -61,6 +61,15 @@ public sealed partial class MainWindow : Window
     private bool _marqueeActive;
     private Windows.Foundation.Point _marqueeStart;
 
+    // Open archives: maps a zip's extracted temp dir -> (zip path, display name) for breadcrumb labels.
+    private readonly Dictionary<string, (string ZipPath, string Name)> _openZips = new(StringComparer.OrdinalIgnoreCase);
+
+    // Developer-mode embedded terminal.
+    private TerminalSession? _term;
+    private bool _termWebReady;
+    private short _termCols, _termRows;
+    private readonly List<(string Label, string Exe)> _shells = new();
+
     // Secure vault state.
     private readonly VaultManager _vaults = new();
     private readonly GoogleDriveBackup _drive = new();
@@ -156,6 +165,7 @@ public sealed partial class MainWindow : Window
         // Secure vault: wipe any decrypted working folder left by a crash, list vaults, and arm the
         // idle auto-lock + app-exit lock.
         _vaults.WipeOrphanWorkDirs();
+        ArchiveService.WipeOrphans(); // clear any leftover extracted-zip temp dirs from a prior run
         VaultsList.ItemsSource = _vaultList;
         RefreshVaults();
         _vaultIdleTimer.Tick += VaultIdle_Tick;
@@ -163,6 +173,8 @@ public sealed partial class MainWindow : Window
 
         // Stay signed in to Google Drive across launches (silent token refresh; no browser).
         if (GoogleDriveBackup.IsConfigured) _ = SilentReconnectDriveAsync();
+
+        ApplyDeveloperMode(); // show/hide the Terminal button per the saved setting
 
         IconSizeSlider.Value = _iconSize;
         ApplyIconSize();
@@ -1427,11 +1439,11 @@ public sealed partial class MainWindow : Window
     {
         Breadcrumb.Children.Clear();
 
-        // Inside an unlocked vault, root the trail at the vault name and hide the working-folder path.
-        if (_vaults.Current?.WorkingDir is { } work && _currentFolder is not null
-            && _currentFolder.StartsWith(work, StringComparison.OrdinalIgnoreCase))
+        // Inside a vault or an opened zip, root the trail at the friendly name and hide the temp path.
+        if (_currentFolder is not null && SpecialRootFor(_currentFolder) is { } sr)
         {
-            AddCrumb(_vaults.Current!.Name, work);
+            var work = sr.root;
+            AddCrumb(sr.label, work);
             var rel = System.IO.Path.GetRelativePath(work, _currentFolder);
             if (rel != ".")
             {
@@ -1581,11 +1593,52 @@ public sealed partial class MainWindow : Window
         });
     }
 
+    /// <summary>Extracts a .zip to a temp folder and navigates into it (browse like a folder).</summary>
+    private async Task OpenArchiveAsync(ExplorerItem item)
+    {
+        StatusText.Text = $"Opening {item.Name}…";
+        string tmp;
+        try { tmp = await ArchiveService.ExtractToTempAsync(item.Path); }
+        catch (Exception ex) { StatusText.Text = ex.Message; return; }
+        _openZips[tmp] = (item.Path, item.Name);
+        ShowExplorer();
+        NavigateTo(tmp);
+        StatusText.Text = item.Name;
+    }
+
+    private async Task ExtractArchiveHereAsync(ExplorerItem item)
+    {
+        var parent = System.IO.Path.GetDirectoryName(item.Path);
+        if (parent is null) return;
+        var dest = UniquePath(System.IO.Path.Combine(parent, System.IO.Path.GetFileNameWithoutExtension(item.Path)), isDir: true);
+        StatusText.Text = $"Extracting {item.Name}…";
+        try { await ArchiveService.ExtractToFolderAsync(item.Path, dest); }
+        catch (Exception ex) { StatusText.Text = ex.Message; return; }
+        LoadCurrentFolder();
+        StatusText.Text = $"Extracted to {System.IO.Path.GetFileName(dest)}";
+    }
+
+    private async Task ExtractArchiveToAsync(ExplorerItem item)
+    {
+        var picker = new Windows.Storage.Pickers.FolderPicker();
+        picker.FileTypeFilter.Add("*");
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        var folder = await picker.PickSingleFolderAsync();
+        if (folder is null) return;
+        var dest = UniquePath(System.IO.Path.Combine(folder.Path, System.IO.Path.GetFileNameWithoutExtension(item.Path)), isDir: true);
+        StatusText.Text = $"Extracting {item.Name}…";
+        try { await ArchiveService.ExtractToFolderAsync(item.Path, dest); }
+        catch (Exception ex) { StatusText.Text = ex.Message; return; }
+        if (string.Equals(folder.Path, _currentFolder, StringComparison.OrdinalIgnoreCase)) LoadCurrentFolder();
+        StatusText.Text = $"Extracted to {dest}";
+    }
+
     private void OpenExplorerItem(ExplorerItem item)
     {
         if (item.IsFolder) NavigateTo(item.Path);
         else if (item.IsImage) OpenImageFromExplorer(item);
         else if (PhotoLibrary.IsMedia(item.Path)) OpenVideoFromExplorer(item);
+        else if (ArchiveService.IsArchive(item.Path)) _ = OpenArchiveAsync(item);
         else
         {
             try
@@ -1624,6 +1677,9 @@ public sealed partial class MainWindow : Window
             var mp = VideoPlayer.MediaPlayer;
             if (mp is not null)
             {
+                // Movie category → full multichannel output (no stereo downmix); Windows' spatial
+                // engine (Dolby Atmos / DTS:X / Windows Sonic) on the output device renders surround.
+                mp.AudioCategory = Windows.Media.Playback.MediaPlayerAudioCategory.Movie;
                 mp.IsMuted = _videoMuted;
                 mp.IsLoopingEnabled = _videoRepeat;
                 mp.Play();
@@ -1882,6 +1938,12 @@ public sealed partial class MainWindow : Window
                 menu.Items.Add(SMI("Set as lock screen", null, async (_, _) => await SetLockScreenAsync(item.Path)));
                 menu.Items.Add(SMI("Set as Thumbnail", Symbol.Pictures, (_, _) => SetFolderThumbnail(item.Path)));
             }
+            if (!item.IsFolder && ArchiveService.IsArchive(item.Path))
+            {
+                menu.Items.Add(new MenuFlyoutSeparator());
+                menu.Items.Add(SMI("Extract Here", null, async (_, _) => await ExtractArchiveHereAsync(item)));
+                menu.Items.Add(SMI("Extract All…", null, async (_, _) => await ExtractArchiveToAsync(item)));
+            }
             menu.Items.Add(new MenuFlyoutSeparator());
             if (_vaults.IsAnyUnlocked && !ItemInsideOpenVault(item))
             {
@@ -1903,6 +1965,8 @@ public sealed partial class MainWindow : Window
             {
                 var hidden = _state.HiddenFolders.Contains(item.Path);
                 menu.Items.Add(SMI(hidden ? "Unhide folder" : "Hide folder", null, (_, _) => { ToggleFolderHidden(item.Path); LoadCurrentFolder(); }));
+                if (_state.DeveloperMode)
+                    menu.Items.Add(SMI("Open terminal here", null, async (_, _) => await OpenTerminalHereAsync(item.Path)));
             }
             menu.Items.Add(SMI("Rename…", Symbol.Rename, async (_, _) => await RenameExplorerAsync(item)));
             menu.Items.Add(SMI("Delete", Symbol.Delete, async (_, _) => await DeleteExplorerAsync(item)));
@@ -2494,16 +2558,28 @@ public sealed partial class MainWindow : Window
     private string TabHeaderFor(string? folder)
     {
         if (folder is null) return "This PC";
-        // Inside an unlocked vault, show the vault's name at its root (not the working-folder GUID).
-        if (_vaults.Current?.WorkingDir is { } work
-            && folder.StartsWith(work, StringComparison.OrdinalIgnoreCase))
+        // Inside a vault or an opened zip, show the friendly name at its root (not the temp GUID path).
+        if (SpecialRootFor(folder) is { } sr)
         {
-            return string.Equals(folder.TrimEnd('\\'), work.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)
-                ? _vaults.Current!.Name
+            return string.Equals(folder.TrimEnd('\\'), sr.root.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)
+                ? sr.label
                 : System.IO.Path.GetFileName(folder.TrimEnd('\\'));
         }
         var name = System.IO.Path.GetFileName(folder.TrimEnd('\\'));
         return string.IsNullOrEmpty(name) ? folder : name;
+    }
+
+    /// <summary>If the path is inside a special root (unlocked vault working dir or an opened zip's
+    /// temp dir), returns the friendly label + that root path; otherwise null.</summary>
+    private (string label, string root)? SpecialRootFor(string? path)
+    {
+        if (path is null) return null;
+        if (_vaults.Current?.WorkingDir is { } w && path.StartsWith(w, StringComparison.OrdinalIgnoreCase))
+            return (_vaults.Current.Name, w);
+        foreach (var kv in _openZips)
+            if (path.StartsWith(kv.Key, StringComparison.OrdinalIgnoreCase))
+                return (kv.Value.Name, kv.Key);
+        return null;
     }
 
     private void ExplorerTabs_AddClick(TabView sender, object args) => NewTab(null);
@@ -2993,6 +3069,183 @@ public sealed partial class MainWindow : Window
         }.ShowAsync();
     }
 
+    // ===================== Developer-mode terminal =====================
+
+    private void ApplyDeveloperMode()
+    {
+        TerminalBtn.Visibility = _state.DeveloperMode ? Visibility.Visible : Visibility.Collapsed;
+        if (!_state.DeveloperMode)
+        {
+            HideTerminal();
+            try { _term?.Dispose(); } catch { }
+            _term = null;
+        }
+    }
+
+    private void DeveloperModeSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.DeveloperMode = DeveloperModeSwitch.IsOn;
+        _state.Save();
+        ApplyDeveloperMode();
+    }
+
+    private async void TerminalToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (TerminalPane.Visibility == Visibility.Visible) HideTerminal();
+        else await ShowTerminalAsync();
+    }
+
+    private void TerminalClose_Click(object sender, RoutedEventArgs e) => HideTerminal();
+
+    private async Task OpenTerminalHereAsync(string folder)
+    {
+        NavigateTo(folder);
+        await ShowTerminalAsync();
+        if (_termWebReady) StartTerminalSession(_termCols, _termRows); // (re)start the shell in this folder
+    }
+
+    private void HideTerminal()
+    {
+        TerminalPane.Visibility = Visibility.Collapsed;
+        TerminalSplitter.Visibility = Visibility.Collapsed;
+        TerminalCol.Width = new GridLength(0);
+    }
+
+    private async Task ShowTerminalAsync()
+    {
+        TerminalCol.Width = new GridLength(Math.Clamp(ExplorerView.ActualWidth * 0.4, 280, 640));
+        TerminalSplitter.Visibility = Visibility.Visible;
+        TerminalPane.Visibility = Visibility.Visible;
+
+        if (ShellCombo.Items.Count == 0) PopulateShells();
+        if (_termWebReady) return; // the session keeps running across hide/show
+
+        try
+        {
+            await TerminalWeb.EnsureCoreWebView2Async();
+            var assets = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "terminal");
+            TerminalWeb.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                "galileo.terminal", assets, Microsoft.Web.WebView2.Core.CoreWebView2HostResourceAccessKind.Allow);
+            TerminalWeb.CoreWebView2.WebMessageReceived += Terminal_WebMessageReceived;
+            TerminalWeb.CoreWebView2.Navigate("https://galileo.terminal/index.html");
+            _termWebReady = true;
+        }
+        catch (Exception ex) { StatusText.Text = "Terminal failed to start: " + ex.Message; App.Log("Terminal", ex); }
+    }
+
+    private void Terminal_WebMessageReceived(Microsoft.Web.WebView2.Core.CoreWebView2 sender,
+        Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs args)
+    {
+        string msg;
+        try { msg = args.TryGetWebMessageAsString(); } catch { return; }
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(msg);
+            var root = doc.RootElement;
+            switch (root.GetProperty("t").GetString())
+            {
+                case "in":
+                    var b64 = root.GetProperty("d").GetString();
+                    if (!string.IsNullOrEmpty(b64)) _term?.Write(Convert.FromBase64String(b64));
+                    break;
+                case "size":
+                    _termCols = (short)root.GetProperty("cols").GetInt32();
+                    _termRows = (short)root.GetProperty("rows").GetInt32();
+                    if (_term is null) StartTerminalSession(_termCols, _termRows);
+                    else _term.Resize(_termCols, _termRows);
+                    break;
+            }
+        }
+        catch { /* ignore malformed messages */ }
+    }
+
+    private void StartTerminalSession(short cols, short rows)
+    {
+        if (cols <= 0) cols = 80;
+        if (rows <= 0) rows = 24;
+        try { _term?.Dispose(); } catch { }
+        _term = null;
+
+        var exe = ShellCombo.SelectedIndex >= 0 && ShellCombo.SelectedIndex < _shells.Count
+            ? _shells[ShellCombo.SelectedIndex].Exe
+            : Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
+        var cwd = _currentFolder is not null && Directory.Exists(_currentFolder)
+            ? _currentFolder
+            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        var session = new TerminalSession();
+        session.Output += OnTerminalOutput;
+        try { session.Start(exe, null, cwd, cols, rows); _term = session; }
+        catch (Exception ex) { StatusText.Text = "Couldn't start the shell: " + ex.Message; App.Log("Terminal", ex); session.Dispose(); }
+    }
+
+    private void OnTerminalOutput(byte[] data)
+    {
+        var b64 = Convert.ToBase64String(data);
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            try { TerminalWeb.CoreWebView2?.PostWebMessageAsString("{\"t\":\"out\",\"d\":\"" + b64 + "\"}"); }
+            catch { }
+        });
+    }
+
+    private void ShellCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ShellCombo.SelectedIndex < 0 || ShellCombo.SelectedIndex >= _shells.Count) return;
+        _state.TerminalShell = LabelToKey(_shells[ShellCombo.SelectedIndex].Label);
+        _state.Save();
+        if (_term is not null) StartTerminalSession(_termCols, _termRows); // restart in the chosen shell
+    }
+
+    private void PopulateShells()
+    {
+        _shells.Clear();
+        _shells.Add(("Command Prompt", Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe"));
+        var ps = FindOnPath("pwsh.exe") ?? FindOnPath("powershell.exe");
+        if (ps is not null) _shells.Add(("PowerShell", ps));
+        var wsl = FindOnPath("wsl.exe");
+        if (wsl is not null) _shells.Add(("WSL", wsl));
+
+        ShellCombo.Items.Clear();
+        foreach (var s in _shells) ShellCombo.Items.Add(s.Label);
+        var want = SavedShellLabel();
+        var idx = _shells.FindIndex(s => s.Label == want);
+        ShellCombo.SelectedIndex = idx >= 0 ? idx : 0;
+    }
+
+    private string SavedShellLabel() => _state.TerminalShell switch
+    {
+        "powershell" => "PowerShell",
+        "wsl" => "WSL",
+        _ => "Command Prompt",
+    };
+
+    private static string LabelToKey(string label) => label switch
+    {
+        "PowerShell" => "powershell",
+        "WSL" => "wsl",
+        _ => "cmd",
+    };
+
+    private static string? FindOnPath(string exe)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var dir in path.Split(System.IO.Path.PathSeparator))
+        {
+            try { var full = System.IO.Path.Combine(dir.Trim(), exe); if (File.Exists(full)) return full; }
+            catch { }
+        }
+        return null;
+    }
+
+    private void TerminalSplitter_ManipulationDelta(object sender, ManipulationDeltaRoutedEventArgs e)
+    {
+        var w = TerminalCol.ActualWidth - e.Delta.Translation.X; // drag left → wider terminal
+        var max = Math.Max(280, ExplorerView.ActualWidth - 360);
+        TerminalCol.Width = new GridLength(Math.Clamp(w, 240, max));
+    }
+
     // ===================== Settings =====================
 
     private void Settings_Click(object sender, RoutedEventArgs e)
@@ -3019,6 +3272,7 @@ public sealed partial class MainWindow : Window
         VaultWipeSwitch.IsOn = _state.VaultWipeOnFailure;
         VaultWipeCountBox.Value = _state.VaultWipeAfterAttempts;
         VaultWipeCountRow.Visibility = _state.VaultWipeOnFailure ? Visibility.Visible : Visibility.Collapsed;
+        DeveloperModeSwitch.IsOn = _state.DeveloperMode;
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
         UpdateBackupUi();
         SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
@@ -3206,6 +3460,7 @@ public sealed partial class MainWindow : Window
         IconSizeSlider.Value = _iconSize;
         ApplyIconSize();
         ResetVaultIdle();
+        ApplyDeveloperMode();
         if (ExplorerView.Visibility == Visibility.Visible) LoadCurrentFolder();
     }
 
@@ -3544,6 +3799,8 @@ public sealed partial class MainWindow : Window
                 if (token != _peekToken) return;
                 PeekVideo.Source = MediaSource.CreateFromStorageFile(file);
                 PeekVideo.Visibility = Visibility.Visible;
+                if (PeekVideo.MediaPlayer is not null)
+                    PeekVideo.MediaPlayer.AudioCategory = Windows.Media.Playback.MediaPlayerAudioCategory.Movie;
                 PeekVideo.MediaPlayer?.Play();
             }
             else if (item.Kind == ExplorerItemKind.File && IsTextPreviewable(item.Path))
@@ -4049,6 +4306,7 @@ public sealed partial class MainWindow : Window
     private async void AppWindow_Closing(Microsoft.UI.Windowing.AppWindow sender,
         Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
     {
+        try { _term?.Dispose(); _term = null; } catch { } // kill any terminal shell on close
         if (_closingForVaultLock) return;       // second pass: let the close proceed
         if (!_vaults.IsAnyUnlocked) return;
         args.Cancel = true;                      // defer close until the vault is secured

@@ -12,6 +12,8 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="240" />
                 <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="0" x:Name="TerminalCol" />
             </Grid.ColumnDefinitions>
 
             <!-- Sidebar -->
@@ -236,6 +238,10 @@
                         <Button Click="Settings_Click" ToolTipService.ToolTip="Settings">
                             <FontIcon Glyph="&#xE713;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </Button>
+                        <Button x:Name="TerminalBtn" Visibility="Collapsed" Click="TerminalToggle_Click"
+                                ToolTipService.ToolTip="Terminal (Developer Mode)">
+                            <FontIcon Glyph="&#xE756;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                        </Button>
                         <ToggleButton x:Name="ShowHiddenToggle" Click="ShowAppHidden_Click" ToolTipService.ToolTip="Show app-hidden folders">
                             <FontIcon Glyph="&#xE890;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </ToggleButton>
@@ -359,6 +365,28 @@
                                Fill="{ThemeResource AccentFillColorDefaultBrush}" Opacity="0.20"
                                Stroke="{ThemeResource AccentFillColorDefaultBrush}" StrokeThickness="1" />
                 </Grid>
+            </Grid>
+
+            <!-- Developer-mode embedded terminal: draggable splitter + pane (hidden by default) -->
+            <Border x:Name="TerminalSplitter" Grid.Column="2" Visibility="Collapsed" Width="6" Margin="0,40,0,0"
+                    Background="{ThemeResource CardStrokeColorDefaultBrush}" ManipulationMode="TranslateX"
+                    ManipulationDelta="TerminalSplitter_ManipulationDelta" />
+            <Grid x:Name="TerminalPane" Grid.Column="3" Visibility="Collapsed" Margin="0,40,0,0"
+                  Background="{ThemeResource LayerFillColorAltBrush}"
+                  BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,0,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Grid Grid.Row="0" Padding="8,6" ColumnDefinitions="*,Auto">
+                    <ComboBox x:Name="ShellCombo" MinWidth="150" SelectionChanged="ShellCombo_SelectionChanged"
+                              ToolTipService.ToolTip="Shell" />
+                    <Button Grid.Column="1" Style="{StaticResource GlyphButton}" Click="TerminalClose_Click"
+                            ToolTipService.ToolTip="Close terminal">
+                        <FontIcon Glyph="&#xE8BB;" FontFamily="Segoe Fluent Icons" FontSize="13" />
+                    </Button>
+                </Grid>
+                <WebView2 x:Name="TerminalWeb" Grid.Row="1" />
             </Grid>
         </Grid>
 
@@ -946,6 +974,21 @@
                                         <TextBlock Text="Only fully-encrypted vault files (obfuscated names) are uploaded. The key never leaves your device."
                                                    Style="{StaticResource SettingDesc}" />
                                     </StackPanel>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- Developer -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="DEVELOPER" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="Developer Mode" />
+                                            <TextBlock Text="Show an embedded terminal pane (cmd / PowerShell / WSL) beside the explorer."
+                                                       Style="{StaticResource SettingDesc}" />
+                                        </StackPanel>
+                                        <ToggleSwitch Grid.Column="1" x:Name="DeveloperModeSwitch" Toggled="DeveloperModeSwitch_Toggled" />
+                                    </Grid>
                                 </Border>
                             </StackPanel>
                         </StackPanel>
