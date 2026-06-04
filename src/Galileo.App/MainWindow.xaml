@@ -659,165 +659,251 @@
         <!-- ===================== Settings overlay ===================== -->
         <Grid x:Name="SettingsOverlay" Visibility="Collapsed" Background="#AA000000"
               Tapped="SettingsScrim_Tapped">
-            <Border x:Name="SettingsCard" Width="420" MaxHeight="760"
+            <Border x:Name="SettingsCard" Width="540" MaxHeight="760"
                     VerticalAlignment="Center" HorizontalAlignment="Center" RenderTransformOrigin="0.5,0.5"
                     Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" CornerRadius="14"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
-                    Padding="24" Tapped="SettingsCard_Tapped">
+                    Tapped="SettingsCard_Tapped">
                 <Border.RenderTransform>
                     <CompositeTransform x:Name="SettingsCardTransform" />
                 </Border.RenderTransform>
-                <Grid RowSpacing="18">
+
+                <!-- Shared look for every setting row: label/description left, control right. -->
+                <Border.Resources>
+                    <Style x:Key="SettingRow" TargetType="Grid">
+                        <Setter Property="ColumnSpacing" Value="16" />
+                    </Style>
+                    <Style x:Key="SettingControl" TargetType="ComboBox">
+                        <Setter Property="VerticalAlignment" Value="Center" />
+                        <Setter Property="MinWidth" Value="170" />
+                    </Style>
+                    <Style x:Key="SettingDesc" TargetType="TextBlock">
+                        <Setter Property="Opacity" Value="0.6" />
+                        <Setter Property="FontSize" Value="12" />
+                        <Setter Property="TextWrapping" Value="Wrap" />
+                        <Setter Property="Margin" Value="0,2,0,0" />
+                    </Style>
+                    <Style x:Key="SettingSectionHeader" TargetType="TextBlock">
+                        <Setter Property="FontWeight" Value="SemiBold" />
+                        <Setter Property="FontSize" Value="13" />
+                        <Setter Property="Opacity" Value="0.7" />
+                        <Setter Property="Margin" Value="2,0,0,0" />
+                    </Style>
+                    <Style x:Key="SettingCard" TargetType="Border">
+                        <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+                        <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                        <Setter Property="BorderThickness" Value="1" />
+                        <Setter Property="CornerRadius" Value="8" />
+                        <Setter Property="Padding" Value="16" />
+                    </Style>
+                </Border.Resources>
+
+                <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <!-- Pinned header so the close button is always reachable on short windows -->
-                    <Grid>
+                    <!-- Header -->
+                    <Grid Padding="24,20,16,12">
                         <TextBlock Text="Settings" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button Style="{StaticResource GlyphButton}" Click="SettingsClose_Click"
-                                HorizontalAlignment="Right" ToolTipService.ToolTip="Close">
+                                HorizontalAlignment="Right" ToolTipService.ToolTip="Close without saving">
                             <FontIcon Glyph="&#xE8BB;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </Button>
                     </Grid>
 
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
-                                  VerticalScrollMode="Auto" Padding="0,0,4,0">
-                        <StackPanel Spacing="18">
-                            <TextBlock Text="General" FontWeight="SemiBold" Opacity="0.8" />
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="Theme" VerticalAlignment="Center" />
-                                <ComboBox Grid.Column="1" x:Name="ThemeCombo" MinWidth="160"
-                                          SelectionChanged="ThemeCombo_SelectionChanged">
-                                    <ComboBoxItem Content="System default" />
-                                    <ComboBoxItem Content="Light" />
-                                    <ComboBoxItem Content="Dark" />
-                                    <ComboBoxItem Content="Terminal (green)" />
-                                    <ComboBoxItem Content="Gray" />
-                                </ComboBox>
-                            </Grid>
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="Open items with" VerticalAlignment="Center" />
-                                <ComboBox Grid.Column="1" x:Name="OpenModeCombo" MinWidth="160"
-                                          SelectionChanged="OpenModeCombo_SelectionChanged">
-                                    <ComboBoxItem Content="Double-click" />
-                                    <ComboBoxItem Content="Single-click" />
-                                </ComboBox>
-                            </Grid>
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="Default icon size" VerticalAlignment="Center" />
-                                <ComboBox Grid.Column="1" x:Name="IconSizeCombo" MinWidth="160"
-                                          SelectionChanged="IconSizeCombo_SelectionChanged">
-                                    <ComboBoxItem Content="Small" />
-                                    <ComboBoxItem Content="Medium" />
-                                    <ComboBoxItem Content="Large" />
-                                </ComboBox>
-                            </Grid>
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="Folder content previews" VerticalAlignment="Center" />
-                                <ToggleSwitch Grid.Column="1" x:Name="FolderPreviewSwitch" Toggled="FolderPreviewSwitch_Toggled" />
-                            </Grid>
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="Show file extensions" VerticalAlignment="Center" />
-                                <ToggleSwitch Grid.Column="1" x:Name="ShowExtensionsSwitch" Toggled="ShowExtensionsSwitch_Toggled" />
-                            </Grid>
-                            <Grid ColumnDefinitions="*,Auto">
-                                <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
-                                    <TextBlock Text="Spacebar Peek" />
-                                    <TextBlock Text="Press Space in the explorer to preview the selected file (Quick Look)."
-                                               Opacity="0.6" FontSize="12" TextWrapping="Wrap" />
-                                </StackPanel>
-                                <ToggleSwitch Grid.Column="1" x:Name="PeekSwitch" Toggled="PeekSwitch_Toggled" />
-                            </Grid>
-                            <Grid ColumnDefinitions="*,Auto">
-                                <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
-                                    <TextBlock Text="Reuse one window" />
-                                    <TextBlock Text="Open files from the shell in this window instead of a new one."
-                                               Opacity="0.6" FontSize="12" TextWrapping="Wrap" />
-                                </StackPanel>
-                                <ToggleSwitch Grid.Column="1" x:Name="SingleInstanceSwitch" Toggled="SingleInstanceSwitch_Toggled" />
-                            </Grid>
+                    <!-- Body -->
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" VerticalScrollMode="Auto"
+                                  Padding="24,0,20,4">
+                        <StackPanel Spacing="20">
 
-                            <TextBlock Text="Privacy" FontWeight="SemiBold" Opacity="0.8" Margin="0,6,0,0" />
-                            <Grid ColumnDefinitions="*,Auto">
-                                <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
-                                    <TextBlock Text="Lock Hidden album" />
-                                    <TextBlock Text="Require Windows Hello / PIN to reveal hidden photos and folders."
-                                               Opacity="0.6" FontSize="12" TextWrapping="Wrap" />
-                                </StackPanel>
-                                <ToggleSwitch Grid.Column="1" x:Name="LockHiddenSwitch" Toggled="LockHiddenSwitch_Toggled" />
-                            </Grid>
+                            <!-- Appearance -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="APPEARANCE" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <StackPanel Spacing="16">
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="Theme" VerticalAlignment="Center" />
+                                            <ComboBox Grid.Column="1" x:Name="ThemeCombo" Style="{StaticResource SettingControl}"
+                                                      SelectionChanged="ThemeCombo_SelectionChanged">
+                                                <ComboBoxItem Content="System default" />
+                                                <ComboBoxItem Content="Light" />
+                                                <ComboBoxItem Content="Dark" />
+                                                <ComboBoxItem Content="Terminal (green)" />
+                                                <ComboBoxItem Content="Gray" />
+                                            </ComboBox>
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="Default icon size" VerticalAlignment="Center" />
+                                            <ComboBox Grid.Column="1" x:Name="IconSizeCombo" Style="{StaticResource SettingControl}"
+                                                      SelectionChanged="IconSizeCombo_SelectionChanged">
+                                                <ComboBoxItem Content="Small" />
+                                                <ComboBoxItem Content="Medium" />
+                                                <ComboBoxItem Content="Large" />
+                                            </ComboBox>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
 
-                            <TextBlock Text="Secure vault" FontWeight="SemiBold" Opacity="0.8" Margin="0,6,0,0" />
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="Auto-lock when idle" VerticalAlignment="Center" />
-                                <TextBlock Grid.Column="1" x:Name="VaultIdleValue" Text="5 min" VerticalAlignment="Center" Opacity="0.8" />
-                            </Grid>
-                            <Slider x:Name="VaultIdleSlider" Minimum="0" Maximum="60" StepFrequency="1"
-                                    ValueChanged="VaultIdleSlider_ValueChanged"
-                                    ToolTipService.ToolTip="Minutes of inactivity before an open vault locks (0 = never)" />
-                            <Grid ColumnDefinitions="*,Auto">
-                                <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
-                                    <TextBlock Text="Default to Windows Hello" />
-                                    <TextBlock Text="Pre-check &quot;Also unlock with Windows Hello&quot; when creating a vault."
-                                               Opacity="0.6" FontSize="12" TextWrapping="Wrap" />
-                                </StackPanel>
-                                <ToggleSwitch Grid.Column="1" x:Name="VaultHelloSwitch" Toggled="VaultHelloSwitch_Toggled" />
-                            </Grid>
-                            <Grid ColumnDefinitions="*,Auto">
-                                <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
-                                    <TextBlock Text="Wipe vault after failed unlocks" />
-                                    <TextBlock Text="Permanently destroys a vault after too many wrong passphrases. There is no recovery."
-                                               Opacity="0.6" FontSize="12" TextWrapping="Wrap" />
-                                </StackPanel>
-                                <ToggleSwitch Grid.Column="1" x:Name="VaultWipeSwitch" Toggled="VaultWipeSwitch_Toggled" />
-                            </Grid>
-                            <Grid x:Name="VaultWipeCountRow" ColumnDefinitions="*,Auto" Visibility="Collapsed">
-                                <TextBlock Text="Wipe after this many attempts" VerticalAlignment="Center" />
-                                <NumberBox Grid.Column="1" x:Name="VaultWipeCountBox" Minimum="1" Maximum="50"
-                                           SpinButtonPlacementMode="Inline" Width="120"
-                                           ValueChanged="VaultWipeCount_ValueChanged" />
-                            </Grid>
+                            <!-- Explorer -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="EXPLORER" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <StackPanel Spacing="16">
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="Open items with" VerticalAlignment="Center" />
+                                            <ComboBox Grid.Column="1" x:Name="OpenModeCombo" Style="{StaticResource SettingControl}"
+                                                      SelectionChanged="OpenModeCombo_SelectionChanged">
+                                                <ComboBoxItem Content="Double-click" />
+                                                <ComboBoxItem Content="Single-click" />
+                                            </ComboBox>
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="Folder content previews" VerticalAlignment="Center" />
+                                            <ToggleSwitch Grid.Column="1" x:Name="FolderPreviewSwitch" Toggled="FolderPreviewSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="Show file extensions" VerticalAlignment="Center" />
+                                            <ToggleSwitch Grid.Column="1" x:Name="ShowExtensionsSwitch" Toggled="ShowExtensionsSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Spacebar Peek" />
+                                                <TextBlock Text="Press Space in the explorer to preview the selected file (Quick Look)."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="PeekSwitch" Toggled="PeekSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Reuse one window" />
+                                                <TextBlock Text="Open files from the shell in this window instead of a new one."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="SingleInstanceSwitch" Toggled="SingleInstanceSwitch_Toggled" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
 
-                            <TextBlock Text="Collage" FontWeight="SemiBold" Opacity="0.8" Margin="0,6,0,0" />
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="Default layout" VerticalAlignment="Center" />
-                                <ComboBox Grid.Column="1" x:Name="CollageLayoutCombo" MinWidth="160"
-                                          SelectionChanged="CollageLayoutCombo_SelectionChanged">
-                                    <ComboBoxItem Content="Justified" />
-                                    <ComboBoxItem Content="Grid" />
-                                    <ComboBoxItem Content="Hero" />
-                                </ComboBox>
-                            </Grid>
+                            <!-- Privacy -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="PRIVACY" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="Lock Hidden album" />
+                                            <TextBlock Text="Require Windows Hello / PIN to reveal hidden photos and folders."
+                                                       Style="{StaticResource SettingDesc}" />
+                                        </StackPanel>
+                                        <ToggleSwitch Grid.Column="1" x:Name="LockHiddenSwitch" Toggled="LockHiddenSwitch_Toggled" />
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
 
-                            <TextBlock Text="Slideshow" FontWeight="SemiBold" Opacity="0.8" Margin="0,6,0,0" />
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="Seconds per photo" VerticalAlignment="Center" />
-                                <TextBlock Grid.Column="1" x:Name="SlideshowSecondsValue" Text="4s" VerticalAlignment="Center" Opacity="0.8" />
-                            </Grid>
-                            <Slider x:Name="SlideshowSecondsSlider" Minimum="2" Maximum="30" StepFrequency="1"
-                                    ValueChanged="SlideshowSecondsSlider_ValueChanged" />
+                            <!-- Secure vault -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="SECURE VAULT" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <StackPanel Spacing="16">
+                                        <StackPanel Spacing="6">
+                                            <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                                <TextBlock Text="Auto-lock when idle" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="1" x:Name="VaultIdleValue" Text="5 min" VerticalAlignment="Center" Opacity="0.8" />
+                                            </Grid>
+                                            <Slider x:Name="VaultIdleSlider" Minimum="0" Maximum="60" StepFrequency="1"
+                                                    ValueChanged="VaultIdleSlider_ValueChanged"
+                                                    ToolTipService.ToolTip="Minutes of inactivity before an open vault locks (0 = never)" />
+                                        </StackPanel>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Default to Windows Hello" />
+                                                <TextBlock Text="Pre-check &quot;Also unlock with Windows Hello&quot; when creating a vault."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="VaultHelloSwitch" Toggled="VaultHelloSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Wipe vault after failed unlocks" />
+                                                <TextBlock Text="Permanently destroys a vault after too many wrong passphrases. There is no recovery."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="VaultWipeSwitch" Toggled="VaultWipeSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid x:Name="VaultWipeCountRow" Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto" Visibility="Collapsed">
+                                            <TextBlock Text="Wipe after this many attempts" VerticalAlignment="Center" />
+                                            <NumberBox Grid.Column="1" x:Name="VaultWipeCountBox" Minimum="1" Maximum="50"
+                                                       SpinButtonPlacementMode="Inline" Width="120" VerticalAlignment="Center"
+                                                       ValueChanged="VaultWipeCount_ValueChanged" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
 
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="Shuffle" VerticalAlignment="Center" />
-                                <ToggleSwitch Grid.Column="1" x:Name="ShuffleSwitch" Toggled="ShuffleSwitch_Toggled" />
-                            </Grid>
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="Loop" VerticalAlignment="Center" />
-                                <ToggleSwitch Grid.Column="1" x:Name="LoopSwitch" Toggled="LoopSwitch_Toggled" />
-                            </Grid>
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="Transition" VerticalAlignment="Center" />
-                                <ComboBox Grid.Column="1" x:Name="TransitionCombo" MinWidth="160"
-                                          SelectionChanged="TransitionCombo_SelectionChanged">
-                                    <ComboBoxItem Content="None" />
-                                    <ComboBoxItem Content="Crossfade" />
-                                    <ComboBoxItem Content="Ken Burns" />
-                                </ComboBox>
-                            </Grid>
+                            <!-- Slideshow -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="SLIDESHOW" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <StackPanel Spacing="16">
+                                        <StackPanel Spacing="6">
+                                            <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                                <TextBlock Text="Seconds per photo" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="1" x:Name="SlideshowSecondsValue" Text="4s" VerticalAlignment="Center" Opacity="0.8" />
+                                            </Grid>
+                                            <Slider x:Name="SlideshowSecondsSlider" Minimum="2" Maximum="30" StepFrequency="1"
+                                                    ValueChanged="SlideshowSecondsSlider_ValueChanged" />
+                                        </StackPanel>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="Shuffle" VerticalAlignment="Center" />
+                                            <ToggleSwitch Grid.Column="1" x:Name="ShuffleSwitch" Toggled="ShuffleSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="Loop" VerticalAlignment="Center" />
+                                            <ToggleSwitch Grid.Column="1" x:Name="LoopSwitch" Toggled="LoopSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="Transition" VerticalAlignment="Center" />
+                                            <ComboBox Grid.Column="1" x:Name="TransitionCombo" Style="{StaticResource SettingControl}"
+                                                      SelectionChanged="TransitionCombo_SelectionChanged">
+                                                <ComboBoxItem Content="None" />
+                                                <ComboBoxItem Content="Crossfade" />
+                                                <ComboBoxItem Content="Ken Burns" />
+                                            </ComboBox>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- Collage -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="COLLAGE" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                        <TextBlock Text="Default layout" VerticalAlignment="Center" />
+                                        <ComboBox Grid.Column="1" x:Name="CollageLayoutCombo" Style="{StaticResource SettingControl}"
+                                                  SelectionChanged="CollageLayoutCombo_SelectionChanged">
+                                            <ComboBoxItem Content="Justified" />
+                                            <ComboBoxItem Content="Grid" />
+                                            <ComboBoxItem Content="Hero" />
+                                        </ComboBox>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
+
+                    <!-- Footer: explicit Save / Cancel -->
+                    <Grid Grid.Row="2" Padding="24,14,24,18" BorderThickness="0,1,0,0"
+                          BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                            <Button Content="Cancel" Click="SettingsCancel_Click" MinWidth="96" />
+                            <Button Content="Save" Click="SettingsSave_Click" Style="{StaticResource AccentButtonStyle}" MinWidth="96" />
+                        </StackPanel>
+                    </Grid>
                 </Grid>
             </Border>
         </Grid>

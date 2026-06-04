@@ -66,6 +66,11 @@ public sealed class AppState
     public bool SlideshowLoop { get; set; } = true;
     public SlideshowTransition SlideshowTransition { get; set; } = SlideshowTransition.Crossfade;
 
+    /// <summary>When true, <see cref="Save"/> is a no-op — used while the Settings dialog is open so
+    /// live edits don't persist until the user clicks Save.</summary>
+    [JsonIgnore]
+    public bool SuppressSave { get; set; }
+
     [JsonIgnore]
     private static string StatePath
     {
@@ -134,6 +139,7 @@ public sealed class AppState
 
     public void Save()
     {
+        if (SuppressSave) return;
         try
         {
             File.WriteAllText(StatePath, JsonSerializer.Serialize(this, Options));
@@ -142,5 +148,35 @@ public sealed class AppState
         {
             // Best-effort persistence; ignore IO errors.
         }
+    }
+
+    /// <summary>A snapshot used to revert edits when the user cancels the Settings dialog.</summary>
+    public AppState Clone()
+    {
+        var copy = JsonSerializer.Deserialize<AppState>(JsonSerializer.Serialize(this, Options), Options) ?? new AppState();
+        copy.SuppressSave = false;
+        return copy;
+    }
+
+    /// <summary>Copies the user-facing setting values (not the path sets) from another instance.</summary>
+    public void CopySettingsFrom(AppState o)
+    {
+        Theme = o.Theme;
+        SingleClickToOpen = o.SingleClickToOpen;
+        CollagePreset = o.CollagePreset;
+        IconSize = o.IconSize;
+        FolderPreviews = o.FolderPreviews;
+        ShowExtensions = o.ShowExtensions;
+        PeekEnabled = o.PeekEnabled;
+        SingleInstance = o.SingleInstance;
+        LockHiddenAlbum = o.LockHiddenAlbum;
+        VaultIdleSeconds = o.VaultIdleSeconds;
+        VaultDefaultUseHello = o.VaultDefaultUseHello;
+        VaultWipeOnFailure = o.VaultWipeOnFailure;
+        VaultWipeAfterAttempts = o.VaultWipeAfterAttempts;
+        SlideshowSeconds = o.SlideshowSeconds;
+        SlideshowShuffle = o.SlideshowShuffle;
+        SlideshowLoop = o.SlideshowLoop;
+        SlideshowTransition = o.SlideshowTransition;
     }
 }

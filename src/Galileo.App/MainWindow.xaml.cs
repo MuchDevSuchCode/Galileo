@@ -51,6 +51,7 @@ public sealed partial class MainWindow : Window
 
     private readonly DispatcherTimer _chromeTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     private bool _loadingSettings;
+    private AppState? _settingsSnapshot;   // pre-edit copy, restored on Cancel
 
     // Spacebar Peek (Quick Look) state.
     private ExplorerItem? _peekItem;
@@ -2674,6 +2675,11 @@ public sealed partial class MainWindow : Window
 
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
+        // Snapshot current state and suppress writes; edits apply live for preview but only persist
+        // when the user clicks Save (Cancel reverts to this snapshot).
+        _settingsSnapshot = _state.Clone();
+        _state.SuppressSave = true;
+
         _loadingSettings = true;
         ThemeCombo.SelectedIndex = _state.Theme switch { "Light" => 1, "Dark" => 2, "Terminal" => 3, "Gray" => 4, _ => 0 };
         OpenModeCombo.SelectedIndex = _state.SingleClickToOpen ? 1 : 0;
@@ -2838,16 +2844,50 @@ public sealed partial class MainWindow : Window
         ExplorerDetailsList.IsItemClickEnabled = _state.SingleClickToOpen;
     }
 
-    private void CloseSettings()
+    private void CloseSettings() => SettingsOverlay.Visibility = Visibility.Collapsed;
+
+    private void SettingsSave_Click(object sender, RoutedEventArgs e)
     {
-        SettingsOverlay.Visibility = Visibility.Collapsed;
+        _state.SuppressSave = false;
         _state.Save();
+        _settingsSnapshot = null;
+        CloseSettings();
     }
 
-    private void SettingsClose_Click(object sender, RoutedEventArgs e) => CloseSettings();
+    private void SettingsCancel_Click(object sender, RoutedEventArgs e) => CancelSettings();
 
-    // Tap on the dim scrim closes; tap inside the card is swallowed so it doesn't bubble up.
-    private void SettingsScrim_Tapped(object sender, TappedRoutedEventArgs e) => CloseSettings();
+    /// <summary>Reverts any live-applied edits to the pre-open snapshot and closes without saving.</summary>
+    private void CancelSettings()
+    {
+        if (_settingsSnapshot is not null)
+        {
+            _state.CopySettingsFrom(_settingsSnapshot);
+            _settingsSnapshot = null;
+            ReapplyAllSettings();   // push the reverted values back to the live UI
+        }
+        _state.SuppressSave = false;
+        CloseSettings();
+    }
+
+    /// <summary>Pushes the current <see cref="_state"/> values into the live app (theme, icon size,
+    /// explorer flags, idle timer). Used to revert on Cancel.</summary>
+    private void ReapplyAllSettings()
+    {
+        _iconSize = _state.IconSize is > 0 and <= 240 ? _state.IconSize : 110;
+        _collagePreset = ParseCollagePreset(_state.CollagePreset);
+        ExplorerItem.ShowFolderPreviews = _state.FolderPreviews;
+        ExplorerItem.ShowExtensions = _state.ShowExtensions;
+        ApplyTheme();
+        ApplyClickMode();
+        IconSizeSlider.Value = _iconSize;
+        ApplyIconSize();
+        ResetVaultIdle();
+        if (ExplorerView.Visibility == Visibility.Visible) LoadCurrentFolder();
+    }
+
+    // The X and the dim scrim both cancel (discard edits); a tap inside the card is swallowed.
+    private void SettingsClose_Click(object sender, RoutedEventArgs e) => CancelSettings();
+    private void SettingsScrim_Tapped(object sender, TappedRoutedEventArgs e) => CancelSettings();
     private void SettingsCard_Tapped(object sender, TappedRoutedEventArgs e) => e.Handled = true;
 
     private void SlideshowSecondsSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -3006,7 +3046,7 @@ public sealed partial class MainWindow : Window
             case VirtualKey.Right when InViewer:
                 Navigate(+1); e.Handled = true; break;
             case VirtualKey.Escape when SettingsOverlay.Visibility == Visibility.Visible:
-                CloseSettings(); e.Handled = true; break;
+                CancelSettings(); e.Handled = true; break;
             case VirtualKey.Escape when InCollage:
                 ShowExplorer(); e.Handled = true; break;
             case VirtualKey.Escape when InViewer:
