@@ -63,7 +63,7 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 
 **Organize & act** — Favorites (★) with a "Favorites only" filter; per-photo metadata panel (dimensions, size, dates, camera); delete to Recycle Bin; reveal in Explorer.
 
-**Right-click menu** (on the viewer image *and* gallery thumbnails) — Copy (image to clipboard), Copy as file, Copy file path, Open with…, Print…, Set as desktop background, **Set as Thumbnail** (folder preview), Favorite, Hide, Rename…, Show in Explorer, Delete, and the native Windows **Properties** dialog.
+**Right-click menu** (on the viewer image *and* gallery thumbnails) — Copy (image to clipboard), Copy as file, Copy file path, Open with…, Print…, **Set as desktop background**, **Set as lock screen**, **Set as Thumbnail** (folder preview), Favorite, Hide, Rename…, Show in Explorer, Delete, and the native Windows **Properties** dialog. The explorer's right-click menu on an image offers the same **Set as desktop background / lock screen / Thumbnail** actions.
 
 **Collage** — a **Collage** button builds an auto-arranged collage that fills the screen.
 - **Layout presets:** **Justified** (aspect-preserving rows, fit to screen), **Grid** (uniform cropped cells), **Hero** (one big image + the rest justified beside/below).

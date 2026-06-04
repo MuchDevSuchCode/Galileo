@@ -1878,6 +1878,8 @@ public sealed partial class MainWindow : Window
             if (item.IsImage)
             {
                 menu.Items.Add(new MenuFlyoutSeparator());
+                menu.Items.Add(SMI("Set as desktop background", null, (_, _) => SetWallpaperPath(item.Path)));
+                menu.Items.Add(SMI("Set as lock screen", null, async (_, _) => await SetLockScreenAsync(item.Path)));
                 menu.Items.Add(SMI("Set as Thumbnail", Symbol.Pictures, (_, _) => SetFolderThumbnail(item.Path)));
             }
             menu.Items.Add(new MenuFlyoutSeparator());
@@ -2153,6 +2155,7 @@ public sealed partial class MainWindow : Window
         menu.Items.Add(MI("Open with…", "", (_, _) => OpenWithItem(item)));
         menu.Items.Add(MI("Print…", "", (_, _) => RunVerb(item, "print")));
         menu.Items.Add(MI("Set as desktop background", "", (_, _) => SetWallpaper(item)));
+        menu.Items.Add(MI("Set as lock screen", "", async (_, _) => await SetLockScreenAsync(item.Path)));
         menu.Items.Add(MI("Set as Thumbnail", "", (_, _) => SetFolderThumbnail(item.Path)));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(MI(item.IsFavorite ? "" : "", item.IsFavorite ? "" : "", (_, _) => FavoriteItem(item)));
@@ -2216,11 +2219,25 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { StatusText.Text = $"Open with failed: {ex.Message}"; App.Log("OpenWith", ex); }
     }
 
-    private void SetWallpaper(PhotoItem item)
+    private void SetWallpaper(PhotoItem item) => SetWallpaperPath(item.Path);
+
+    private void SetWallpaperPath(string path)
     {
-        StatusText.Text = ShellOps.SetWallpaper(item.Path)
+        StatusText.Text = ShellOps.SetWallpaper(path)
             ? "Set as desktop background"
-            : "Couldn't set the background for this image";
+            : "Couldn't set the desktop background for this image.";
+    }
+
+    /// <summary>Sets the current user's lock-screen image (WinRT UserProfile API).</summary>
+    private async Task SetLockScreenAsync(string path)
+    {
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(path);
+            await Windows.System.UserProfile.LockScreen.SetImageFileAsync(file);
+            StatusText.Text = "Set as lock screen";
+        }
+        catch (Exception ex) { StatusText.Text = "Couldn't set the lock screen: " + ex.Message; App.Log("LockScreen", ex); }
     }
 
     private void ShowProperties(PhotoItem item)
