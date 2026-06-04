@@ -681,6 +681,14 @@
                             </Grid>
                             <Grid ColumnDefinitions="*,Auto">
                                 <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                    <TextBlock Text="Spacebar Peek" />
+                                    <TextBlock Text="Press Space in the explorer to preview the selected file (Quick Look)."
+                                               Opacity="0.6" FontSize="12" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <ToggleSwitch Grid.Column="1" x:Name="PeekSwitch" Toggled="PeekSwitch_Toggled" />
+                            </Grid>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
                                     <TextBlock Text="Reuse one window" />
                                     <TextBlock Text="Open files from the shell in this window instead of a new one."
                                                Opacity="0.6" FontSize="12" TextWrapping="Wrap" />
@@ -736,6 +744,65 @@
                             </Grid>
                         </StackPanel>
                     </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ===================== Peek (Quick Look) overlay ===================== -->
+        <Grid x:Name="PeekOverlay" Visibility="Collapsed" Background="#B0000000"
+              IsTabStop="True" Tapped="PeekScrim_Tapped">
+            <Border x:Name="PeekCard" MaxWidth="1100" MaxHeight="840" Margin="64"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="{ThemeResource SolidBackgroundFillColorBaseBrush}" CornerRadius="14"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                    Tapped="PeekCard_Tapped">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Header -->
+                    <Grid Grid.Row="0" Padding="16,10" ColumnDefinitions="*,Auto"
+                          Background="{ThemeResource LayerFillColorAltBrush}">
+                        <TextBlock x:Name="PeekTitle" VerticalAlignment="Center" FontWeight="SemiBold"
+                                   FontSize="14" TextTrimming="CharacterEllipsis" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2">
+                            <Button x:Name="PeekOpenBtn" Style="{StaticResource GlyphButton}" Click="PeekOpen_Click"
+                                    ToolTipService.ToolTip="Open (Enter)">
+                                <FontIcon Glyph="&#xE8E5;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                            </Button>
+                            <Button Style="{StaticResource GlyphButton}" Click="PeekClose_Click"
+                                    ToolTipService.ToolTip="Close (Space / Esc)">
+                                <FontIcon Glyph="&#xE8BB;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Content: exactly one child is shown per file type -->
+                    <Grid Grid.Row="1" Background="#FF101013" MinWidth="520" MinHeight="340">
+                        <Image x:Name="PeekImage" Stretch="Uniform" Margin="10" Visibility="Collapsed" />
+                        <MediaPlayerElement x:Name="PeekVideo" Visibility="Collapsed"
+                                            AreTransportControlsEnabled="True" AutoPlay="True" Stretch="Uniform" />
+                        <ScrollViewer x:Name="PeekTextScroller" Visibility="Collapsed"
+                                      Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
+                                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Padding="16">
+                            <TextBlock x:Name="PeekText" FontFamily="Consolas" FontSize="13"
+                                       IsTextSelectionEnabled="True" TextWrapping="NoWrap" />
+                        </ScrollViewer>
+                        <StackPanel x:Name="PeekFallback" Visibility="Collapsed" Spacing="14"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Image x:Name="PeekFallbackImage" Width="128" Height="128" HorizontalAlignment="Center" />
+                            <TextBlock x:Name="PeekFallbackText" Opacity="0.85" FontSize="13" Foreground="White"
+                                       HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Footer: type · size · modified -->
+                    <Border Grid.Row="2" Padding="16,8" Background="{ThemeResource LayerFillColorAltBrush}">
+                        <TextBlock x:Name="PeekInfo" FontSize="12" Opacity="0.75" TextTrimming="CharacterEllipsis" />
+                    </Border>
                 </Grid>
             </Border>
         </Grid>

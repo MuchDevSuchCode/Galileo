@@ -37,6 +37,9 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 - **Show / hide file extensions** — toggle in Settings (on by default); affects display only — the real filename is preserved for rename, copy, and open.
 - **Open** — folders navigate in; images open in the photo viewer; **videos open in the embedded player**; other files open in their default app. **Slideshow** and **Collage** buttons act on the current folder's images. Single- or double-click to open (configurable).
 - **File operations** — New folder (with immediate rename), **Cut / Copy / Paste** (move-aware), Copy path, Rename, Delete (Recycle Bin), **Shift+Delete** (permanent), **drag files between folders** (drop onto a folder to copy, hold **Shift** to move) or out to other apps, and the native **Properties** dialog (right-click items or empty space).
+- **Keyboard shortcuts** — standard Windows file-management keys: **Ctrl+C / Ctrl+X / Ctrl+V** (copy / cut / paste, move-aware and interoperable with Windows Explorer's clipboard), **Ctrl+A** (select all), **F2** (rename), **Enter** (open), **Del / Shift+Del** (recycle / permanent delete).
+- **Spacebar Peek (Quick Look)** — press **Space** on the selected file for an instant, dismissible preview (images, video, text/code, or a large thumbnail + details for anything else). Arrow keys step through the folder with the preview open; **Space/Esc** closes; **Enter** opens it for real. Toggle off in **Settings → Spacebar Peek** (on by default).
+- **Set as Thumbnail** — right-click any image (in the explorer or the photo grid) → **Set as Thumbnail** to pin it as the parent folder's preview icon.
 - **⭐ Hide folder** — the **Hide folder** button (or a folder's right-click) makes a folder **appear empty when opened** and excludes it from its parent. Toggle **Show app-hidden** to reveal hidden folders (dimmed); **Unhide** to restore. App-only and reversible — the folder on disk is never modified. A **Windows Hello** gate can be required before hidden items are revealed (see Settings → Privacy).
 
 > Planned next: an expandable folder tree in the sidebar, in-place Details column resizing, and a recents/pinned list.
@@ -59,7 +62,7 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 
 **Organize & act** — Favorites (★) with a "Favorites only" filter; per-photo metadata panel (dimensions, size, dates, camera); delete to Recycle Bin; reveal in Explorer.
 
-**Right-click menu** (on the viewer image *and* gallery thumbnails) — Copy (image to clipboard), Copy as file, Copy file path, Open with…, Print…, Set as desktop background, Favorite, Hide, Rename…, Show in Explorer, Delete, and the native Windows **Properties** dialog.
+**Right-click menu** (on the viewer image *and* gallery thumbnails) — Copy (image to clipboard), Copy as file, Copy file path, Open with…, Print…, Set as desktop background, **Set as Thumbnail** (folder preview), Favorite, Hide, Rename…, Show in Explorer, Delete, and the native Windows **Properties** dialog.
 
 **Collage** — a **Collage** button builds an auto-arranged collage that fills the screen.
 - **Layout presets:** **Justified** (aspect-preserving rows, fit to screen), **Grid** (uniform cropped cells), **Hero** (one big image + the rest justified beside/below).
@@ -237,10 +240,16 @@ self-contained copy, just run `.\tools\install.ps1` again.
 | `H` | **Black out / reveal current photo (eye toggle)** |
 | `F` | Toggle full screen (viewer only) |
 | `F11` | Toggle full screen (anywhere) |
-| `Del` | Delete (to Recycle Bin) |
+| `Del` / `Shift`+`Del` | Delete to Recycle Bin / permanently |
 | `Backspace` | Back (in explorer) |
+| `Ctrl`+`C` / `Ctrl`+`X` / `Ctrl`+`V` | Copy / cut / paste items (explorer) |
+| `Ctrl`+`A` | Select all (explorer) |
+| `F2` | Rename selected item (explorer) |
+| `Enter` | Open selected item (explorer) |
+| `Space` | **Peek** — preview the selected file (explorer) |
+| `←` `→` `↑` `↓` | Step to prev / next file while peeking |
 | `F5` | Refresh folder (explorer) · **start slideshow** (viewer/gallery) |
-| `Space` | Slideshow play / pause |
+| `Space` | Slideshow play / pause (slideshow) |
 | `←` `→` `↑` `↓` | (in slideshow) prev / next / speed |
 | `Esc` | Close settings · exit slideshow / full screen · back to explorer |
 

@@ -52,6 +52,10 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _chromeTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     private bool _loadingSettings;
 
+    // Spacebar Peek (Quick Look) state.
+    private ExplorerItem? _peekItem;
+    private int _peekToken;            // bumped per preview load so a fast nav cancels a stale decode
+
     // Polls for mounted/removed drives so the sidebar and This PC view stay current
     // (WinUI 3 doesn't surface WM_DEVICECHANGE directly).
     private readonly DispatcherTimer _driveWatcher = new() { Interval = TimeSpan.FromSeconds(2) };
@@ -1065,6 +1069,10 @@ public sealed partial class MainWindow : Window
         // the list scrolls the wheel internally).
         ExplorerIconsView.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(Explorer_PointerWheelChanged), true);
         ExplorerDetailsList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(Explorer_PointerWheelChanged), true);
+
+        // Spacebar Peek: handledEventsToo so we still see Space/arrows after the list consumes them
+        // for selection — lets Space open the preview and arrows drive it while it's open.
+        RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(Peek_KeyDown), true);
     }
 
     /// <summary>A cheap fingerprint of the current drives (letter + ready state) to detect changes.</summary>
@@ -2607,6 +2615,7 @@ public sealed partial class MainWindow : Window
         IconSizeCombo.SelectedIndex = _iconSize <= 85 ? 0 : _iconSize >= 140 ? 2 : 1;
         FolderPreviewSwitch.IsOn = _state.FolderPreviews;
         ShowExtensionsSwitch.IsOn = _state.ShowExtensions;
+        PeekSwitch.IsOn = _state.PeekEnabled;
         SingleInstanceSwitch.IsOn = _state.SingleInstance;
         LockHiddenSwitch.IsOn = _state.LockHiddenAlbum;
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
@@ -2825,6 +2834,14 @@ public sealed partial class MainWindow : Window
         LoadCurrentFolder(); // re-render names
     }
 
+    private void PeekSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.PeekEnabled = PeekSwitch.IsOn;
+        _state.Save();
+        if (!_state.PeekEnabled) ClosePeek();
+    }
+
     private void CollageLayoutCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingSettings) return;
@@ -2840,6 +2857,10 @@ public sealed partial class MainWindow : Window
 
     private void RootGrid_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        // While the Peek overlay is open it owns the keyboard (handled in Peek_KeyDown) — don't let
+        // the explorer/viewer shortcuts below also fire (e.g. Enter opening the item a second time).
+        if (PeekOverlay.Visibility == Visibility.Visible) return;
+
         switch (e.Key)
         {
             case VirtualKey.F5:
@@ -2904,5 +2925,230 @@ public sealed partial class MainWindow : Window
             case VirtualKey.Delete when InViewer:
                 Delete_Click(sender, e); e.Handled = true; break;
         }
+    }
+
+    // ===================== Peek (Quick Look) =====================
+
+    /// <summary>Extensions previewed as plain text/code in the Peek overlay.</summary>
+    private static readonly HashSet<string> PeekTextExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".txt", ".md", ".markdown", ".log", ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml",
+        ".ini", ".cfg", ".conf", ".config", ".toml", ".env", ".gitignore", ".gitattributes",
+        ".cs", ".xaml", ".js", ".ts", ".jsx", ".tsx", ".html", ".htm", ".css", ".scss",
+        ".py", ".java", ".c", ".cpp", ".h", ".hpp", ".go", ".rs", ".rb", ".php", ".sql",
+        ".sh", ".bat", ".cmd", ".ps1", ".psm1", ".bib", ".tex"
+    };
+
+    private static bool IsTextPreviewable(string path) =>
+        PeekTextExtensions.Contains(System.IO.Path.GetExtension(path));
+
+    /// <summary>The explorer item under keyboard focus (the row the user is "on"), or the
+    /// selected item if focus can't be resolved.</summary>
+    private ExplorerItem? FocusedExplorerItem()
+    {
+        var node = FocusManager.GetFocusedElement(RootGrid.XamlRoot) as DependencyObject;
+        while (node is not null)
+        {
+            if (node is FrameworkElement { DataContext: ExplorerItem item }) return item;
+            node = VisualTreeHelper.GetParent(node);
+        }
+        return SelectedExplorerItems().FirstOrDefault();
+    }
+
+    /// <summary>Global key hook (handledEventsToo): Space opens Peek; while open, Space/Esc close
+    /// it and the arrows step through the folder.</summary>
+    private void Peek_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (PeekOverlay.Visibility == Visibility.Visible)
+        {
+            switch (e.Key)
+            {
+                case VirtualKey.Space:
+                case VirtualKey.Escape:
+                    ClosePeek(); e.Handled = true; break;
+                case VirtualKey.Left:
+                case VirtualKey.Up:
+                    PeekNavigate(-1); e.Handled = true; break;
+                case VirtualKey.Right:
+                case VirtualKey.Down:
+                    PeekNavigate(+1); e.Handled = true; break;
+                case VirtualKey.Enter:
+                {
+                    var cur = _peekItem;
+                    ClosePeek();
+                    if (cur is not null) OpenExplorerItem(cur);
+                    e.Handled = true; break;
+                }
+            }
+            return;
+        }
+
+        if (e.Key == VirtualKey.Space
+            && ExplorerView.Visibility == Visibility.Visible
+            && _state.PeekEnabled
+            && !IsTextInputFocused())
+        {
+            var item = FocusedExplorerItem();
+            if (item is not null && item.Kind != ExplorerItemKind.Drive)
+            {
+                OpenPeek(item);
+                e.Handled = true;
+            }
+        }
+    }
+
+    private void OpenPeek(ExplorerItem item)
+    {
+        // Anchor the selection so arrow navigation has a starting index, then take focus off the
+        // list (onto the overlay) so arrows drive Peek rather than moving the list underneath.
+        ActiveExplorerList().SelectedItem = item;
+        PeekOverlay.Visibility = Visibility.Visible;
+        PeekOverlay.Focus(FocusState.Programmatic);
+        ShowPeekFor(item);
+    }
+
+    private void ClosePeek()
+    {
+        if (PeekOverlay.Visibility != Visibility.Visible) return;
+        _peekToken++;            // cancel any in-flight load
+        StopPeekVideo();
+        PeekImage.Source = null;
+        PeekOverlay.Visibility = Visibility.Collapsed;
+        _peekItem = null;
+        ActiveExplorerList().Focus(FocusState.Programmatic); // hand focus back for continued nav
+    }
+
+    private void PeekNavigate(int delta)
+    {
+        var list = ActiveExplorerList();
+        var count = list.Items.Count;
+        if (count == 0) return;
+        var cur = list.SelectedIndex;
+        if (cur < 0) cur = _peekItem is not null ? list.Items.IndexOf(_peekItem) : 0;
+        var next = Math.Clamp(cur + delta, 0, count - 1);
+        if (next == cur && list.Items[next] == _peekItem) return;
+        list.SelectedIndex = next;
+        list.ScrollIntoView(list.Items[next]);
+        if (list.Items[next] is ExplorerItem it) ShowPeekFor(it);
+    }
+
+    private async void ShowPeekFor(ExplorerItem item)
+    {
+        var token = ++_peekToken;
+        _peekItem = item;
+        PeekTitle.Text = item.Name;
+        PeekInfo.Text = BuildPeekInfo(item);
+
+        // Reset every content surface and release any playing video before loading the next item.
+        StopPeekVideo();
+        PeekImage.Source = null;
+        PeekImage.Visibility = Visibility.Collapsed;
+        PeekVideo.Visibility = Visibility.Collapsed;
+        PeekTextScroller.Visibility = Visibility.Collapsed;
+        PeekFallback.Visibility = Visibility.Collapsed;
+
+        try
+        {
+            if (item.Kind == ExplorerItemKind.File && PhotoLibrary.IsSupported(item.Path))
+            {
+                var bmp = new BitmapImage();
+                using (var s = await (await StorageFile.GetFileFromPathAsync(item.Path)).OpenReadAsync())
+                {
+                    if (token != _peekToken) return;
+                    await bmp.SetSourceAsync(s);
+                }
+                if (token != _peekToken) return;
+                PeekImage.Source = bmp;
+                PeekImage.Visibility = Visibility.Visible;
+            }
+            else if (item.Kind == ExplorerItemKind.File && PhotoLibrary.IsVideo(item.Path))
+            {
+                var file = await StorageFile.GetFileFromPathAsync(item.Path);
+                if (token != _peekToken) return;
+                PeekVideo.Source = MediaSource.CreateFromStorageFile(file);
+                PeekVideo.Visibility = Visibility.Visible;
+                PeekVideo.MediaPlayer?.Play();
+            }
+            else if (item.Kind == ExplorerItemKind.File && IsTextPreviewable(item.Path))
+            {
+                var text = await ReadTextPreviewAsync(item.Path);
+                if (token != _peekToken) return;
+                PeekText.Text = text;
+                PeekTextScroller.ChangeView(0, 0, null, true);
+                PeekTextScroller.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                await ShowPeekFallbackAsync(item, token);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (token != _peekToken) return;
+            PeekFallbackImage.Source = null;
+            PeekFallbackText.Text = $"Can't preview this file.\n{ex.Message}";
+            PeekFallback.Visibility = Visibility.Visible;
+        }
+    }
+
+    private async Task ShowPeekFallbackAsync(ExplorerItem item, int token)
+    {
+        PeekFallbackText.Text = string.IsNullOrEmpty(item.TypeName) ? "No preview available" : item.TypeName;
+        PeekFallback.Visibility = Visibility.Visible;
+
+        var (pixels, w, h) = await Task.Run(() => ShellImaging.GetPixels(item.Path, 256, iconOnly: false));
+        if (pixels is null) (pixels, w, h) = await Task.Run(() => ShellImaging.GetPixels(item.Path, 256, iconOnly: true));
+        if (token != _peekToken || pixels is null || w <= 0 || h <= 0) return;
+
+        var wb = new WriteableBitmap(w, h);
+        using (var st = wb.PixelBuffer.AsStream()) st.Write(pixels, 0, pixels.Length);
+        PeekFallbackImage.Source = wb;
+        PeekFallbackImage.Width = Math.Min(256, w);
+        PeekFallbackImage.Height = Math.Min(256, h);
+    }
+
+    private static async Task<string> ReadTextPreviewAsync(string path)
+    {
+        const int maxBytes = 256 * 1024; // cap so a huge log doesn't freeze the UI
+        var file = await StorageFile.GetFileFromPathAsync(path);
+        using var stream = await file.OpenStreamForReadAsync();
+        var len = (int)Math.Min(stream.Length, maxBytes);
+        var buf = new byte[len];
+        var read = await stream.ReadAsync(buf, 0, len);
+        var text = System.Text.Encoding.UTF8.GetString(buf, 0, read);
+        if (stream.Length > maxBytes) text += "\n\n… (truncated preview)";
+        return text;
+    }
+
+    private static string BuildPeekInfo(ExplorerItem item)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(item.TypeName)) parts.Add(item.TypeName);
+        if (item.Kind == ExplorerItemKind.File && !string.IsNullOrEmpty(item.SizeText)) parts.Add(item.SizeText);
+        if (!string.IsNullOrEmpty(item.ModifiedText)) parts.Add(item.ModifiedText);
+        return string.Join("   ·   ", parts);
+    }
+
+    private void StopPeekVideo()
+    {
+        try
+        {
+            PeekVideo.MediaPlayer?.Pause();
+            var previous = PeekVideo.Source as MediaSource;
+            PeekVideo.Source = null;
+            previous?.Dispose();
+        }
+        catch { /* ignore */ }
+    }
+
+    private void PeekScrim_Tapped(object sender, TappedRoutedEventArgs e) => ClosePeek();
+    private void PeekCard_Tapped(object sender, TappedRoutedEventArgs e) => e.Handled = true; // keep clicks on the card from closing
+    private void PeekClose_Click(object sender, RoutedEventArgs e) => ClosePeek();
+
+    private void PeekOpen_Click(object sender, RoutedEventArgs e)
+    {
+        var cur = _peekItem;
+        ClosePeek();
+        if (cur is not null) OpenExplorerItem(cur);
     }
 }

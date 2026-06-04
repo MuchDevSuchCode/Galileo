@@ -39,6 +39,7 @@ public sealed class AppState
     public double IconSize { get; set; } = 110;               // explorer icon size (Medium)
     public bool FolderPreviews { get; set; } = true;          // paint content previews on folders
     public bool ShowExtensions { get; set; } = true;          // show file extensions in the explorer
+    public bool PeekEnabled { get; set; } = true;             // Spacebar Quick Look preview in the explorer
     public string SortBy { get; set; } = "Name";              // Name | Date | Type | Size
     public bool SortDescending { get; set; }
     public string GroupBy { get; set; } = "None";             // None | Name | Date | Type | Size
