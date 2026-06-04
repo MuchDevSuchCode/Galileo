@@ -40,6 +40,7 @@ public sealed class AppState
     public bool FolderPreviews { get; set; } = true;          // paint content previews on folders
     public bool ShowExtensions { get; set; } = true;          // show file extensions in the explorer
     public bool PeekEnabled { get; set; } = true;             // Spacebar Quick Look preview in the explorer
+    public bool ShowAlbumArt { get; set; } = true;            // show embedded cover art when playing audio
     public string SortBy { get; set; } = "Name";              // Name | Date | Type | Size
     public bool SortDescending { get; set; }
     public string GroupBy { get; set; } = "None";             // None | Name | Date | Type | Size
@@ -170,6 +171,7 @@ public sealed class AppState
         FolderPreviews = o.FolderPreviews;
         ShowExtensions = o.ShowExtensions;
         PeekEnabled = o.PeekEnabled;
+        ShowAlbumArt = o.ShowAlbumArt;
         SingleInstance = o.SingleInstance;
         LockHiddenAlbum = o.LockHiddenAlbum;
         VaultIdleSeconds = o.VaultIdleSeconds;

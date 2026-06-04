@@ -70,7 +70,7 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 - **Choose what's in it:** *Select photos* in the gallery's More menu to hand-pick images, or **drag-and-drop** image files onto an open collage to add them.
 - **Shuffle** re-arranges to a fresh fit; a **− N +** stepper sets how many photos; **Save** exports to PNG; clicking a tile opens it in the viewer. Re-fits on window resize.
 
-**Video & audio** — an **embedded media player** complements the image viewer. Open a file from the explorer to play **video** (MP4/M4V/MOV/MKV/AVI/WMV/WEBM and more) or **audio** (MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA, AIFF…) natively, with transport controls plus **mute/unmute** and a **repeat** toggle. Audio shows a "now playing" panel with the track name; a back bar returns to the explorer. Spacebar **Peek** previews media too.
+**Video & audio** — an **embedded media player** complements the image viewer. Open a file from the explorer to play **video** (MP4/M4V/MOV/MKV/AVI/WMV/WEBM and more) or **audio** (MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA, AIFF…) natively, with transport controls plus **mute/unmute** and a **repeat** toggle. Audio shows a "now playing" panel with the track name and, when present, **embedded album art** (toggle in **Settings → Media**); a back bar returns to the explorer. Spacebar **Peek** previews media too.
 
 **Settings** — a Settings panel (gear in the title bar / command strip) with:
 - **Theme** — System, Light, Dark, **Terminal (green)**, or **Gray**.

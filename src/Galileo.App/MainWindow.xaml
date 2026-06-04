@@ -487,7 +487,10 @@
             <!-- "Now playing" art for audio (no video frame); clicks pass through to the controls -->
             <StackPanel x:Name="AudioOverlay" Visibility="Collapsed" IsHitTestVisible="False"
                         HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="18">
-                <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe Fluent Icons" FontSize="80" Foreground="White" Opacity="0.85" />
+                <Border x:Name="AudioArtHost" Visibility="Collapsed" Width="280" Height="280" CornerRadius="12">
+                    <Image x:Name="AudioArt" Stretch="UniformToFill" />
+                </Border>
+                <FontIcon x:Name="AudioGlyph" Glyph="&#xE8D6;" FontFamily="Segoe Fluent Icons" FontSize="80" Foreground="White" Opacity="0.85" />
                 <TextBlock x:Name="AudioTitle" Foreground="White" FontSize="18" MaxWidth="560"
                            HorizontalAlignment="Center" TextAlignment="Center" TextTrimming="CharacterEllipsis" />
             </StackPanel>
@@ -888,6 +891,21 @@
                                             </ComboBox>
                                         </Grid>
                                     </StackPanel>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- Media -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="MEDIA" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="Show album art for audio" />
+                                            <TextBlock Text="Display embedded cover art when playing audio files."
+                                                       Style="{StaticResource SettingDesc}" />
+                                        </StackPanel>
+                                        <ToggleSwitch Grid.Column="1" x:Name="AlbumArtSwitch" Toggled="AlbumArtSwitch_Toggled" />
+                                    </Grid>
                                 </Border>
                             </StackPanel>
 

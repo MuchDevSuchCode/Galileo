@@ -1619,6 +1619,7 @@ public sealed partial class MainWindow : Window
             var isAudio = PhotoLibrary.IsAudio(item.Path);
             AudioOverlay.Visibility = isAudio ? Visibility.Visible : Visibility.Collapsed;
             AudioTitle.Text = isAudio ? item.Name : "";
+            if (isAudio) _ = LoadAlbumArtAsync(file);
             VideoPlayer.Source = MediaSource.CreateFromStorageFile(file);
             var mp = VideoPlayer.MediaPlayer;
             if (mp is not null)
@@ -1652,6 +1653,36 @@ public sealed partial class MainWindow : Window
         VideoMuteIcon.Glyph = _videoMuted ? "" : ""; // Mute / Volume
         VideoRepeatIcon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
             _videoRepeat ? Microsoft.UI.Colors.Gold : Microsoft.UI.Colors.White);
+    }
+
+    private int _audioArtToken;
+
+    /// <summary>Shows embedded album art for an audio file (falls back to the music glyph).</summary>
+    private async Task LoadAlbumArtAsync(StorageFile file)
+    {
+        var token = ++_audioArtToken;
+        AudioArt.Source = null;
+        AudioArtHost.Visibility = Visibility.Collapsed;
+        AudioGlyph.Visibility = Visibility.Visible;
+        if (!_state.ShowAlbumArt) return;
+
+        try
+        {
+            using var thumb = await file.GetThumbnailAsync(
+                Windows.Storage.FileProperties.ThumbnailMode.MusicView, 480,
+                Windows.Storage.FileProperties.ThumbnailOptions.ResizeThumbnail);
+            if (token != _audioArtToken) return;
+            if (thumb is null || thumb.Type == Windows.Storage.FileProperties.ThumbnailType.Icon) return; // no embedded art
+
+            var bmp = new BitmapImage();
+            await bmp.SetSourceAsync(thumb);
+            if (token != _audioArtToken) return;
+
+            AudioArt.Source = bmp;
+            AudioArtHost.Visibility = Visibility.Visible;
+            AudioGlyph.Visibility = Visibility.Collapsed;
+        }
+        catch { /* keep the music glyph */ }
     }
 
     private void EnterVideoMode()
@@ -2961,6 +2992,7 @@ public sealed partial class MainWindow : Window
         FolderPreviewSwitch.IsOn = _state.FolderPreviews;
         ShowExtensionsSwitch.IsOn = _state.ShowExtensions;
         PeekSwitch.IsOn = _state.PeekEnabled;
+        AlbumArtSwitch.IsOn = _state.ShowAlbumArt;
         SingleInstanceSwitch.IsOn = _state.SingleInstance;
         LockHiddenSwitch.IsOn = _state.LockHiddenAlbum;
         var vaultIdleMin = Math.Clamp(_state.VaultIdleSeconds / 60, 0, 60);
@@ -3227,6 +3259,13 @@ public sealed partial class MainWindow : Window
         _state.PeekEnabled = PeekSwitch.IsOn;
         _state.Save();
         if (!_state.PeekEnabled) ClosePeek();
+    }
+
+    private void AlbumArtSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.ShowAlbumArt = AlbumArtSwitch.IsOn;
+        _state.Save();
     }
 
     private void VaultIdleSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
