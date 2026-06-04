@@ -9,6 +9,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -53,6 +54,7 @@ public sealed partial class MainWindow : Window
     private FileSystemService _fs = null!;
     private readonly ObservableCollection<ExplorerItem> _explorerItems = new();
     private readonly List<string?> _navHistory = new();
+    private List<ExplorerItem> _explorerRaw = new();
     private int _navIndex = -1;
     private string? _currentFolder; // null = home (This PC)
     private bool _showAppHidden;
@@ -114,6 +116,7 @@ public sealed partial class MainWindow : Window
         ApplyIconSize();
         ApplyTheme();
         ApplyClickMode();
+        SyncSortGroupRadios();
 
         // Windows may launch us with a file (default app) or folder to open.
         if (!string.IsNullOrEmpty(initialPath) && System.IO.File.Exists(initialPath))
@@ -1026,23 +1029,24 @@ public sealed partial class MainWindow : Window
 
     private void LoadCurrentFolder()
     {
-        _explorerItems.Clear();
         HiddenFolderPlaceholder.Visibility = Visibility.Collapsed;
         ExplorerEmpty.Visibility = Visibility.Collapsed;
 
         if (_currentFolder is null)
         {
-            foreach (var it in _fs.GetQuickAccess().Concat(_fs.GetDrives())) _explorerItems.Add(it);
+            _explorerRaw = _fs.GetQuickAccess().Concat(_fs.GetDrives()).ToList();
+            ApplySortAndGroup();
             ApplyViewMode();
             UpdateHideFolderButton();
             StatusText.Text = "This PC";
             return;
         }
 
-        // App-hidden folder: present it as an ordinary empty folder — never reveal that it's
-        // hidden. (Unhide via the toolbar's "Unhide folder" button or the Show-app-hidden toggle.)
+        // App-hidden folder: present it as an ordinary empty folder — never reveal that it's hidden.
         if (_state.HiddenFolders.Contains(_currentFolder) && !_showAppHidden)
         {
+            _explorerRaw = new List<ExplorerItem>();
+            ApplySortAndGroup();
             ApplyViewMode();
             ExplorerEmpty.Visibility = Visibility.Visible;
             UpdateHideFolderButton();
@@ -1050,12 +1054,144 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var items = _fs.List(_currentFolder, showWindowsHidden: false, _showAppHidden);
-        foreach (var it in items) _explorerItems.Add(it);
+        _explorerRaw = _fs.List(_currentFolder, showWindowsHidden: false, _showAppHidden);
+        ApplySortAndGroup();
         ApplyViewMode();
-        ExplorerEmpty.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        ExplorerEmpty.Visibility = _explorerRaw.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateHideFolderButton();
-        StatusText.Text = $"{items.Count} item(s)";
+        StatusText.Text = $"{_explorerRaw.Count} item(s)";
+    }
+
+    // ---- Sort & group ----
+
+    private void ApplySortAndGroup()
+    {
+        var sorted = SortItems(_explorerRaw);
+
+        // Keep the flat collection current (used by image/collage/slideshow code).
+        _explorerItems.Clear();
+        foreach (var it in sorted) _explorerItems.Add(it);
+
+        if (_state.GroupBy == "None")
+        {
+            ExplorerIconsView.ItemsSource = _explorerItems;
+            ExplorerDetailsList.ItemsSource = _explorerItems;
+            return;
+        }
+
+        var groups = BuildGroups(sorted);
+        ExplorerIconsView.ItemsSource = new CollectionViewSource { IsSourceGrouped = true, Source = groups }.View;
+        ExplorerDetailsList.ItemsSource = new CollectionViewSource { IsSourceGrouped = true, Source = groups }.View;
+    }
+
+    private List<ExplorerItem> SortItems(List<ExplorerItem> items)
+    {
+        var dir = _state.SortDescending ? -1 : 1;
+        int ByName(ExplorerItem a, ExplorerItem b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+        int Primary(ExplorerItem a, ExplorerItem b) => _state.SortBy switch
+        {
+            "Date" => a.Modified.CompareTo(b.Modified),
+            "Type" => string.Compare(a.TypeName, b.TypeName, StringComparison.OrdinalIgnoreCase) is var c && c != 0 ? c : ByName(a, b),
+            "Size" => a.Size.CompareTo(b.Size),
+            _ => ByName(a, b)
+        };
+
+        var sorted = new List<ExplorerItem>(items);
+        sorted.Sort((a, b) =>
+        {
+            if (a.IsFolder != b.IsFolder) return a.IsFolder ? -1 : 1; // folders first, always
+            var c = Primary(a, b) * dir;
+            return c != 0 ? c : ByName(a, b) * dir;
+        });
+        return sorted;
+    }
+
+    private List<ExplorerGroup> BuildGroups(List<ExplorerItem> sorted)
+    {
+        var map = new Dictionary<string, ExplorerGroup>(StringComparer.OrdinalIgnoreCase);
+        var groups = new List<ExplorerGroup>();
+        foreach (var it in sorted)
+        {
+            var (key, rank) = GroupKeyRank(it);
+            if (!map.TryGetValue(key, out var g))
+            {
+                g = new ExplorerGroup { Key = key, Rank = rank };
+                map[key] = g;
+                groups.Add(g);
+            }
+            g.Add(it);
+        }
+        groups.Sort((a, b) => a.Rank.CompareTo(b.Rank) is var c && c != 0 ? c
+            : string.Compare(a.Key, b.Key, StringComparison.OrdinalIgnoreCase));
+        return groups;
+    }
+
+    private (string Key, double Rank) GroupKeyRank(ExplorerItem it)
+    {
+        switch (_state.GroupBy)
+        {
+            case "Type":
+                return it.IsFolder ? ("File folder", -1) : (it.TypeName, 1);
+
+            case "Size":
+                if (it.IsFolder) return ("—", -1);
+                var s = it.Size;
+                if (s == 0) return ("Empty", 0);
+                if (s < 16 * 1024) return ("Tiny (0–16 KB)", 1);
+                if (s < 1024 * 1024) return ("Small (16 KB–1 MB)", 2);
+                if (s < 128L * 1024 * 1024) return ("Medium (1–128 MB)", 3);
+                if (s < 1024L * 1024 * 1024) return ("Large (128 MB–1 GB)", 4);
+                return ("Huge (> 1 GB)", 5);
+
+            case "Date":
+                var d = it.Modified;
+                if (d == default) return ("Unknown", 100);
+                var today = DateTime.Now.Date;
+                var dd = d.Date;
+                if (dd == today) return ("Today", 0);
+                if (dd == today.AddDays(-1)) return ("Yesterday", 1);
+                if (dd > today.AddDays(-7)) return ("Earlier this week", 2);
+                if (dd > today.AddDays(-14)) return ("Last week", 3);
+                if (d.Year == today.Year && d.Month == today.Month) return ("Earlier this month", 4);
+                if (d.Year == today.Year) return ("Earlier this year", 5);
+                return ("A long time ago", 6);
+
+            default: // Name
+                var ch = it.Name.Length > 0 ? char.ToUpperInvariant(it.Name[0]) : '#';
+                if (ch is >= 'A' and <= 'Z') return (ch.ToString(), ch - 'A');
+                if (ch is >= '0' and <= '9') return ("0–9", 26);
+                return ("#", 27);
+        }
+    }
+
+    private void Sort_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioMenuFlyoutItem item) { _state.SortBy = item.Tag as string ?? "Name"; _state.Save(); ApplySortAndGroup(); }
+    }
+
+    private void SortDir_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioMenuFlyoutItem item) { _state.SortDescending = (item.Tag as string) == "Desc"; _state.Save(); ApplySortAndGroup(); }
+    }
+
+    private void Group_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioMenuFlyoutItem item) { _state.GroupBy = item.Tag as string ?? "None"; _state.Save(); ApplySortAndGroup(); }
+    }
+
+    private void SyncSortGroupRadios()
+    {
+        SortName.IsChecked = _state.SortBy == "Name";
+        SortDate.IsChecked = _state.SortBy == "Date";
+        SortType.IsChecked = _state.SortBy == "Type";
+        SortSize.IsChecked = _state.SortBy == "Size";
+        SortAsc.IsChecked = !_state.SortDescending;
+        SortDesc.IsChecked = _state.SortDescending;
+        GroupNone.IsChecked = _state.GroupBy == "None";
+        GroupName.IsChecked = _state.GroupBy == "Name";
+        GroupDate.IsChecked = _state.GroupBy == "Date";
+        GroupType.IsChecked = _state.GroupBy == "Type";
+        GroupSize.IsChecked = _state.GroupBy == "Size";
     }
 
     private void ApplyViewMode()

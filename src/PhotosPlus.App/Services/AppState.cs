@@ -35,6 +35,9 @@ public sealed class AppState
     public string CollagePreset { get; set; } = "Justified"; // Justified | Grid | Hero
     public double IconSize { get; set; } = 110;               // explorer icon size (Medium)
     public bool FolderPreviews { get; set; } = true;          // paint content previews on folders
+    public string SortBy { get; set; } = "Name";              // Name | Date | Type | Size
+    public bool SortDescending { get; set; }
+    public string GroupBy { get; set; } = "None";             // None | Name | Date | Type | Size
 
     // Slideshow settings
     public int SlideshowSeconds { get; set; } = 4;

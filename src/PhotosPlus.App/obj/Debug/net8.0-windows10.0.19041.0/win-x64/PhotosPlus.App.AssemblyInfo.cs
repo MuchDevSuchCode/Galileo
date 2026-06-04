@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Galileo")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a6a9f5dcf44a85b1dabe325f9fe8c44d5c0b9a4a")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+3a6993d5ab461611ca0f34b4c1e2935c9857d1e9")]
 [assembly: System.Reflection.AssemblyProductAttribute("Galileo")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Galileo")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
