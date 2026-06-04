@@ -4,9 +4,10 @@ using System.Runtime.InteropServices;
 namespace PhotosPlus.Services;
 
 /// <summary>
-/// Gets file/folder images the way Explorer does — via IShellItemImageFactory, which returns a
-/// 32-bit premultiplied BGRA bitmap with correct transparency. (GetThumbnailAsync sometimes
-/// returns a JPEG with no alpha, which renders transparent areas as black.)
+/// Gets file/folder images the way Explorer does — via IShellItemImageFactory — and extracts the
+/// pixels with GetDIBits. GetDIBits works for both DIB sections and device-dependent bitmaps
+/// (some shortcut/file icons come back as DDBs), and forces a top-down 32-bit BGRA layout so the
+/// result is always upright with correct transparency.
 /// </summary>
 public static class ShellImaging
 {
@@ -30,7 +31,7 @@ public static class ShellImaging
     {
         public uint biSize;
         public int biWidth;
-        public int biHeight; // sign indicates orientation: negative = top-down, positive = bottom-up
+        public int biHeight;   // negative = top-down
         public ushort biPlanes;
         public ushort biBitCount;
         public uint biCompression;
@@ -42,15 +43,10 @@ public static class ShellImaging
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct DIBSECTION
+    private struct BITMAPINFO
     {
-        public BITMAP dsBm;
-        public BITMAPINFOHEADER dsBmih;
-        public uint dsBitfields0;
-        public uint dsBitfields1;
-        public uint dsBitfields2;
-        public IntPtr dshSection;
-        public uint dsOffset;
+        public BITMAPINFOHEADER bmiHeader;
+        public uint bmiColor0; // unused for 32bpp BI_RGB
     }
 
     [DllImport("shell32.dll")]
@@ -62,10 +58,17 @@ public static class ShellImaging
     private static extern int GetObject(IntPtr hgdiobj, int cbBuffer, ref BITMAP lpvObject);
 
     [DllImport("gdi32.dll")]
-    private static extern int GetObject(IntPtr hgdiobj, int cbBuffer, ref DIBSECTION lpvObject);
+    private static extern int GetDIBits(IntPtr hdc, IntPtr hbm, uint start, uint cLines,
+        byte[] lpvBits, ref BITMAPINFO lpbi, uint usage);
 
     [DllImport("gdi32.dll")]
     private static extern bool DeleteObject(IntPtr hObject);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetDC(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
 
     [ComImport, Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b"),
      InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -76,11 +79,12 @@ public static class ShellImaging
 
     private const int SIIGBF_BIGGERSIZEOK = 0x1;
     private const int SIIGBF_ICONONLY = 0x4;
+    private const uint BI_RGB = 0;
+    private const uint DIB_RGB_COLORS = 0;
 
     /// <summary>
     /// Returns premultiplied top-down BGRA pixels for the path, or (null,0,0) on failure.
-    /// <paramref name="iconOnly"/> forces the plain icon (no content thumbnail / white matte) —
-    /// used for folders and drives.
+    /// <paramref name="iconOnly"/> forces the plain icon (no content thumbnail / white matte).
     /// </summary>
     public static (byte[]? Pixels, int Width, int Height) GetPixels(string path, int size, bool iconOnly)
     {
@@ -96,25 +100,25 @@ public static class ShellImaging
             if (factory.GetImage(new SIZE { cx = size, cy = size }, flags, out hbitmap) != 0 || hbitmap == IntPtr.Zero)
                 return (null, 0, 0);
 
-            var dib = new DIBSECTION();
-            if (GetObject(hbitmap, Marshal.SizeOf<DIBSECTION>(), ref dib) == 0 ||
-                dib.dsBm.bmBits == IntPtr.Zero || dib.dsBm.bmBitsPixel != 32)
-                return (null, 0, 0);
+            var bmp = new BITMAP();
+            if (GetObject(hbitmap, Marshal.SizeOf<BITMAP>(), ref bmp) == 0) return (null, 0, 0);
+            int w = bmp.bmWidth, h = Math.Abs(bmp.bmHeight);
+            if (w <= 0 || h <= 0 || w > 1024 || h > 1024) return (null, 0, 0);
 
-            var w = dib.dsBm.bmWidth;
-            var h = Math.Abs(dib.dsBm.bmHeight);
-            var stride = w * 4;
-            var bytes = new byte[h * stride];
-            Marshal.Copy(dib.dsBm.bmBits, bytes, 0, bytes.Length);
+            var bytes = new byte[w * h * 4];
+            var bi = new BITMAPINFO();
+            bi.bmiHeader.biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>();
+            bi.bmiHeader.biWidth = w;
+            bi.bmiHeader.biHeight = -h; // top-down
+            bi.bmiHeader.biPlanes = 1;
+            bi.bmiHeader.biBitCount = 32;
+            bi.bmiHeader.biCompression = BI_RGB;
 
-            // biHeight > 0 means a bottom-up DIB → flip rows so it's top-down for WriteableBitmap.
-            if (dib.dsBmih.biHeight > 0)
-            {
-                var flipped = new byte[bytes.Length];
-                for (var y = 0; y < h; y++)
-                    Array.Copy(bytes, (h - 1 - y) * stride, flipped, y * stride, stride);
-                bytes = flipped;
-            }
+            var hdc = GetDC(IntPtr.Zero);
+            var lines = GetDIBits(hdc, hbitmap, 0, (uint)h, bytes, ref bi, DIB_RGB_COLORS);
+            ReleaseDC(IntPtr.Zero, hdc);
+            if (lines == 0) return (null, 0, 0);
+
             return (bytes, w, h);
         }
         catch

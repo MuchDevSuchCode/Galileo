@@ -532,6 +532,8 @@
                             <ComboBoxItem Content="System default" />
                             <ComboBoxItem Content="Light" />
                             <ComboBoxItem Content="Dark" />
+                            <ComboBoxItem Content="Terminal (green)" />
+                            <ComboBoxItem Content="Gray" />
                         </ComboBox>
                     </Grid>
                     <Grid>
@@ -540,6 +542,30 @@
                                   SelectionChanged="OpenModeCombo_SelectionChanged">
                             <ComboBoxItem Content="Double-click" />
                             <ComboBoxItem Content="Single-click" />
+                        </ComboBox>
+                    </Grid>
+                    <Grid>
+                        <TextBlock Text="Default icon size" VerticalAlignment="Center" />
+                        <ComboBox x:Name="IconSizeCombo" HorizontalAlignment="Right" MinWidth="160"
+                                  SelectionChanged="IconSizeCombo_SelectionChanged">
+                            <ComboBoxItem Content="Small" />
+                            <ComboBoxItem Content="Medium" />
+                            <ComboBoxItem Content="Large" />
+                        </ComboBox>
+                    </Grid>
+                    <Grid>
+                        <TextBlock Text="Folder content previews" VerticalAlignment="Center" />
+                        <ToggleSwitch x:Name="FolderPreviewSwitch" HorizontalAlignment="Right" Toggled="FolderPreviewSwitch_Toggled" />
+                    </Grid>
+
+                    <TextBlock Text="Collage" FontWeight="SemiBold" Opacity="0.8" Margin="0,6,0,0" />
+                    <Grid>
+                        <TextBlock Text="Default layout" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CollageLayoutCombo" HorizontalAlignment="Right" MinWidth="160"
+                                  SelectionChanged="CollageLayoutCombo_SelectionChanged">
+                            <ComboBoxItem Content="Justified" />
+                            <ComboBoxItem Content="Grid" />
+                            <ComboBoxItem Content="Hero" />
                         </ComboBox>
                     </Grid>
 

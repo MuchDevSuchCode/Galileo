@@ -30,8 +30,11 @@ public sealed class AppState
     public string? LastFolder { get; set; }
 
     // General settings
-    public string Theme { get; set; } = "System";   // System | Light | Dark
+    public string Theme { get; set; } = "System";   // System | Light | Dark | Terminal | Gray
     public bool SingleClickToOpen { get; set; }       // false = double-click (default)
+    public string CollagePreset { get; set; } = "Justified"; // Justified | Grid | Hero
+    public double IconSize { get; set; } = 110;               // explorer icon size (Medium)
+    public bool FolderPreviews { get; set; } = true;          // paint content previews on folders
 
     // Slideshow settings
     public int SlideshowSeconds { get; set; } = 4;

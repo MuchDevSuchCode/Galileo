@@ -105,7 +105,12 @@ public sealed partial class MainWindow : Window
         ExplorerIconsView.ItemsSource = _explorerItems;
         ExplorerDetailsList.ItemsSource = _explorerItems;
         ExplorerIconsView.ItemTemplate = (DataTemplate)Application.Current.Resources["ExplorerIconTemplate"];
+        _iconSize = _state.IconSize is > 0 and <= 240 ? _state.IconSize : 110;
+        _collagePreset = ParseCollagePreset(_state.CollagePreset);
+        ExplorerItem.ShowFolderPreviews = _state.FolderPreviews;
+
         PopulateSidebar();
+        IconSizeSlider.Value = _iconSize;
         ApplyIconSize();
         ApplyTheme();
         ApplyClickMode();
@@ -809,6 +814,11 @@ public sealed partial class MainWindow : Window
         CollageView.Visibility = Visibility.Visible;
         ModeLabel.Text = "Collage";
 
+        // Reflect the default layout (from settings) in the in-collage picker.
+        PresetJustified.IsChecked = _collagePreset == CollagePreset.Justified;
+        PresetGrid.IsChecked = _collagePreset == CollagePreset.Grid;
+        PresetHero.IsChecked = _collagePreset == CollagePreset.Hero;
+
         await RebuildCollageAsync(reshuffle: true);
     }
 
@@ -1314,6 +1324,8 @@ public sealed partial class MainWindow : Window
         _iconSize = e.NewValue;
         if (_explorerViewMode == "Details") { _explorerViewMode = "Large"; ApplyViewMode(); }
         ApplyIconSize();
+        _state.IconSize = _iconSize;
+        _state.Save();
     }
 
     private void ShowAppHidden_Click(object sender, RoutedEventArgs e)
@@ -1824,8 +1836,11 @@ public sealed partial class MainWindow : Window
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         _loadingSettings = true;
-        ThemeCombo.SelectedIndex = _state.Theme switch { "Light" => 1, "Dark" => 2, _ => 0 };
+        ThemeCombo.SelectedIndex = _state.Theme switch { "Light" => 1, "Dark" => 2, "Terminal" => 3, "Gray" => 4, _ => 0 };
         OpenModeCombo.SelectedIndex = _state.SingleClickToOpen ? 1 : 0;
+        IconSizeCombo.SelectedIndex = _iconSize <= 85 ? 0 : _iconSize >= 140 ? 2 : 1;
+        FolderPreviewSwitch.IsOn = _state.FolderPreviews;
+        CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
         SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
         SlideshowSecondsValue.Text = $"{_state.SlideshowSeconds}s";
         ShuffleSwitch.IsOn = _state.SlideshowShuffle;
@@ -1839,8 +1854,9 @@ public sealed partial class MainWindow : Window
     private void ThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingSettings) return;
-        _state.Theme = ThemeCombo.SelectedIndex switch { 1 => "Light", 2 => "Dark", _ => "System" };
+        _state.Theme = ThemeCombo.SelectedIndex switch { 1 => "Light", 2 => "Dark", 3 => "Terminal", 4 => "Gray", _ => "System" };
         ApplyTheme();
+        _state.Save();
     }
 
     private void OpenModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1848,17 +1864,103 @@ public sealed partial class MainWindow : Window
         if (_loadingSettings) return;
         _state.SingleClickToOpen = OpenModeCombo.SelectedIndex == 1;
         ApplyClickMode();
+        _state.Save();
     }
+
+    private static readonly string[] CustomThemeKeys =
+    {
+        "TextFillColorPrimaryBrush", "TextFillColorSecondaryBrush", "TextFillColorTertiaryBrush",
+        "LayerFillColorAltBrush", "LayerFillColorDefaultBrush",
+        "CardBackgroundFillColorDefaultBrush", "CardBackgroundFillColorSecondaryBrush",
+        "ControlFillColorDefaultBrush", "ControlFillColorSecondaryBrush",
+        "AcrylicInAppFillColorDefaultBrush", "AcrylicBackgroundFillColorDefaultBrush",
+        "SolidBackgroundFillColorBaseBrush", "CardStrokeColorDefaultBrush", "SubtleFillColorSecondaryBrush"
+    };
 
     private void ApplyTheme()
     {
-        RootGrid.RequestedTheme = _state.Theme switch
+        var res = Application.Current.Resources;
+        foreach (var k in CustomThemeKeys) res.Remove(k);
+
+        switch (_state.Theme)
         {
-            "Light" => ElementTheme.Light,
-            "Dark" => ElementTheme.Dark,
-            _ => ElementTheme.Default
-        };
+            case "Light":
+                SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
+                RootGrid.Background = null;
+                SetElementTheme(ElementTheme.Light);
+                break;
+            case "Dark":
+                SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
+                RootGrid.Background = null;
+                SetElementTheme(ElementTheme.Dark);
+                break;
+            case "Terminal":
+                ApplyCustomTheme(Rgb(255, 4, 10, 4), Rgb(255, 13, 24, 13), Rgb(255, 90, 255, 130), Rgb(130, 60, 210, 110));
+                break;
+            case "Gray":
+                ApplyCustomTheme(Rgb(255, 46, 48, 50), Rgb(255, 64, 66, 68), Rgb(255, 230, 230, 232), Rgb(120, 150, 154, 158));
+                break;
+            default:
+                SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
+                RootGrid.Background = null;
+                SetElementTheme(ElementTheme.Default);
+                break;
+        }
+
+        // Caption buttons (min/max/close) need a matching foreground or they vanish on the backdrop.
+        SetCaptionColors(_state.Theme switch
+        {
+            "Light" => Rgb(255, 30, 30, 30),
+            "System" => (Windows.UI.Color?)null,   // let the system decide
+            _ => Rgb(255, 235, 235, 235)           // Dark / Terminal / Gray
+        });
     }
+
+    private void SetCaptionColors(Windows.UI.Color? fg)
+    {
+        if (!AppWindowTitleBar.IsCustomizationSupported()) return;
+        var tb = _appWindow.TitleBar;
+        tb.ButtonForegroundColor = fg;
+        tb.ButtonHoverForegroundColor = fg;
+        tb.ButtonPressedForegroundColor = fg;
+        tb.ButtonInactiveForegroundColor = fg.HasValue ? Rgb(160, fg.Value.R, fg.Value.G, fg.Value.B) : null;
+        tb.ButtonHoverBackgroundColor = fg.HasValue ? Rgb(40, fg.Value.R, fg.Value.G, fg.Value.B) : null;
+    }
+
+    private void ApplyCustomTheme(Windows.UI.Color bg, Windows.UI.Color panel, Windows.UI.Color fg, Windows.UI.Color stroke)
+    {
+        SystemBackdrop = null;
+        RootGrid.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(bg);
+
+        var res = Application.Current.Resources;
+        Microsoft.UI.Xaml.Media.SolidColorBrush B(Windows.UI.Color c) => new(c);
+        res["TextFillColorPrimaryBrush"] = B(fg);
+        res["TextFillColorSecondaryBrush"] = B(Rgb(200, fg.R, fg.G, fg.B));
+        res["TextFillColorTertiaryBrush"] = B(Rgb(150, fg.R, fg.G, fg.B));
+        res["LayerFillColorAltBrush"] = B(panel);
+        res["LayerFillColorDefaultBrush"] = B(panel);
+        res["CardBackgroundFillColorDefaultBrush"] = B(panel);
+        res["CardBackgroundFillColorSecondaryBrush"] = B(panel);
+        res["ControlFillColorDefaultBrush"] = B(panel);
+        res["ControlFillColorSecondaryBrush"] = B(panel);
+        res["AcrylicInAppFillColorDefaultBrush"] = B(panel);
+        res["AcrylicBackgroundFillColorDefaultBrush"] = B(panel);
+        res["SolidBackgroundFillColorBaseBrush"] = B(bg);
+        res["CardStrokeColorDefaultBrush"] = B(stroke);
+        res["SubtleFillColorSecondaryBrush"] = B(panel);
+
+        SetElementTheme(ElementTheme.Dark);
+    }
+
+    private void SetElementTheme(ElementTheme theme)
+    {
+        // Toggle to force ThemeResource references to re-resolve against the current resources.
+        RootGrid.RequestedTheme = ElementTheme.Light;
+        RootGrid.RequestedTheme = ElementTheme.Dark;
+        RootGrid.RequestedTheme = theme;
+    }
+
+    private static Windows.UI.Color Rgb(byte a, byte r, byte g, byte b) => new() { A = a, R = r, G = g, B = b };
 
     private void ApplyClickMode()
     {
@@ -1884,25 +1986,58 @@ public sealed partial class MainWindow : Window
         if (_loadingSettings) return;
         _state.SlideshowSeconds = (int)Math.Round(e.NewValue);
         SlideshowSecondsValue.Text = $"{_state.SlideshowSeconds}s";
+        _state.Save();
     }
 
     private void ShuffleSwitch_Toggled(object sender, RoutedEventArgs e)
     {
         if (_loadingSettings) return;
         _state.SlideshowShuffle = ShuffleSwitch.IsOn;
+        _state.Save();
     }
 
     private void LoopSwitch_Toggled(object sender, RoutedEventArgs e)
     {
         if (_loadingSettings) return;
         _state.SlideshowLoop = LoopSwitch.IsOn;
+        _state.Save();
     }
 
     private void TransitionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingSettings) return;
         _state.SlideshowTransition = (SlideshowTransition)Math.Max(0, TransitionCombo.SelectedIndex);
+        _state.Save();
     }
+
+    private void IconSizeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _iconSize = IconSizeCombo.SelectedIndex switch { 0 => 72, 2 => 160, _ => 110 };
+        if (_explorerViewMode == "Details") { _explorerViewMode = "Large"; ApplyViewMode(); }
+        IconSizeSlider.Value = _iconSize; // also updates _state.IconSize via the slider handler
+        ApplyIconSize();
+    }
+
+    private void FolderPreviewSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.FolderPreviews = FolderPreviewSwitch.IsOn;
+        ExplorerItem.ShowFolderPreviews = _state.FolderPreviews;
+        _state.Save();
+        LoadCurrentFolder(); // re-render icons with/without previews
+    }
+
+    private void CollageLayoutCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _collagePreset = (CollagePreset)Math.Max(0, CollageLayoutCombo.SelectedIndex);
+        _state.CollagePreset = _collagePreset.ToString();
+        _state.Save();
+    }
+
+    private static CollagePreset ParseCollagePreset(string? s) =>
+        Enum.TryParse<CollagePreset>(s, out var p) ? p : CollagePreset.Justified;
 
     // ===================== Keyboard =====================
 

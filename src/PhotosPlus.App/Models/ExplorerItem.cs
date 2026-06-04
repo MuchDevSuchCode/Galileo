@@ -18,6 +18,9 @@ public enum ExplorerItemKind { Folder, File, Drive }
 /// <summary>A folder, file, or drive shown in the file-explorer list.</summary>
 public partial class ExplorerItem : ObservableObject
 {
+    /// <summary>Whether folder icons get a content-preview overlay (set from settings).</summary>
+    public static bool ShowFolderPreviews = true;
+
     public string Path { get; }
     public string Name { get; }
     public ExplorerItemKind Kind { get; }
@@ -72,7 +75,7 @@ public partial class ExplorerItem : ObservableObject
                 var (pixels, w, h) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: true));
                 if (pixels is not null && w > 0 && h > 0)
                 {
-                    if (Kind == ExplorerItemKind.Folder)
+                    if (Kind == ExplorerItemKind.Folder && ShowFolderPreviews)
                         await TryOverlayFirstImageAsync(path, pixels, w, h, px);
 
                     var wb = new WriteableBitmap(w, h);
