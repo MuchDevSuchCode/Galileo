@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="Galileo.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- App-level so the WinUI markup compiler is happy (Window.Resources styles crash it). -->
+            <Style x:Key="GlyphButton" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Width" Value="44" />
+                <Setter Property="Height" Value="44" />
+                <Setter Property="CornerRadius" Value="22" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="FontFamily" Value="Segoe Fluent Icons" />
+                <Setter Property="FontSize" Value="16" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+            </Style>
+            <SolidColorBrush x:Key="PillBrush" Color="#E6262626" />
+
+            <!-- Clickable Details-view column header -->
+            <Style x:Key="ColumnHeaderButton" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="2,0" />
+                <Setter Property="HorizontalAlignment" Value="Stretch" />
+                <Setter Property="HorizontalContentAlignment" Value="Left" />
+                <Setter Property="VerticalAlignment" Value="Stretch" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Style>
+
+            <!-- Explorer: icon-view tile (cell size set via ItemsWrapGrid.ItemWidth/Height) -->
+            <DataTemplate x:Key="ExplorerIconTemplate">
+                <Grid Padding="6" Opacity="{Binding ItemOpacity}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Image Source="{Binding Icon}" Stretch="Uniform"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" Margin="4" />
+                    <TextBlock Grid.Row="1" Text="{Binding DisplayName}" FontSize="12" Margin="0,2,0,0"
+                               TextAlignment="Center" TextWrapping="Wrap" MaxLines="2"
+                               TextTrimming="CharacterEllipsis" />
+                </Grid>
+            </DataTemplate>
+
+            <!-- Explorer: details row -->
+            <DataTemplate x:Key="ExplorerDetailsTemplate">
+                <Grid Height="30" Opacity="{Binding ItemOpacity}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="160" />
+                        <ColumnDefinition Width="130" />
+                        <ColumnDefinition Width="90" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <Image Source="{Binding Icon}" Width="20" Height="20" />
+                        <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="{Binding ModifiedText}" VerticalAlignment="Center" Opacity="0.8" FontSize="13" />
+                    <TextBlock Grid.Column="2" Text="{Binding TypeName}" VerticalAlignment="Center" Opacity="0.8" FontSize="13" />
+                    <TextBlock Grid.Column="3" Text="{Binding SizeText}" VerticalAlignment="Center" Opacity="0.8" FontSize="13" TextAlignment="Right" />
+                </Grid>
+            </DataTemplate>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

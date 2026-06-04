@@ -1,4 +1,4 @@
-# Galileo (internally "PhotosPlus") — Task Breakdown
+# Galileo (internally "Galileo") — Task Breakdown
 
 Phased plan to reach Windows Photos parity plus the **eye hide/un-hide toggle** and **slideshow** features.
 
@@ -29,11 +29,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - **Settings panel** — slideshow seconds (2–30), shuffle, loop, transition; persisted.
 - **Modern UI** — Mica backdrop, extended title bar (no command bar), floating auto-hiding control pills, rounded thumbnails, hero empty-state.
 
-**Other** — favorites + filter, metadata panel, delete-to-Recycle-Bin, reveal in Explorer; JSON persistence in `%LocalAppData%\PhotosPlus`.
+**Other** — favorites + filter, metadata panel, delete-to-Recycle-Bin, reveal in Explorer; JSON persistence in `%LocalAppData%\Galileo`.
 
 **Right-click context menu** (viewer + gallery) — copy image / copy as file / copy path, Open with…, Print…, set as desktop background, favorite, hide, rename, show in Explorer, delete, native Windows Properties dialog.
 
-**Crash logging** — global exception handlers write to `%LocalAppData%\PhotosPlus\logs\error.log`; viewer caps decode size (8000px) to avoid GPU-texture-limit crashes on huge images.
+**Crash logging** — global exception handlers write to `%LocalAppData%\Galileo\logs\error.log`; viewer caps decode size (8000px) to avoid GPU-texture-limit crashes on huge images.
 
 **File Explorer (home, phase 1)** — Win11-style sidebar (This PC / Quick access / drives), back/fwd/up + breadcrumb + editable address, Large/Medium/Small icon views with a size slider + Details (name/date/type/size), shell thumbnails for all file types, open files/folders, New folder / Copy / Copy path / Paste / Rename / Delete / Properties, Slideshow/Collage on the current folder. **Hide-folder**: app-hidden folders appear empty when opened, excluded/dimmed in parent, Show-app-hidden toggle, reversible, disk untouched (`AppState.HiddenFolders`). _Next: cut/move, drag-drop between folders, Details sorting, search, expandable folder tree._
 
@@ -49,7 +49,7 @@ Still TODO from the roadmap below: editing (Phase 5), shell/default-app registra
 
 ## Phase 0 — Project setup
 
-- [~] WinUI 3 (.NET 8) app project (single `PhotosPlus.App`; `.Core`/`.Tests` split still TODO).
+- [~] WinUI 3 (.NET 8) app project (single `Galileo.App`; `.Core`/`.Tests` split still TODO).
 - [~] Packages: `CommunityToolkit.Mvvm` added (DI host / Win2D / SQLite not used — JSON state instead).
 - [~] MVVM + app theme: observable models + **Mica / dark-light** done; no DI host.
 - [ ] Set up CI (build + test) and linting/formatting (`dotnet format`).
@@ -117,7 +117,7 @@ Still TODO from the roadmap below: editing (Phase 5), shell/default-app registra
 - [ ] Set as background / lock screen.
 - [x] Delete to Recycle Bin; reveal in Explorer. _(rename: TODO)_
 - [x] **File activation** — opens a file/folder passed on the command line ("Open with" / default app).
-- [x] **Register as default photo handler** — per-user registry scripts (`tools\register-default.ps1` / `unregister-default.ps1`) + publish to `%LocalAppData%\PhotosPlus\app`. _(user sets the actual default in Settings; jump list: TODO; single-instance: TODO)_
+- [x] **Register as default photo handler** — per-user registry scripts (`tools\register-default.ps1` / `unregister-default.ps1`) + publish to `%LocalAppData%\Galileo\app`. _(user sets the actual default in Settings; jump list: TODO; single-instance: TODO)_
 
 ## Phase 7 — Video (parity)
 

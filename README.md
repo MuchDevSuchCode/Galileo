@@ -2,7 +2,7 @@
 
 A modern, native **Windows Explorer + Photos** alternative — built with **WinUI 3 / .NET 8**. Galileo is a fast, local-first file manager and photo viewer with a clean Fluent UI.
 
-> **Branding note:** the user-facing app and the built executable are **Galileo** (`Galileo.exe`, set via `<AssemblyName>`). Internal identifiers (the `PhotosPlus` namespace, the `%LocalAppData%\PhotosPlus` data folder, the registered ProgID) keep the `PhotosPlus` name to keep the build and default-app registration stable.
+> **Naming:** everything is **Galileo** — the app, the executable (`Galileo.exe`, set via `<AssemblyName>`), the `Galileo` namespace, the `Galileo.App` project, the `%LocalAppData%\Galileo` data folder, and the registered ProgID. (The project was formerly *PhotosPlus*; on first launch it migrates an existing `%LocalAppData%\PhotosPlus\state.json` so old settings carry over.)
 
 Highlights over the stock apps:
 
@@ -79,14 +79,14 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 - **Default collage layout** — Justified / Grid / Hero.
 - **Slideshow** — seconds per photo (2–30 s), shuffle, loop, transition.
 
-All settings persist across sessions (`%LocalAppData%\PhotosPlus\state.json`). The panel opens with a fade/scale animation; its header stays pinned and the body scrolls, so it never clips on small windows.
+All settings persist across sessions (`%LocalAppData%\Galileo\state.json`). The panel opens with a fade/scale animation; its header stays pinned and the body scrolls, so it never clips on small windows.
 
 ### ✨ The two headline features
 
 #### 1. Eye toggle — hide / un-hide the current photo
 - **Black-out (default):** the eye icon (or **H**) instantly covers the current photo with a solid black curtain — a glance over your shoulder reveals nothing. Press again to reveal. The image is never moved or deleted.
 - **Hidden album (persistent):** the eye button's flyout → *Hide permanently* flags the photo so it's excluded from the gallery and slideshows, and collected into a **Hidden album** (toggle *Show Hidden album* in the gallery's More menu).
-- Hidden/favorite state is stored as JSON in `%LocalAppData%\PhotosPlus`, never by altering originals.
+- Hidden/favorite state is stored as JSON in `%LocalAppData%\Galileo`, never by altering originals.
 
 #### 2. Slideshow
 - Launches from the toolbar or **F5**; full-screen on the active monitor.
@@ -115,15 +115,15 @@ All settings persist across sessions (`%LocalAppData%\PhotosPlus\state.json`). T
 - **Runtime:** .NET 8, C# 12.
 - **Imaging:** `Windows.Storage` thumbnails + `BitmapImage`; GPU-composited transform-based viewer (zoom/pan/rotate via `CompositeTransform`).
 - **MVVM:** CommunityToolkit.Mvvm (observable `PhotoItem`).
-- **Storage:** JSON app-state (`%LocalAppData%\PhotosPlus\state.json`) for hidden/favorite flags and slideshow settings.
+- **Storage:** JSON app-state (`%LocalAppData%\Galileo\state.json`) for hidden/favorite flags and slideshow settings.
 
 ### Project layout (current)
 
 ```
-PhotosPlus/
+Galileo/
 ├─ global.json                 # pins .NET SDK 8.0.300
 ├─ src/
-│  └─ PhotosPlus.App/          # WinUI 3 app (single project; builds Galileo.exe)
+│  └─ Galileo.App/          # WinUI 3 app (single project; builds Galileo.exe)
 │     ├─ Program.cs            # custom Main (single-instance redirection before XAML init)
 │     ├─ App.xaml(.cs)         # app + shared resources (GlyphButton, PillBrush, explorer templates)
 │     ├─ MainWindow.xaml(.cs)  # explorer + tabs + gallery + viewer + video + collage + settings + title bar
@@ -151,12 +151,12 @@ PhotosPlus/
 **Build & run**
 
 ```powershell
-dotnet build src/PhotosPlus.App
+dotnet build src/Galileo.App
 # then run the produced exe, or:
-dotnet run --project src/PhotosPlus.App
+dotnet run --project src/Galileo.App
 ```
 
-The build produces **`Galileo.exe`** under `src/PhotosPlus.App/bin/Debug/net8.0-windows10.0.19041.0/win-x64/`.
+The build produces **`Galileo.exe`** under `src/Galileo.App/bin/Debug/net8.0-windows10.0.19041.0/win-x64/`.
 
 > ⚠️ Close any running Galileo window before rebuilding — Windows locks the `.exe` while it runs (otherwise the build fails with an `MSB3021` file-lock error). PowerShell: `Get-Process Galileo -ErrorAction SilentlyContinue | Stop-Process -Force`.
 
@@ -165,6 +165,29 @@ The build produces **`Galileo.exe`** under `src/PhotosPlus.App/bin/Debug/net8.0-
 - `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` — the CsWinRT AOT source generator emits unsafe code for generic WinRT calls (e.g. drag-drop's `GetStorageItemsAsync`).
 - Shared XAML styles live in **`App.xaml`**, not `Window.Resources` — the WinUI 1.6 markup compiler crashes on `Style` defined in `Window.Resources`.
 
+**Publish a self-contained `.exe`**
+
+A self-contained publish bundles the .NET 8 runtime **and** the Windows App SDK, so the result
+runs on any Windows 11 machine with nothing pre-installed. From the repo root:
+
+```powershell
+dotnet publish src/Galileo.App -c Release -r win-x64 --self-contained true -o publish
+```
+
+This produces a standalone **`publish\Galileo.exe`** (plus its runtime files) you can copy and run
+anywhere. Swap the runtime identifier for other targets: `-r win-arm64` or `-r win-x86`.
+
+Or use the helper, which stops the running app, publishes a self-contained Release copy to
+`%LocalAppData%\Galileo\app`, and (without `-SkipRegister`) registers it as a default photo app:
+
+```powershell
+.\tools\install.ps1 -SkipRegister
+```
+
+> The publish prints a harmless `NETSDK1198: win-AnyCPU.pubxml was not found` warning because the
+> `.csproj` names a per-platform publish profile and `$(Platform)` resolves to `AnyCPU`; it falls
+> back to the `-r` settings above. Pass `-p:Platform=x64` to silence it.
+
 ---
 
 ## Set as your default photo app
@@ -172,7 +195,7 @@ The build produces **`Galileo.exe`** under `src/PhotosPlus.App/bin/Debug/net8.0-
 Galileo opens a file or folder passed on the command line (`Galileo.exe "<file>"`), so it works as a Windows file handler.
 
 1. **Install (and update).** One command publishes a stable, self-contained copy to
-   `%LocalAppData%\PhotosPlus\app` and registers it with Windows (per-user, no admin, reversible):
+   `%LocalAppData%\Galileo\app` and registers it with Windows (per-user, no admin, reversible):
    ```powershell
    .\tools\install.ps1
    ```
@@ -187,7 +210,7 @@ Galileo opens a file or folder passed on the command line (`Galileo.exe "<file>"
 `bin\Debug` exe instead of the published copy — then a normal `dotnet build` updates the very
 exe Windows launches, with no re-publish/re-register:
 ```powershell
-.\tools\register-default.ps1 -ExePath "src\PhotosPlus.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Galileo.exe"
+.\tools\register-default.ps1 -ExePath "src\Galileo.App\bin\Debug\net8.0-windows10.0.19041.0\win-x64\Galileo.exe"
 ```
 Trade-offs: the repo must stay in place (the path is registered), and the Debug exe needs the
 .NET 8 Desktop Runtime installed (fine on a dev machine). To go back to the stable, fully
