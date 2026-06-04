@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Tasks;
@@ -23,6 +24,9 @@ public partial class ExplorerItem : ObservableObject
 
     /// <summary>Whether file extensions are shown in the displayed name (set from settings).</summary>
     public static bool ShowExtensions = true;
+
+    /// <summary>User-chosen folder thumbnails (folder path → image path), shared from app state.</summary>
+    public static IReadOnlyDictionary<string, string>? FolderThumbnails;
 
     public string Path { get; }
     public string Name { get; }
@@ -66,6 +70,14 @@ public partial class ExplorerItem : ObservableObject
     /// Loads the file/folder/drive icon with proper transparency via the shell (IShellItemImageFactory),
     /// falling back to GetThumbnailAsync only if that fails.
     /// </summary>
+    /// <summary>Clears the cached icon so the next <see cref="LoadIconAsync"/> regenerates it
+    /// (e.g. after the folder's chosen thumbnail changes).</summary>
+    public void ResetIcon()
+    {
+        _iconRequested = false;
+        Icon = null;
+    }
+
     public async Task LoadIconAsync(uint size = 96)
     {
         if (_iconRequested) return;
@@ -145,7 +157,8 @@ public partial class ExplorerItem : ObservableObject
 
     private static async Task TryOverlayFirstImageAsync(string folderPath, byte[] folderPixels, int fw, int fh, int px)
     {
-        var imgPath = await Task.Run(() => FindFirstImage(folderPath));
+        // Prefer the user's chosen thumbnail for this folder; fall back to the first image inside.
+        var imgPath = ChosenThumbnail(folderPath) ?? await Task.Run(() => FindFirstImage(folderPath));
         if (imgPath is null) return;
         try
         {
@@ -160,6 +173,14 @@ public partial class ExplorerItem : ObservableObject
             ImageCompositor.OverlayPhoto(folderPixels, fw, fh, pixels, sb.PixelWidth, sb.PixelHeight);
         }
         catch { /* leave the plain folder icon */ }
+    }
+
+    /// <summary>The user-chosen thumbnail image for a folder, if one is set and still exists.</summary>
+    private static string? ChosenThumbnail(string folderPath)
+    {
+        if (FolderThumbnails is null) return null;
+        if (!FolderThumbnails.TryGetValue(folderPath, out var imgPath)) return null;
+        return File.Exists(imgPath) && PhotoLibrary.IsSupported(imgPath) ? imgPath : null;
     }
 
     /// <summary>First supported image in a folder (bounded scan), or null.</summary>

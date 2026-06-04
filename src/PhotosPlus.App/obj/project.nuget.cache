@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "o5m4PZxryJ4=",
+  "dgSpecHash": "Vwh6ILdMCGQ=",
   "success": true,
-  "projectFilePath": "C:\\Users\\engineer\\code\\PhotosPlus\\src\\PhotosPlus.App\\PhotosPlus.App.csproj",
+  "projectFilePath": "C:\\Users\\engineer\\code\\Galileo\\src\\PhotosPlus.App\\PhotosPlus.App.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\engineer\\.nuget\\packages\\communitytoolkit.mvvm\\8.3.2\\communitytoolkit.mvvm.8.3.2.nupkg.sha512",
     "C:\\Users\\engineer\\.nuget\\packages\\microsoft.web.webview2\\1.0.2651.64\\microsoft.web.webview2.1.0.2651.64.nupkg.sha512",

@@ -27,6 +27,9 @@ public sealed class AppState
     /// <summary>Folders the user has app-hidden (appear empty / excluded; disk untouched).</summary>
     public HashSet<string> HiddenFolders { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>User-chosen folder thumbnail: folder path → image inside it shown as the folder preview.</summary>
+    public Dictionary<string, string> FolderThumbnails { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public string? LastFolder { get; set; }
 
     // General settings
@@ -85,6 +88,7 @@ public sealed class AppState
                     state.HiddenPaths = new HashSet<string>(state.HiddenPaths, StringComparer.OrdinalIgnoreCase);
                     state.FavoritePaths = new HashSet<string>(state.FavoritePaths, StringComparer.OrdinalIgnoreCase);
                     state.HiddenFolders = new HashSet<string>(state.HiddenFolders ?? new(), StringComparer.OrdinalIgnoreCase);
+                    state.FolderThumbnails = new Dictionary<string, string>(state.FolderThumbnails ?? new(), StringComparer.OrdinalIgnoreCase);
                     return state;
                 }
             }

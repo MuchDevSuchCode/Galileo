@@ -1400,11 +1400,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\engineer\\code\\PhotosPlus\\src\\PhotosPlus.App\\PhotosPlus.App.csproj",
+      "projectUniqueName": "C:\\Users\\engineer\\code\\Galileo\\src\\PhotosPlus.App\\PhotosPlus.App.csproj",
       "projectName": "Galileo",
-      "projectPath": "C:\\Users\\engineer\\code\\PhotosPlus\\src\\PhotosPlus.App\\PhotosPlus.App.csproj",
+      "projectPath": "C:\\Users\\engineer\\code\\Galileo\\src\\PhotosPlus.App\\PhotosPlus.App.csproj",
       "packagesPath": "C:\\Users\\engineer\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\engineer\\code\\PhotosPlus\\src\\PhotosPlus.App\\obj\\",
+      "outputPath": "C:\\Users\\engineer\\code\\Galileo\\src\\PhotosPlus.App\\obj\\",
       "projectStyle": "PackageReference",
       "fallbackFolders": [
         "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"

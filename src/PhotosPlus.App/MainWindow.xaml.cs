@@ -133,6 +133,7 @@ public sealed partial class MainWindow : Window
         _collagePreset = ParseCollagePreset(_state.CollagePreset);
         ExplorerItem.ShowFolderPreviews = _state.FolderPreviews;
         ExplorerItem.ShowExtensions = _state.ShowExtensions;
+        ExplorerItem.FolderThumbnails = _state.FolderThumbnails;
 
         PopulateSidebar();
         IconSizeSlider.Value = _iconSize;
@@ -1773,6 +1774,11 @@ public sealed partial class MainWindow : Window
             menu.Items.Add(SMI("Copy", Symbol.Copy, async (_, _) => await CopyFileToClipboardAsync(item.Path)));
             menu.Items.Add(SMI("Copy path", Symbol.Link, (_, _) => CopyTextToClipboard(item.Path)));
             menu.Items.Add(SMI("Paste", Symbol.Paste, async (_, _) => await PasteIntoCurrentAsync()));
+            if (item.IsImage)
+            {
+                menu.Items.Add(new MenuFlyoutSeparator());
+                menu.Items.Add(SMI("Set as Thumbnail", Symbol.Pictures, (_, _) => SetFolderThumbnail(item.Path)));
+            }
             menu.Items.Add(new MenuFlyoutSeparator());
             if (item.IsFolder)
             {
@@ -1987,6 +1993,7 @@ public sealed partial class MainWindow : Window
         menu.Items.Add(MI("Open with…", "", (_, _) => OpenWithItem(item)));
         menu.Items.Add(MI("Print…", "", (_, _) => RunVerb(item, "print")));
         menu.Items.Add(MI("Set as desktop background", "", (_, _) => SetWallpaper(item)));
+        menu.Items.Add(MI("Set as Thumbnail", "", (_, _) => SetFolderThumbnail(item.Path)));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(MI(item.IsFavorite ? "" : "", item.IsFavorite ? "" : "", (_, _) => FavoriteItem(item)));
         if (!item.IsHidden)
@@ -2060,6 +2067,28 @@ public sealed partial class MainWindow : Window
     {
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         ShellOps.ShowProperties(hwnd, item.Path);
+    }
+
+    /// <summary>Makes <paramref name="imagePath"/> the preview thumbnail for its parent folder.</summary>
+    private void SetFolderThumbnail(string imagePath)
+    {
+        var folder = System.IO.Path.GetDirectoryName(imagePath);
+        if (string.IsNullOrEmpty(folder)) { StatusText.Text = "Couldn't set the folder thumbnail."; return; }
+        _state.FolderThumbnails[folder] = imagePath;
+        _state.Save();
+        RefreshFolderIcon(folder);
+        StatusText.Text = $"Folder thumbnail set to {System.IO.Path.GetFileName(imagePath)}";
+    }
+
+    /// <summary>Regenerates a folder's icon in the current listing (if it's visible) so a new
+    /// thumbnail shows immediately.</summary>
+    private void RefreshFolderIcon(string folderPath)
+    {
+        var match = _explorerItems.FirstOrDefault(i =>
+            i.IsFolder && string.Equals(i.Path, folderPath, StringComparison.OrdinalIgnoreCase));
+        if (match is null) return;
+        match.ResetIcon();
+        _ = match.LoadIconAsync((uint)Math.Clamp(_iconSize, 48, 256));
     }
 
     private void FavoriteItem(PhotoItem item)
