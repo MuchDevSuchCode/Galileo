@@ -41,6 +41,7 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 - **Spacebar Peek (Quick Look)** — press **Space** on the selected file for an instant, dismissible preview (images, video, text/code, or a large thumbnail + details for anything else). Arrow keys step through the folder with the preview open; **Space/Esc** closes; **Enter** opens it for real. Toggle off in **Settings → Spacebar Peek** (on by default).
 - **Set as Thumbnail** — right-click any image (in the explorer or the photo grid) → **Set as Thumbnail** to pin it as the parent folder's preview icon.
 - **⭐ Hide folder** — the **Hide folder** button (or a folder's right-click) makes a folder **appear empty when opened** and excludes it from its parent. Toggle **Show app-hidden** to reveal hidden folders (dimmed); **Unhide** to restore. App-only and reversible — the folder on disk is never modified. A **Windows Hello** gate can be required before hidden items are revealed (see Settings → Privacy).
+- **🔒 Secure vault** — right-click a folder → **Move to new vault…** to encrypt it into a hidden vault, or **Send to Vault** to add items to the vault that's currently unlocked (passphrase and/or Windows Hello). See [Secure vault](#secure-vault) below.
 
 > Planned next: an expandable folder tree in the sidebar, in-place Details column resizing, and a recents/pinned list.
 
@@ -225,6 +226,22 @@ self-contained copy, just run `.\tools\install.ps1` again.
 > `unregister-default.ps1` (registry only, e.g. to point at a custom `-ExePath`).
 > By default each opened file launches its own window; enable **Settings → Reuse one window**
 > for single-instance behaviour (opened files reuse the running window).
+
+---
+
+## Secure vault
+
+Galileo can store folders in an encrypted **vault** that is hidden from Windows and only readable while unlocked.
+
+- **Create** — right-click a folder → **Move to new vault…**, or use **New vault** in the sidebar. You set a vault name and a strong passphrase (optionally enrolling **Windows Hello**). The folder's files are encrypted into the vault and the originals are securely removed.
+- **Send to Vault** — while a vault is unlocked, right-click any file/folder in clear space → **Send to Vault**. Each item is encrypted into the open vault immediately and the original is securely wiped from clear space.
+- **Hidden from Windows** — vault contents live as opaque, random-named encrypted blobs under `%LocalAppData%\Galileo\Vaults\<id>` with an encrypted index. There is no readable folder, filename, or content in Explorer.
+- **Encryption** — each file is encrypted with **AES-256-GCM** (chunked, so multi-GB videos stream). The data key is wrapped by a key derived from your passphrase with **Argon2id**, and (optionally) by a **Windows Hello / TPM** keyslot. Either factor unlocks the same vault; **the passphrase is the only recovery key — there is no reset.**
+- **Full app while unlocked** — unlocking decrypts the vault into a working folder under your user profile, so the explorer, viewer, video player, gallery, slideshow, and collage all work exactly as they do for any folder. Add files with **Send to Vault**, or by copying/pasting/dragging them in while unlocked.
+- **Auto-lock** — an unlocked vault re-locks (re-encrypts changes and securely wipes the working folder) when you click **Lock**, after an idle timeout, or when you close Galileo. Configure the idle timer in **Settings → Secure vault** (0 = never).
+- **Windows Hello** — when enrolled, the unlock dialog offers a **Windows Hello** button; the passphrase always works as a fallback.
+
+> **Security notes.** While unlocked, decrypted files exist in a working folder under `%LocalAppData%\Galileo\.work` (restricted to your Windows account); it is securely wiped on lock, and any copy left by a crash is wiped at the next launch. Secure deletion is overwrite-then-delete, which is **best-effort on SSDs** (wear-levelling/TRIM may retain remnants) and not a forensic guarantee. Windows may also cache thumbnails for files opened while unlocked.
 
 ---
 

@@ -52,6 +52,28 @@
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
+
+                        <TextBlock Text="Vaults" Opacity="0.6" FontSize="12" Margin="10,12,0,4" />
+                        <ListView x:Name="VaultsList" SelectionMode="None" IsItemClickEnabled="True"
+                                  ItemClick="VaultsList_ItemClick">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="10" Height="32">
+                                        <FontIcon Glyph="{Binding Glyph}" FontFamily="Segoe Fluent Icons"
+                                                  FontSize="15" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <Button Click="NewVault_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                Background="Transparent" BorderThickness="0" Padding="10,6" Margin="0,2,0,0"
+                                ToolTipService.ToolTip="Create a new secure vault">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <FontIcon Glyph="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                                <TextBlock Text="New vault" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
                 </ScrollViewer>
             </Grid>
@@ -146,6 +168,13 @@
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon Glyph="&#xE8A9;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                             <TextBlock Text="Collage" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="VaultLockBtn" Visibility="Collapsed" Click="VaultLock_Click"
+                            ToolTipService.ToolTip="Lock the open vault (re-encrypts and hides it)">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE72E;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                            <TextBlock x:Name="VaultLockText" Text="Lock vault" />
                         </StackPanel>
                     </Button>
                     </StackPanel>
@@ -704,6 +733,23 @@
                                                Opacity="0.6" FontSize="12" TextWrapping="Wrap" />
                                 </StackPanel>
                                 <ToggleSwitch Grid.Column="1" x:Name="LockHiddenSwitch" Toggled="LockHiddenSwitch_Toggled" />
+                            </Grid>
+
+                            <TextBlock Text="Secure vault" FontWeight="SemiBold" Opacity="0.8" Margin="0,6,0,0" />
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="Auto-lock when idle" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1" x:Name="VaultIdleValue" Text="5 min" VerticalAlignment="Center" Opacity="0.8" />
+                            </Grid>
+                            <Slider x:Name="VaultIdleSlider" Minimum="0" Maximum="60" StepFrequency="1"
+                                    ValueChanged="VaultIdleSlider_ValueChanged"
+                                    ToolTipService.ToolTip="Minutes of inactivity before an open vault locks (0 = never)" />
+                            <Grid ColumnDefinitions="*,Auto">
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                    <TextBlock Text="Default to Windows Hello" />
+                                    <TextBlock Text="Pre-check &quot;Also unlock with Windows Hello&quot; when creating a vault."
+                                               Opacity="0.6" FontSize="12" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <ToggleSwitch Grid.Column="1" x:Name="VaultHelloSwitch" Toggled="VaultHelloSwitch_Toggled" />
                             </Grid>
 
                             <TextBlock Text="Collage" FontWeight="SemiBold" Opacity="0.8" Margin="0,6,0,0" />

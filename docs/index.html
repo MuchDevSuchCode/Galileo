@@ -130,7 +130,7 @@
     .eyebrow { text-transform: uppercase; letter-spacing: 2px; font-size: 12px; color: var(--accent); font-weight: 700; }
 
     /* Headline features */
-    .headline { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+    .headline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
     .headline .card {
       padding: 30px; border-radius: var(--radius); border: 1px solid var(--stroke);
       background: linear-gradient(180deg, var(--panel), var(--bg-2));
@@ -210,7 +210,7 @@
     <img class="logo" src="galileo.png" alt="Galileo app icon" />
     <h1>Windows Explorer + Photos,<br /><span class="grad">reimagined.</span></h1>
     <p class="tag">Galileo is a fast, local-first file manager and photo viewer for Windows 11.</p>
-    <p class="sub">No account. No cloud sync. Your library stays on your disk — with a tabbed explorer, a buttery photo viewer, collage &amp; slideshow, an embedded video player, and a private Hidden album.</p>
+    <p class="sub">No account. No cloud sync. Your library stays on your disk — with a tabbed explorer, a buttery photo viewer, collage &amp; slideshow, an embedded video player, a private Hidden album, and an <strong>encrypted vault</strong>.</p>
 
     <div class="cta">
       <a class="btn primary" href="https://github.com/MuchDevSuchCode/Galileo">★ View on GitHub</a>
@@ -222,6 +222,7 @@
       <span class="badge">.NET 8 · C# 12</span>
       <span class="badge">Windows 11</span>
       <span class="badge">Local-first · Private</span>
+      <span class="badge">Encrypted vault · AES-256</span>
       <span class="badge">Unpackaged · Self-contained</span>
     </div>
 
@@ -264,10 +265,15 @@
   <section class="wrap">
     <div class="section-head">
       <div class="eyebrow">What makes it different</div>
-      <h2>Two headline features</h2>
-      <p>The reasons Galileo started — privacy and a great full-screen show.</p>
+      <h2>Three headline features</h2>
+      <p>The reasons Galileo started — real privacy, a great full-screen show, and a vault that actually encrypts.</p>
     </div>
     <div class="headline">
+      <div class="card">
+        <div class="icon">🔐</div>
+        <h3>Secure vault</h3>
+        <p>Move a folder into an encrypted <strong>vault</strong> that's hidden from Windows — files become opaque <strong>AES-256-GCM</strong> blobs with random names, unlocked by a strong passphrase (<strong>Argon2id</strong>) or <strong>Windows Hello</strong>. While unlocked, every Galileo feature works on it; it re-locks on idle or exit. <strong>Send to Vault</strong> encrypts new files on the spot and wipes the originals.</p>
+      </div>
       <div class="card">
         <div class="icon">👁️</div>
         <h3>The eye toggle &amp; Hidden album</h3>
@@ -338,6 +344,8 @@
           <span class="chip">CompositeTransform viewer</span>
           <span class="chip">IShellItemImageFactory</span>
           <span class="chip">Windows Hello</span>
+          <span class="chip">AES-256-GCM</span>
+          <span class="chip">Argon2id</span>
           <span class="chip">System.Text.Json state</span>
         </div>
         <p class="muted" style="margin-top:20px">

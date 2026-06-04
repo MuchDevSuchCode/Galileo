@@ -56,6 +56,12 @@ public sealed partial class MainWindow : Window
     private ExplorerItem? _peekItem;
     private int _peekToken;            // bumped per preview load so a fast nav cancels a stale decode
 
+    // Secure vault state.
+    private readonly VaultManager _vaults = new();
+    private readonly ObservableCollection<Models.VaultInfo> _vaultList = new();
+    private readonly DispatcherTimer _vaultIdleTimer = new();
+    private bool _closingForVaultLock;  // guards the re-entrant AppWindow.Closing lock flow
+
     // Polls for mounted/removed drives so the sidebar and This PC view stay current
     // (WinUI 3 doesn't surface WM_DEVICECHANGE directly).
     private readonly DispatcherTimer _driveWatcher = new() { Interval = TimeSpan.FromSeconds(2) };
@@ -140,6 +146,15 @@ public sealed partial class MainWindow : Window
         ExplorerItem.FolderThumbnails = _state.FolderThumbnails;
 
         PopulateSidebar();
+
+        // Secure vault: wipe any decrypted working folder left by a crash, list vaults, and arm the
+        // idle auto-lock + app-exit lock.
+        _vaults.WipeOrphanWorkDirs();
+        VaultsList.ItemsSource = _vaultList;
+        RefreshVaults();
+        _vaultIdleTimer.Tick += VaultIdle_Tick;
+        _appWindow.Closing += AppWindow_Closing;
+
         IconSizeSlider.Value = _iconSize;
         ApplyIconSize();
         ApplyTheme();
@@ -1073,6 +1088,9 @@ public sealed partial class MainWindow : Window
         // Spacebar Peek: handledEventsToo so we still see Space/arrows after the list consumes them
         // for selection — lets Space open the preview and arrows drive it while it's open.
         RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(Peek_KeyDown), true);
+
+        // Any pointer/key activity resets the vault idle auto-lock countdown.
+        RootGrid.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler((_, _) => ResetVaultIdle()), true);
     }
 
     /// <summary>A cheap fingerprint of the current drives (letter + ready state) to detect changes.</summary>
@@ -1787,6 +1805,22 @@ public sealed partial class MainWindow : Window
                 menu.Items.Add(new MenuFlyoutSeparator());
                 menu.Items.Add(SMI("Set as Thumbnail", Symbol.Pictures, (_, _) => SetFolderThumbnail(item.Path)));
             }
+            menu.Items.Add(new MenuFlyoutSeparator());
+            if (_vaults.IsAnyUnlocked && !ItemInsideOpenVault(item))
+            {
+                menu.Items.Add(SMI("Send to Vault", null, async (_, _) =>
+                {
+                    var sel = SelectedExplorerItems();
+                    if (sel.All(s => s != item)) sel = new List<ExplorerItem> { item };
+                    await SendToVaultAsync(sel);
+                }));
+            }
+            menu.Items.Add(SMI("Move to new vault…", null, async (_, _) =>
+            {
+                var sel = SelectedExplorerItems();
+                if (sel.All(s => s != item)) sel = new List<ExplorerItem> { item };
+                await MoveToNewVaultAsync(sel);
+            }));
             menu.Items.Add(new MenuFlyoutSeparator());
             if (item.IsFolder)
             {
@@ -2618,6 +2652,10 @@ public sealed partial class MainWindow : Window
         PeekSwitch.IsOn = _state.PeekEnabled;
         SingleInstanceSwitch.IsOn = _state.SingleInstance;
         LockHiddenSwitch.IsOn = _state.LockHiddenAlbum;
+        var vaultIdleMin = Math.Clamp(_state.VaultIdleSeconds / 60, 0, 60);
+        VaultIdleSlider.Value = vaultIdleMin;
+        VaultIdleValue.Text = vaultIdleMin == 0 ? "Never" : $"{vaultIdleMin} min";
+        VaultHelloSwitch.IsOn = _state.VaultDefaultUseHello;
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
         SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
         SlideshowSecondsValue.Text = $"{_state.SlideshowSeconds}s";
@@ -2842,6 +2880,23 @@ public sealed partial class MainWindow : Window
         if (!_state.PeekEnabled) ClosePeek();
     }
 
+    private void VaultIdleSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        var min = (int)Math.Round(e.NewValue);
+        if (VaultIdleValue is not null) VaultIdleValue.Text = min == 0 ? "Never" : $"{min} min";
+        if (_loadingSettings) return;
+        _state.VaultIdleSeconds = min * 60;
+        _state.Save();
+        ResetVaultIdle(); // apply immediately to an open vault
+    }
+
+    private void VaultHelloSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.VaultDefaultUseHello = VaultHelloSwitch.IsOn;
+        _state.Save();
+    }
+
     private void CollageLayoutCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingSettings) return;
@@ -2959,6 +3014,8 @@ public sealed partial class MainWindow : Window
     /// it and the arrows step through the folder.</summary>
     private void Peek_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        ResetVaultIdle(); // keyboard counts as activity for the vault idle timer
+
         if (PeekOverlay.Visibility == Visibility.Visible)
         {
             switch (e.Key)
@@ -3150,5 +3207,227 @@ public sealed partial class MainWindow : Window
         var cur = _peekItem;
         ClosePeek();
         if (cur is not null) OpenExplorerItem(cur);
+    }
+
+    // ===================== Secure vault =====================
+
+    private void RefreshVaults()
+    {
+        _vaultList.Clear();
+        foreach (var v in _vaults.List())
+            _vaultList.Add(new Models.VaultInfo(v.Id, v.Name, _vaults.Current?.Id == v.Id));
+        UpdateVaultLockButton();
+    }
+
+    private async void VaultsList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is not Models.VaultInfo vi) return;
+
+        // Already unlocked → just browse its decrypted working folder.
+        if (_vaults.Current?.Id == vi.Id && _vaults.Current.WorkingDir is not null)
+        {
+            ShowExplorer();
+            NavigateTo(_vaults.Current.WorkingDir);
+            return;
+        }
+
+        Vault v;
+        try { v = Vault.Load(System.IO.Path.Combine(VaultManager.VaultsRoot, vi.Id)); }
+        catch (Exception ex) { StatusText.Text = "Couldn't open vault: " + ex.Message; return; }
+        await TryUnlockVaultAsync(v);
+    }
+
+    private async void NewVault_Click(object sender, RoutedEventArgs e) => await CreateVaultDialogAsync(null);
+
+    private async Task TryUnlockVaultAsync(Vault v)
+    {
+        var pw = new PasswordBox { PlaceholderText = "Passphrase" };
+        var panel = new StackPanel { Spacing = 10 };
+        panel.Children.Add(new TextBlock { Text = $"Unlock “{v.Name}”",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        panel.Children.Add(pw);
+
+        var dlg = new ContentDialog
+        {
+            Title = "Unlock vault",
+            Content = panel,
+            PrimaryButtonText = "Unlock",
+            SecondaryButtonText = v.HasHello ? "Windows Hello" : null,
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = RootGrid.XamlRoot,
+        };
+
+        var result = await dlg.ShowAsync();
+        if (result == ContentDialogResult.Primary)
+        {
+            StatusText.Text = "Unlocking…";
+            try { await _vaults.UnlockWithPassphraseAsync(v, pw.Password); }
+            catch (System.Security.Cryptography.CryptographicException) { StatusText.Text = "Wrong passphrase."; return; }
+            catch (Exception ex) { StatusText.Text = "Unlock failed: " + ex.Message; return; }
+            OnVaultOpened(v);
+        }
+        else if (result == ContentDialogResult.Secondary)
+        {
+            StatusText.Text = "Waiting for Windows Hello…";
+            bool ok;
+            try { ok = await _vaults.UnlockWithHelloAsync(v); } catch { ok = false; }
+            if (ok) OnVaultOpened(v); else StatusText.Text = "Windows Hello unlock failed.";
+        }
+    }
+
+    private void OnVaultOpened(Vault v)
+    {
+        RefreshVaults();
+        ResetVaultIdle();
+        ShowExplorer();
+        NavigateTo(v.WorkingDir);
+        StatusText.Text = $"Vault “{v.Name}” unlocked";
+    }
+
+    private async Task CreateVaultDialogAsync(IList<string>? importPaths)
+    {
+        var suggested = importPaths is { Count: 1 }
+            ? System.IO.Path.GetFileName(importPaths[0].TrimEnd('\\', '/'))
+            : "";
+        var name = new TextBox { PlaceholderText = "Vault name", Text = suggested };
+        var pw = new PasswordBox { PlaceholderText = "Passphrase (min 8 characters)" };
+        var pw2 = new PasswordBox { PlaceholderText = "Confirm passphrase" };
+        var hello = new CheckBox { Content = "Also unlock with Windows Hello", IsChecked = _state.VaultDefaultUseHello };
+        var error = new TextBlock
+        {
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.IndianRed),
+            Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap, FontSize = 12,
+        };
+        var hint = new TextBlock
+        {
+            Text = "Your passphrase is the only recovery key — there is no reset. Hello is an optional convenience.",
+            Opacity = 0.6, FontSize = 12, TextWrapping = TextWrapping.Wrap,
+        };
+        var panel = new StackPanel { Spacing = 10 };
+        foreach (var c in new UIElement[] { name, pw, pw2, hello, hint, error }) panel.Children.Add(c);
+
+        var dlg = new ContentDialog
+        {
+            Title = importPaths is null ? "New vault" : "Move to new vault",
+            Content = panel,
+            PrimaryButtonText = importPaths is null ? "Create" : "Move",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = RootGrid.XamlRoot,
+        };
+        dlg.PrimaryButtonClick += (_, args) =>
+        {
+            void Fail(string m) { error.Text = m; error.Visibility = Visibility.Visible; args.Cancel = true; }
+            if (string.IsNullOrWhiteSpace(name.Text)) { Fail("Enter a vault name."); return; }
+            if (pw.Password.Length < 8) { Fail("Use a passphrase of at least 8 characters."); return; }
+            if (pw.Password != pw2.Password) { Fail("Passphrases don't match."); return; }
+        };
+
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+
+        StatusText.Text = "Encrypting… this can take a moment for large folders.";
+        try
+        {
+            await _vaults.CreateAsync(name.Text.Trim(), pw.Password, hello.IsChecked == true, importPaths);
+        }
+        catch (Exception ex) { StatusText.Text = "Vault creation failed: " + ex.Message; App.Log("VaultCreate", ex); return; }
+
+        RefreshVaults();
+        if (importPaths is not null) LoadCurrentFolder(); // originals were removed
+        StatusText.Text = "Vault created.";
+    }
+
+    private bool ItemInsideOpenVault(ExplorerItem item) =>
+        _vaults.Current?.WorkingDir is { } w
+        && item.Path.StartsWith(w, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Encrypts the selected items into the open vault now (durable blob + visible in the
+    /// working folder) and securely wipes the clear-space originals.</summary>
+    private async Task SendToVaultAsync(IList<ExplorerItem> items)
+    {
+        var cur = _vaults.Current;
+        if (cur?.WorkingDir is not { } work) { StatusText.Text = "Unlock a vault first."; return; }
+
+        var paths = items.Select(i => i.Path)
+            .Where(p => !string.IsNullOrEmpty(p) && !p.StartsWith(work, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (paths.Count == 0) return;
+
+        StatusText.Text = "Encrypting into vault…";
+        int n;
+        try { n = await _vaults.AddToCurrentAsync(paths); }
+        catch (Exception ex) { StatusText.Text = "Send to vault failed: " + ex.Message; App.Log("SendToVault", ex); return; }
+
+        LoadCurrentFolder(); // originals are gone; new items appear if browsing the vault
+        ResetVaultIdle();
+        StatusText.Text = $"Sent {n} item(s) to vault “{cur.Name}” — encrypted, originals wiped.";
+    }
+
+    /// <summary>Creates a new vault from the selected items (encrypt + securely remove originals).</summary>
+    private async Task MoveToNewVaultAsync(IList<ExplorerItem> items)
+    {
+        var paths = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
+        if (paths.Count == 0) return;
+        await CreateVaultDialogAsync(paths);
+    }
+
+    private void VaultLock_Click(object sender, RoutedEventArgs e) => _ = LockActiveVaultAsync();
+
+    private async Task LockActiveVaultAsync()
+    {
+        var work = _vaults.Current?.WorkingDir;
+        StopVaultIdle();
+        try { await _vaults.LockCurrentAsync(); }
+        catch (Exception ex) { StatusText.Text = "Lock failed: " + ex.Message; App.Log("VaultLock", ex); }
+        RefreshVaults();
+
+        // If we were browsing/viewing inside the vault, leave it (its folder is now wiped).
+        if (work is not null && (_currentFolder?.StartsWith(work, StringComparison.OrdinalIgnoreCase) ?? false))
+        {
+            if (InViewer || InCollage) ShowExplorer();
+            NavigateTo(null);
+        }
+        StatusText.Text = "Vault locked.";
+    }
+
+    private void UpdateVaultLockButton()
+    {
+        var open = _vaults.IsAnyUnlocked;
+        VaultLockBtn.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        VaultLockText.Text = open && _vaults.Current is not null ? $"Lock “{_vaults.Current.Name}”" : "Lock vault";
+    }
+
+    // ---- Idle auto-lock ----
+
+    private void ResetVaultIdle()
+    {
+        if (!_vaults.IsAnyUnlocked) return;
+        var secs = _state.VaultIdleSeconds;
+        _vaultIdleTimer.Stop();
+        if (secs <= 0) return; // 0 = never auto-lock
+        _vaultIdleTimer.Interval = TimeSpan.FromSeconds(secs);
+        _vaultIdleTimer.Start();
+    }
+
+    private void StopVaultIdle() => _vaultIdleTimer.Stop();
+
+    private void VaultIdle_Tick(object? sender, object e)
+    {
+        _vaultIdleTimer.Stop();
+        if (_vaults.IsAnyUnlocked) _ = LockActiveVaultAsync();
+    }
+
+    // ---- App-exit lock (re-encrypt + wipe before the window closes) ----
+
+    private async void AppWindow_Closing(Microsoft.UI.Windowing.AppWindow sender,
+        Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
+    {
+        if (_closingForVaultLock) return;       // second pass: let the close proceed
+        if (!_vaults.IsAnyUnlocked) return;
+        args.Cancel = true;                      // defer close until the vault is secured
+        try { await _vaults.LockCurrentAsync(); } catch (Exception ex) { App.Log("VaultCloseLock", ex); }
+        _closingForVaultLock = true;
+        Close();
     }
 }

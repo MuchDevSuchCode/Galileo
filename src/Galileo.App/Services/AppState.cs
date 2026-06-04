@@ -50,6 +50,12 @@ public sealed class AppState
     /// <summary>Require Windows Hello / PIN before revealing the Hidden album or app-hidden folders.</summary>
     public bool LockHiddenAlbum { get; set; }
 
+    // Secure vault
+    /// <summary>Auto-lock an unlocked vault after this many seconds of inactivity (0 = never).</summary>
+    public int VaultIdleSeconds { get; set; } = 300;
+    /// <summary>Offer/enable Windows Hello by default when creating a vault.</summary>
+    public bool VaultDefaultUseHello { get; set; }
+
     // Slideshow settings
     public int SlideshowSeconds { get; set; } = 4;
     public bool SlideshowShuffle { get; set; }
