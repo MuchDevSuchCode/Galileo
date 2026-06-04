@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using PhotosPlus.Services;
+using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.FileProperties;
 
@@ -63,14 +64,17 @@ public partial class ExplorerItem : ObservableObject
         var px = (int)Math.Clamp(size, 32u, 256u);
         try
         {
-            // Folders & drives: plain shell icon (transparent, orientation-corrected). We force
-            // icon-only because the shell's folder *content* thumbnails come back inconsistently
-            // through this API (some bottom-up/flipped, some opaque-white JPEGs).
+            // Folders & drives: clean shell icon (transparent, orientation-corrected). For folders
+            // we also overlay a content preview (the first image inside) — composited ourselves so
+            // it's always upright and transparent, unlike the shell's flaky folder thumbnails.
             if (Kind != ExplorerItemKind.File)
             {
                 var (pixels, w, h) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: true));
                 if (pixels is not null && w > 0 && h > 0)
                 {
+                    if (Kind == ExplorerItemKind.Folder)
+                        await TryOverlayFirstImageAsync(path, pixels, w, h, px);
+
                     var wb = new WriteableBitmap(w, h);
                     using (var s = wb.PixelBuffer.AsStream()) s.Write(pixels, 0, pixels.Length);
                     Icon = wb;
@@ -102,6 +106,41 @@ public partial class ExplorerItem : ObservableObject
         {
             _iconRequested = false; // allow a retry later
         }
+    }
+
+    private static async Task TryOverlayFirstImageAsync(string folderPath, byte[] folderPixels, int fw, int fh, int px)
+    {
+        var imgPath = await Task.Run(() => FindFirstImage(folderPath));
+        if (imgPath is null) return;
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(imgPath);
+            using var thumb = await file.GetThumbnailAsync(ThumbnailMode.PicturesView, (uint)Math.Max(48, px * 3 / 5), ThumbnailOptions.ResizeThumbnail);
+            if (thumb is null || thumb.Type == ThumbnailType.Icon) return; // only real photo thumbnails
+
+            var decoder = await BitmapDecoder.CreateAsync(thumb);
+            var sb = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+            var pixels = new byte[4 * sb.PixelWidth * sb.PixelHeight];
+            sb.CopyToBuffer(pixels.AsBuffer());
+            ImageCompositor.OverlayPhoto(folderPixels, fw, fh, pixels, sb.PixelWidth, sb.PixelHeight);
+        }
+        catch { /* leave the plain folder icon */ }
+    }
+
+    /// <summary>First supported image in a folder (bounded scan), or null.</summary>
+    private static string? FindFirstImage(string folderPath)
+    {
+        try
+        {
+            var n = 0;
+            foreach (var f in Directory.EnumerateFiles(folderPath))
+            {
+                if (PhotoLibrary.IsSupported(f)) return f;
+                if (++n > 300) break; // don't scan huge non-image folders forever
+            }
+        }
+        catch { /* access denied etc. */ }
+        return null;
     }
 
     private static string FormatSize(long bytes)
