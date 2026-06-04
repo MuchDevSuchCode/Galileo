@@ -3053,9 +3053,8 @@ public sealed partial class MainWindow : Window
 
     private async Task ShowBackupSetupHelpAsync()
     {
-        var msg = "Sign-in needs a Google OAuth client. Build Galileo with one embedded " +
-                  "(GoogleDriveBackup.EmbeddedClientId/Secret) so anyone can just sign in, or for a " +
-                  "one-off setup:\n\n" +
+        var msg = "Sign-in needs a Google OAuth client. Galileo ships one in Assets\\google-oauth.json; " +
+                  "to use your own instead:\n\n" +
                   "1. Create a project at console.cloud.google.com\n" +
                   "2. Enable the Google Drive API\n" +
                   "3. Create an OAuth client ID of type “Desktop app”\n" +

@@ -35,17 +35,20 @@ public sealed class GoogleDriveBackup
     public static string OAuthConfigPath => Path.Combine(AppData, "google-oauth.json");
     private static string TokenDir => Path.Combine(AppData, "gdrive-token");
 
-    // Embedded "Desktop app" OAuth client so end users can just Sign in with Google — no per-user
-    // setup. Fill these once with your Google Cloud OAuth client (for desktop clients the secret is
-    // not treated as confidential; the flow uses PKCE). If left blank, the app falls back to a
-    // google-oauth.json file at OAuthConfigPath.
-    private const string EmbeddedClientId = "";      // e.g. "1234567890-abc.apps.googleusercontent.com"
-    private const string EmbeddedClientSecret = "";  // e.g. "GOCSPX-..."
+    // OAuth "Desktop app" client. To keep the secret OUT of source control (GitHub push protection),
+    // it's shipped as a gitignored JSON next to the app (Assets\google-oauth.json, copied to output),
+    // with a per-user override at %LocalAppData%\Galileo\google-oauth.json. The bundled file makes
+    // "Sign in with Google" work out of the box for end users without exposing the secret in the repo.
+    private static string BundledConfigPath => Path.Combine(AppContext.BaseDirectory, "Assets", "google-oauth.json");
 
-    public static bool HasEmbeddedClient => EmbeddedClientId.Length > 0;
+    /// <summary>The client config to use: the per-user override wins, else the shipped bundled file.</summary>
+    private static string? ClientConfigFile =>
+        File.Exists(OAuthConfigPath) ? OAuthConfigPath
+        : File.Exists(BundledConfigPath) ? BundledConfigPath
+        : null;
 
-    /// <summary>True when an OAuth client is available (embedded, or a google-oauth.json fallback).</summary>
-    public static bool IsConfigured => HasEmbeddedClient || File.Exists(OAuthConfigPath);
+    /// <summary>True when an OAuth client config is available (bundled or per-user file).</summary>
+    public static bool IsConfigured => ClientConfigFile is not null;
 
     private static bool HasStoredToken => Directory.Exists(TokenDir) && Directory.EnumerateFiles(TokenDir).Any();
 
@@ -103,9 +106,8 @@ public sealed class GoogleDriveBackup
 
     private static async Task<ClientSecrets> GetClientSecretsAsync()
     {
-        if (HasEmbeddedClient)
-            return new ClientSecrets { ClientId = EmbeddedClientId, ClientSecret = EmbeddedClientSecret };
-        using var s = File.OpenRead(OAuthConfigPath);
+        var path = ClientConfigFile ?? throw new InvalidOperationException("No Google OAuth client configured.");
+        using var s = File.OpenRead(path);
         return (await GoogleClientSecrets.FromStreamAsync(s)).Secrets;
     }
 

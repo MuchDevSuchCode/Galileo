@@ -52,5 +52,9 @@ ehthumbs.db
 desktop.ini
 .DS_Store
 
+# ---- Secrets (never commit) ----
+google-oauth.json
+client_secret*.json
+
 # ---- Local tooling ----
 .claude/settings.local.json
