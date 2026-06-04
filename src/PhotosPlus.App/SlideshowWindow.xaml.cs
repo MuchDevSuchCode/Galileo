@@ -41,7 +41,7 @@ public sealed partial class SlideshowWindow : Window
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var id = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
         _appWindow = AppWindow.GetFromWindowId(id);
-        _appWindow.Title = "PhotosPlus — Slideshow";
+        _appWindow.Title = "Galileo — Slideshow";
         _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
 
         _order = Enumerable.Range(0, _photos.Count).ToList();

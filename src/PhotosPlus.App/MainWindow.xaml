@@ -539,11 +539,14 @@
 
         <!-- ===================== Title bar (drag region) ===================== -->
         <Grid x:Name="AppTitleBar" Height="40" VerticalAlignment="Top" Background="Transparent">
-            <StackPanel Orientation="Horizontal" Spacing="10" Margin="16,0,0,0" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="10" Margin="16,0,0,0"
+                        HorizontalAlignment="Left" VerticalAlignment="Center">
                 <FontIcon Glyph="&#xEB9F;" FontFamily="Segoe MDL2 Assets" FontSize="14" Opacity="0.8" />
-                <TextBlock Text="PhotosPlus" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
-                <TextBlock x:Name="ModeLabel" Text="" Opacity="0.6" FontSize="13" VerticalAlignment="Center" />
+                <TextBlock Text="Galileo" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
             </StackPanel>
+            <TextBlock x:Name="ModeLabel" Text="" Opacity="0.75" FontSize="13"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis" Margin="170,0,170,0" />
         </Grid>
 
         <!-- Subtle status text -->

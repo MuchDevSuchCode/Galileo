@@ -63,20 +63,29 @@ public partial class ExplorerItem : ObservableObject
         var px = (int)Math.Clamp(size, 32u, 256u);
         try
         {
-            // Shell image (32-bit BGRA with alpha) — runs off the UI thread.
-            var (pixels, w, h) = await Task.Run(() => ShellImaging.GetPixels(path, px));
-            if (pixels is not null && w > 0 && h > 0)
+            // Folders & drives: shell icon (transparent, orientation-corrected).
+            if (Kind != ExplorerItemKind.File)
             {
-                var wb = new WriteableBitmap(w, h);
-                using (var s = wb.PixelBuffer.AsStream()) s.Write(pixels, 0, pixels.Length);
-                Icon = wb;
+                var (pixels, w, h) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: true));
+                if (pixels is not null && w > 0 && h > 0)
+                {
+                    var wb = new WriteableBitmap(w, h);
+                    using (var s = wb.PixelBuffer.AsStream()) s.Write(pixels, 0, pixels.Length);
+                    Icon = wb;
+                    return;
+                }
+                var folderThumb = await (await StorageFolder.GetFolderFromPathAsync(path))
+                    .GetThumbnailAsync(ThumbnailMode.SingleItem, size, ThumbnailOptions.ResizeThumbnail);
+                if (folderThumb is not null)
+                {
+                    using (folderThumb) { var b = new BitmapImage(); await b.SetSourceAsync(folderThumb); Icon = b; }
+                }
                 return;
             }
 
-            // Fallback: WinRT thumbnail.
-            StorageItemThumbnail? thumb = Kind == ExplorerItemKind.File
-                ? await (await StorageFile.GetFileFromPathAsync(path)).GetThumbnailAsync(ThumbnailMode.SingleItem, size, ThumbnailOptions.ResizeThumbnail)
-                : await (await StorageFolder.GetFolderFromPathAsync(path)).GetThumbnailAsync(ThumbnailMode.SingleItem, size, ThumbnailOptions.ResizeThumbnail);
+            // Files: WinRT thumbnail (correct orientation; photos are opaque so no alpha concern).
+            var file = await StorageFile.GetFileFromPathAsync(path);
+            var thumb = await file.GetThumbnailAsync(ThumbnailMode.SingleItem, size, ThumbnailOptions.ResizeThumbnail);
             if (thumb is not null)
             {
                 using (thumb)

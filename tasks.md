@@ -1,4 +1,4 @@
-# PhotosPlus — Task Breakdown
+# Galileo (internally "PhotosPlus") — Task Breakdown
 
 Phased plan to reach Windows Photos parity plus the **eye hide/un-hide toggle** and **slideshow** features.
 

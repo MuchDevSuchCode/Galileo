@@ -1,6 +1,10 @@
-# PhotosPlus
+# Galileo
 
-A modern, native alternative to the **Windows 11 Photos** app — built with **WinUI 3 / .NET 8**. PhotosPlus is a fast, local-first photo viewer with a clean Fluent UI, plus two headline additions over stock Photos:
+A modern, native **Windows Explorer + Photos** alternative — built with **WinUI 3 / .NET 8**. Galileo is a fast, local-first file manager and photo viewer with a clean Fluent UI.
+
+> **Branding note:** the user-facing app is **Galileo**. Internal identifiers (namespace, `PhotosPlus.App.exe`, `%LocalAppData%\PhotosPlus`, the registered ProgID) remain `PhotosPlus` to keep the build and default-app registration stable.
+
+Highlights over the stock apps:
 
 1. **👁 Eye toggle** — a one-click eye icon (shortcut **H**) that instantly **blacks out the photo in the viewer** for privacy, plus an optional **Hidden album** for photos you want kept out of the gallery.
 2. **▶ Slideshow** — a full-screen, configurable slideshow with adjustable timing, shuffle, loop, and transitions.

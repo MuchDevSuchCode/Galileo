@@ -75,7 +75,7 @@ public sealed partial class MainWindow : Window
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var id = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
         _appWindow = AppWindow.GetFromWindowId(id);
-        _appWindow.Title = "PhotosPlus";
+        _appWindow.Title = "Galileo";
 
         // Mica backdrop for a modern translucent window.
         SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
@@ -205,7 +205,7 @@ public sealed partial class MainWindow : Window
             e.AcceptedOperation = DataPackageOperation.Copy;
             if (e.DragUIOverride is not null)
             {
-                e.DragUIOverride.Caption = "Open in PhotosPlus";
+                e.DragUIOverride.Caption = "Open in Galileo";
                 e.DragUIOverride.IsContentVisible = true;
             }
         }
@@ -338,7 +338,7 @@ public sealed partial class MainWindow : Window
         GalleryView.Visibility = Visibility.Visible;
         InfoPanel.Visibility = Visibility.Collapsed;
         _chromeTimer.Stop();
-        ModeLabel.Text = _showHiddenAlbum ? "· Hidden album" : "";
+        ModeLabel.Text = _showHiddenAlbum ? "Hidden album" : "";
     }
 
     private void ShowViewer()
@@ -420,7 +420,7 @@ public sealed partial class MainWindow : Window
         ResetView();
         UpdateFavoriteIcon();
         UpdateEyeState();
-        ModeLabel.Text = $"· {item.FileName}  ({_currentIndex + 1}/{_view.Count})";
+        ModeLabel.Text = $"{item.FileName}   ({_currentIndex + 1}/{_view.Count})";
         if (InfoPanel.Visibility == Visibility.Visible) await PopulateInfoAsync();
     }
 
@@ -672,14 +672,14 @@ public sealed partial class MainWindow : Window
         {
             PhotoGrid.SelectionMode = ListViewSelectionMode.Multiple;
             PhotoGrid.IsItemClickEnabled = false;
-            ModeLabel.Text = "· Select photos — then Collage";
+            ModeLabel.Text = "Select photos — then Collage";
         }
         else
         {
             PhotoGrid.SelectedItems.Clear();
             PhotoGrid.SelectionMode = ListViewSelectionMode.None;
             PhotoGrid.IsItemClickEnabled = true;
-            ModeLabel.Text = _showHiddenAlbum ? "· Hidden album" : "";
+            ModeLabel.Text = _showHiddenAlbum ? "Hidden album" : "";
         }
     }
 
@@ -800,7 +800,7 @@ public sealed partial class MainWindow : Window
         ViewerView.Visibility = Visibility.Collapsed;
         InfoPanel.Visibility = Visibility.Collapsed;
         CollageView.Visibility = Visibility.Visible;
-        ModeLabel.Text = "· Collage";
+        ModeLabel.Text = "Collage";
 
         await RebuildCollageAsync(reshuffle: true);
     }
