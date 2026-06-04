@@ -110,6 +110,7 @@ public sealed partial class MainWindow : Window
         _iconSize = _state.IconSize is > 0 and <= 240 ? _state.IconSize : 110;
         _collagePreset = ParseCollagePreset(_state.CollagePreset);
         ExplorerItem.ShowFolderPreviews = _state.FolderPreviews;
+        ExplorerItem.ShowExtensions = _state.ShowExtensions;
 
         PopulateSidebar();
         IconSizeSlider.Value = _iconSize;
@@ -2009,6 +2010,7 @@ public sealed partial class MainWindow : Window
         OpenModeCombo.SelectedIndex = _state.SingleClickToOpen ? 1 : 0;
         IconSizeCombo.SelectedIndex = _iconSize <= 85 ? 0 : _iconSize >= 140 ? 2 : 1;
         FolderPreviewSwitch.IsOn = _state.FolderPreviews;
+        ShowExtensionsSwitch.IsOn = _state.ShowExtensions;
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
         SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
         SlideshowSecondsValue.Text = $"{_state.SlideshowSeconds}s";
@@ -2195,6 +2197,15 @@ public sealed partial class MainWindow : Window
         ExplorerItem.ShowFolderPreviews = _state.FolderPreviews;
         _state.Save();
         LoadCurrentFolder(); // re-render icons with/without previews
+    }
+
+    private void ShowExtensionsSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.ShowExtensions = ShowExtensionsSwitch.IsOn;
+        ExplorerItem.ShowExtensions = _state.ShowExtensions;
+        _state.Save();
+        LoadCurrentFolder(); // re-render names
     }
 
     private void CollageLayoutCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)

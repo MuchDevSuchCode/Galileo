@@ -21,8 +21,16 @@ public partial class ExplorerItem : ObservableObject
     /// <summary>Whether folder icons get a content-preview overlay (set from settings).</summary>
     public static bool ShowFolderPreviews = true;
 
+    /// <summary>Whether file extensions are shown in the displayed name (set from settings).</summary>
+    public static bool ShowExtensions = true;
+
     public string Path { get; }
     public string Name { get; }
+
+    /// <summary>Name shown in the UI — drops the extension for files when extensions are hidden.</summary>
+    public string DisplayName => Kind == ExplorerItemKind.File && !ShowExtensions
+        ? System.IO.Path.GetFileNameWithoutExtension(Path)
+        : Name;
     public ExplorerItemKind Kind { get; }
     public bool IsFolder => Kind != ExplorerItemKind.File;
     public long Size { get; }

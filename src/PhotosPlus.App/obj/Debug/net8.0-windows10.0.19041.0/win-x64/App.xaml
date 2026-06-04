@@ -33,7 +33,7 @@
                     </Grid.RowDefinitions>
                     <Image Source="{Binding Icon}" Stretch="Uniform"
                            HorizontalAlignment="Center" VerticalAlignment="Center" Margin="4" />
-                    <TextBlock Grid.Row="1" Text="{Binding Name}" FontSize="12" Margin="0,2,0,0"
+                    <TextBlock Grid.Row="1" Text="{Binding DisplayName}" FontSize="12" Margin="0,2,0,0"
                                TextAlignment="Center" TextWrapping="Wrap" MaxLines="2"
                                TextTrimming="CharacterEllipsis" />
                 </Grid>
@@ -50,7 +50,7 @@
                     </Grid.ColumnDefinitions>
                     <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                         <Image Source="{Binding Icon}" Width="20" Height="20" />
-                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                     <TextBlock Grid.Column="1" Text="{Binding ModifiedText}" VerticalAlignment="Center" Opacity="0.8" FontSize="13" />
                     <TextBlock Grid.Column="2" Text="{Binding TypeName}" VerticalAlignment="Center" Opacity="0.8" FontSize="13" />

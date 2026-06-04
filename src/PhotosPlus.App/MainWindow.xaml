@@ -630,6 +630,10 @@
                         <TextBlock Text="Folder content previews" VerticalAlignment="Center" />
                         <ToggleSwitch x:Name="FolderPreviewSwitch" HorizontalAlignment="Right" Toggled="FolderPreviewSwitch_Toggled" />
                     </Grid>
+                    <Grid>
+                        <TextBlock Text="Show file extensions" VerticalAlignment="Center" />
+                        <ToggleSwitch x:Name="ShowExtensionsSwitch" HorizontalAlignment="Right" Toggled="ShowExtensionsSwitch_Toggled" />
+                    </Grid>
 
                     <TextBlock Text="Collage" FontWeight="SemiBold" Opacity="0.8" Margin="0,6,0,0" />
                     <Grid>
