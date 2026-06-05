@@ -15,7 +15,7 @@
   <!-- Social / GitHub link previews -->
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Galileo — Windows Explorer + Photos, reimagined" />
-  <meta property="og:description" content="A fast, local-first file manager and photo viewer for Windows 11. WinUI 3 · .NET 8. Tabs, search, collage, slideshow, an embedded video player, and a private Hidden album." />
+  <meta property="og:description" content="A fast, local-first file manager and photo viewer for Windows 11. WinUI 3 · .NET 8. Tabs, search, collage, slideshow, an embedded media player, an encrypted vault, an embedded terminal, and a private Hidden album." />
   <meta property="og:image" content="galileo.png" />
   <meta name="twitter:card" content="summary_large_image" />
 
@@ -210,7 +210,7 @@
     <img class="logo" src="galileo.png" alt="Galileo app icon" />
     <h1>Windows Explorer + Photos,<br /><span class="grad">reimagined.</span></h1>
     <p class="tag">Galileo is a fast, local-first file manager and photo viewer for Windows 11.</p>
-    <p class="sub">No account. No cloud sync. Your library stays on your disk — with a tabbed explorer, a buttery photo viewer, collage &amp; slideshow, an embedded video player, a private Hidden album, and an <strong>encrypted vault</strong>.</p>
+    <p class="sub">No account. No cloud sync. Your library stays on your disk — with a tabbed explorer, a buttery photo viewer, an embedded <strong>media player</strong> (video + audio, Atmos), collage &amp; slideshow, <code>.zip</code> browsing, pinned network/WSL locations, an embedded <strong>terminal</strong>, a private Hidden album, and an <strong>encrypted vault</strong>.</p>
 
     <div class="cta">
       <a class="btn primary" href="https://github.com/MuchDevSuchCode/Galileo">★ View on GitHub</a>
@@ -298,7 +298,7 @@
       <div class="features">
         <div class="feature"><div class="fi">🗂️</div><h3>Tabbed explorer</h3><p>Win11-style folder tabs, each with its own back/forward history. Sidebar for Quick access &amp; drives.</p></div>
         <div class="feature"><div class="fi">🔍</div><h3>Search</h3><p>Filter the current folder by name, or flip on recursive search to sweep every subfolder.</p></div>
-        <div class="feature"><div class="fi">↕️</div><h3>Sort &amp; group</h3><p>Sort/group by name, date, type, or size — or click a Details column header. Choices persist.</p></div>
+        <div class="feature"><div class="fi">↕️</div><h3>Sort &amp; group</h3><p>Sort/group by name, date, type, or size — or click a Details column header. Grouped sections get collapsible headers. Choices persist.</p></div>
         <div class="feature"><div class="fi">✂️</div><h3>Cut, copy &amp; move</h3><p>Move-aware paste, plus drag files between folders (Shift to move) or out to any app.</p></div>
         <div class="feature"><div class="fi">🖼️</div><h3>Photo viewer</h3><p>Fit-to-window, cursor-anchored wheel zoom, drag-pan, rotate with auto-refit, and a metadata panel.</p></div>
         <div class="feature"><div class="fi">🎞️</div><h3>Media player</h3><p>Embedded playback for video (MP4/MOV/MKV/WEBM…) and audio (MP3/WAV/FLAC/M4A/OGG…) with album art, mute/repeat, and full 5.1/7.1/Atmos multichannel output.</p></div>
@@ -308,6 +308,12 @@
         <div class="feature"><div class="fi">🎨</div><h3>5 themes</h3><p>System, Light, Dark, Terminal (green), and Gray — applied live, no restart.</p></div>
         <div class="feature"><div class="fi">💾</div><h3>Drives, live</h3><p>Mount or remove a drive and it appears (or disappears) in the sidebar automatically.</p></div>
         <div class="feature"><div class="fi">🔒</div><h3>Hide folders</h3><p>Make a folder appear empty in-app — reversible and disk-safe — optionally behind Windows Hello.</p></div>
+        <div class="feature"><div class="fi">📌</div><h3>Pinned locations</h3><p>Pin local folders, <strong>network shares</strong> (<code>\\server\share</code>), or <strong>WSL</strong> paths to the sidebar for one-click access.</p></div>
+        <div class="feature"><div class="fi">🔄</div><h3>Live updates</h3><p>Downloaded or new files appear in their correct sorted spot automatically — no refresh, and your scroll &amp; selection are kept.</p></div>
+        <div class="feature"><div class="fi">👀</div><h3>Spacebar Peek</h3><p>Press <kbd>Space</kbd> for an instant Quick-Look preview of images, video, text/code, or any file — arrow through the folder, <kbd>Enter</kbd> to open.</p></div>
+        <div class="feature"><div class="fi">✏️</div><h3>Bulk rename</h3><p>Rename a multi-selection to <code>name</code>, <code>name-1</code>, <code>name-2</code>… keeping each extension — collision-safe.</p></div>
+        <div class="feature"><div class="fi">🖥️</div><h3>Set as wallpaper</h3><p>Right-click an image to set it as desktop background, lock screen, or a folder's thumbnail; copy, print, or open with.</p></div>
+        <div class="feature"><div class="fi">↔️</div><h3>Resizable layout</h3><p>Drag the sidebar divider to rebalance nav vs. files; the width is remembered across sessions.</p></div>
         <div class="feature"><div class="fi">🖱️</div><h3>Default photo app</h3><p>Registers as a Windows file handler so you can set Galileo as your default image viewer.</p></div>
         <div class="feature"><div class="fi">⚡</div><h3>Fast &amp; fluid</h3><p>GPU-composited viewer, virtualized thumbnails, and throttled decoding for smooth fast-scrolling.</p></div>
       </div>
@@ -328,6 +334,9 @@
           <tr><td class="k"><kbd>H</kbd></td><td>Black out / reveal (eye toggle)</td></tr>
           <tr><td class="k"><kbd>F</kbd> / <kbd>F11</kbd></td><td>Full screen</td></tr>
           <tr><td class="k"><kbd>F5</kbd></td><td>Refresh (explorer) · slideshow (viewer)</td></tr>
+          <tr><td class="k"><kbd>Space</kbd></td><td>Peek (Quick Look) the selected file · slideshow play/pause</td></tr>
+          <tr><td class="k"><kbd>Enter</kbd> / <kbd>F2</kbd></td><td>Open / rename selected item (explorer)</td></tr>
+          <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>X</kbd>/<kbd>V</kbd></td><td>Copy / cut / paste · <kbd>Ctrl</kbd>+<kbd>A</kbd> select all</td></tr>
           <tr><td class="k"><kbd>Backspace</kbd></td><td>Back</td></tr>
           <tr><td class="k"><kbd>Del</kbd> / <kbd>Shift</kbd>+<kbd>Del</kbd></td><td>Recycle / permanent delete</td></tr>
           <tr><td class="k"><kbd>Esc</kbd></td><td>Exit slideshow / full screen / back</td></tr>
@@ -349,6 +358,8 @@
           <span class="chip">AES-256-GCM</span>
           <span class="chip">Argon2id</span>
           <span class="chip">Google Drive (OAuth)</span>
+          <span class="chip">ConPTY + WebView2 + xterm.js</span>
+          <span class="chip">FileSystemWatcher</span>
           <span class="chip">System.Text.Json state</span>
         </div>
         <p class="muted" style="margin-top:20px">

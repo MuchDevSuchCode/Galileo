@@ -6,10 +6,13 @@ A modern, native **Windows Explorer + Photos** alternative — built with **WinU
 
 Highlights over the stock apps:
 
-1. **👁 Eye toggle** — a one-click eye icon (shortcut **H**) that instantly **blacks out the photo in the viewer** for privacy, plus an optional **Hidden album** for photos you want kept out of the gallery.
-2. **▶ Slideshow** — a full-screen, configurable slideshow with adjustable timing, shuffle, loop, and transitions.
+1. **🔐 Secure vault** — move folders into an encrypted, Windows-hidden vault (**AES-256-GCM** + **Argon2id**, optional **Windows Hello**), with idle auto-lock, optional self-wipe on repeated wrong passphrases, and encrypted **Google Drive backup**.
+2. **👁 Eye toggle** — a one-click eye icon (shortcut **H**) that instantly **blacks out the photo in the viewer** for privacy, plus an optional **Hidden album** for photos kept out of the gallery.
+3. **▶ Slideshow** — a full-screen, configurable slideshow with adjustable timing, shuffle, loop, and transitions (incl. Ken Burns).
+4. **💻 Developer Mode** — dock a real **cmd / PowerShell / WSL** terminal (ConPTY) beside the explorer, in the current folder.
+5. **🔄 Live, local-first** — folders update in place as files change on disk (no manual refresh), with network-share / WSL pinning and a resizable layout.
 
-> **Status:** working application. The tabbed file explorer (search, sort/group, cut-move, drive auto-detect, Windows Hello gate), photo viewer, gallery, collage, embedded **video player**, eye toggle, slideshow, a full **Settings** panel (5 themes and more), and default-photo-app registration are all implemented and building. Image editing remains on the roadmap — see **[tasks.md](./tasks.md)**.
+> **Status:** working application. The tabbed file explorer (search, sort/group with collapsible sections, cut-move, drag-drop, bulk rename, live updates, drive auto-detect, pinned network/WSL locations, Windows Hello gate), photo viewer, gallery, collage, embedded **video + audio player** (album art, multichannel/Atmos), **Spacebar Peek**, **`.zip` archives**, **secure vault** with **Google Drive backup**, an embedded **terminal (Developer Mode)**, a full **Settings** panel (5 themes and more), and default-photo-app registration are all implemented and building. Image editing remains on the roadmap — see **[tasks.md](./tasks.md)**.
 
 ---
 
@@ -62,7 +65,7 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
   - **Mouse-wheel zoom** toward the cursor (no modifier), plus +/- buttons and double-tap.
   - **Drag to pan** when zoomed in.
   - **Rotate** (auto re-fits and re-centres so the rotated image stays fully visible).
-  - Fit / next / previous / full screen.
+  - Fit / next / previous / full screen. **←/→ navigation follows the explorer's current sort order** (Name/Date/Type/Size, asc or desc).
 - Remembers and reopens your last folder.
 
 **Formats** — JPEG, PNG, GIF, BMP, TIFF, WEBP, HEIC/HEIF, AVIF, and common RAW (CR2/CR3, NEF, ARW, DNG…) decoded via the platform `Windows.Storage` / `BitmapImage` codecs (RAW/HEIC depend on the OS codec being installed).
@@ -79,17 +82,21 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 **Video & audio** — an **embedded media player** complements the image viewer. Open a file from the explorer to play **video** (MP4/M4V/MOV/MKV/AVI/WMV/WEBM and more) or **audio** (MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA, AIFF…) natively, with transport controls plus **mute/unmute** and a **repeat** toggle. Audio shows a "now playing" panel with the track name and, when present, **embedded album art** (toggle in **Settings → Media**); a back bar returns to the explorer. Spacebar **Peek** previews media too. Audio/video play in **full multichannel** (5.1/7.1/Atmos) with no forced stereo downmix — enable **Dolby Atmos / DTS:X / Windows Sonic** on your output device and Windows renders the surround/height channels.
 
 **Settings** — a Settings panel (gear in the title bar / command strip) with:
-- **Theme** — System, Light, Dark, **Terminal (green)**, or **Gray**.
-- **Open items with** — double-click (default) or single-click.
-- **Default icon size** — Small / Medium / Large.
-- **Folder content previews** — on/off.
-- **Show file extensions** — on/off (on by default).
-- **Reuse one window** — single-instance mode: open shell-launched files in the running window instead of a new one (off by default).
+- **Appearance → Theme** — System, Light, Dark, **Terminal (green)**, or **Gray**.
+- **Appearance → Default icon size** — Small / Medium / Large; **Folder content previews** on/off.
+- **Explorer → Open items with** — double-click (default) or single-click.
+- **Explorer → Show file extensions** — on/off (on by default).
+- **Explorer → Spacebar Peek (Quick Look)** — on/off (on by default).
+- **Explorer → Reuse one window** — single-instance mode: open shell-launched files in the running window instead of a new one (off by default).
 - **Privacy → Lock Hidden album** — require **Windows Hello / PIN** before revealing the Hidden album or app-hidden folders (falls back to a confirmation when Hello isn't set up).
-- **Default collage layout** — Justified / Grid / Hero.
+- **Secure vault** — idle auto-lock timeout (0 = never), enroll Windows Hello by default, and **wipe-on-failed-unlocks** (enable + attempt count).
+- **Media** — show embedded **album art** when playing audio (on/off).
+- **Collage → Default layout** — Justified / Grid / Hero.
 - **Slideshow** — seconds per photo (2–30 s), shuffle, loop, transition.
+- **Backup** — **Sign in with Google** for encrypted Google Drive vault backup (shows the connected account).
+- **Developer → Developer Mode** — show the embedded terminal pane (cmd / PowerShell / WSL) beside the explorer.
 
-All settings persist across sessions (`%LocalAppData%\Galileo\state.json`). The panel opens with a fade/scale animation; its header stays pinned and the body scrolls, so it never clips on small windows.
+The panel has **Save / Cancel** buttons, so live edits only persist when you click **Save** (Cancel reverts). All settings persist across sessions (`%LocalAppData%\Galileo\state.json`). The panel opens with a fade/scale animation; its header stays pinned and the body scrolls, so it never clips on small windows.
 
 ### ✨ The two headline features
 
@@ -138,14 +145,18 @@ Galileo/
 │     ├─ App.xaml(.cs)         # app + shared resources (GlyphButton, PillBrush, explorer templates)
 │     ├─ MainWindow.xaml(.cs)  # explorer + tabs + gallery + viewer + video + collage + settings + title bar
 │     ├─ SlideshowWindow.xaml(.cs)
-│     ├─ Models/               # PhotoItem, ExplorerItem, ExplorerGroup
+│     ├─ Models/               # PhotoItem, ExplorerItem, ExplorerGroup (collapsible), VaultInfo
 │     ├─ Services/             # AppState, PhotoLibrary, FileSystemService,
 │     │                        #   ShellImaging (icons via IShellItemImageFactory + GetDIBits),
-│     │                        #   ShellOps (clipboard / properties / wallpaper), ImageCompositor, CollageLayout,
-│     │                        #   HelloAuth (Windows Hello), DecodeThrottle (scroll-safe thumbnail decoding)
+│     │                        #   ShellOps (clipboard / properties / wallpaper / lock screen), ImageCompositor, CollageLayout,
+│     │                        #   HelloAuth + HelloKey (Windows Hello), DecodeThrottle (scroll-safe thumbnail decoding),
+│     │                        #   Vault / VaultManager / VaultCrypto (AES-256-GCM + Argon2id secure vault),
+│     │                        #   GoogleDriveBackup (encrypted cloud backup), ArchiveService (.zip),
+│     │                        #   TerminalSession (ConPTY pseudo-console for Developer Mode)
 │     ├─ Converters/           # BoolToVisibilityConverter
-│     └─ Assets/               # galileo.ico / galileo.png (app + taskbar icon)
-├─ tools/                      # install.ps1, register-default.ps1, unregister-default.ps1
+│     └─ Assets/               # galileo.ico / galileo.png, terminal/index.html (xterm.js host),
+│                              #   google-oauth.json (gitignored OAuth client, bundled into builds)
+├─ tools/                      # install.ps1, update.ps1, package.ps1, register-default.ps1, unregister-default.ps1
 ├─ README.md
 └─ tasks.md
 ```
@@ -198,6 +209,12 @@ Or use the helper, which stops the running app, publishes a self-contained Relea
 > `.csproj` names a per-platform publish profile and `$(Platform)` resolves to `AnyCPU`; it falls
 > back to the `-r` settings above. Pass `-p:Platform=x64` to silence it.
 
+**Helper scripts** (`tools/`):
+- **`install.ps1`** — publish a self-contained copy to `%LocalAppData%\Galileo\app` and register it as a default photo app (`-SkipRegister` to skip registration).
+- **`update.ps1`** — stop any running instance, `git pull`, and re-publish to the installed copy.
+- **`package.ps1`** — publish + zip a distributable to `docs\Galileo-Latest.zip` (warns if the zip exceeds GitHub's 100 MB push limit).
+- **`register-default.ps1` / `unregister-default.ps1`** — registry-only (e.g. to point the default-app registration at a custom `-ExePath`).
+
 ---
 
 ## Set as your default photo app
@@ -249,7 +266,7 @@ Galileo can store folders in an encrypted **vault** that is hidden from Windows 
 - **Wipe on failed unlocks** — optionally (**Settings → Secure vault**) **permanently destroy** a vault after a configurable number of wrong passphrases. This is irreversible; the attempt counter persists across restarts and resets on a successful unlock.
 - **Windows Hello** — when enrolled, the unlock dialog offers a **Windows Hello** button; the passphrase always works as a fallback.
 - **Rename / Lock** — right-click a vault in the sidebar → **Rename…** (display name only; works locked or unlocked) or **Lock** (re-encrypts and hides it).
-- **Cloud backup (Google Drive)** — **Sign in with Google** in **Settings → Backup** (or right-click a vault → **Back up to Google Drive**) to copy your vaults off-device; the signed-in account is shown and you stay signed in across launches. Only the **encrypted blobs (obfuscated names)**, the encrypted index, and a **name-stripped manifest** are uploaded — the key never leaves your device, so Google can't read your vaults. **Restore from Drive…** re-downloads a vault; unlock it with your passphrase as usual. Uses the minimal `drive.file` scope (the app only ever sees files it created). Galileo embeds a *Desktop app* OAuth client so end users can just sign in — set `GoogleDriveBackup.EmbeddedClientId`/`EmbeddedClientSecret` when building (or, as a fallback, drop a Desktop OAuth client JSON at `%LocalAppData%\Galileo\google-oauth.json`).
+- **Cloud backup (Google Drive)** — **Sign in with Google** in **Settings → Backup** (or right-click a vault → **Back up to Google Drive**) to copy your vaults off-device; the signed-in account is shown and you stay signed in across launches. Only the **encrypted blobs (obfuscated names)**, the encrypted index, and a **name-stripped manifest** are uploaded — the key never leaves your device, so Google can't read your vaults. **Restore from Drive…** re-downloads a vault; unlock it with your passphrase as usual. Uses the minimal `drive.file` scope (the app only ever sees files it created). Clicking **Sign in with Google** launches your browser for the standard OAuth consent flow. Galileo ships a *Desktop app* OAuth client as a **gitignored `Assets\google-oauth.json`** bundled into the build (so the secret never lands in source control), with a per-user override at `%LocalAppData%\Galileo\google-oauth.json` that takes precedence. The OAuth project must have the **Drive API enabled** and its consent screen **published to Production** for arbitrary accounts to sign in.
 
 > **Security notes.** While unlocked, decrypted files exist in a working folder under `%LocalAppData%\Galileo\.work` (restricted to your Windows account); it is securely wiped on lock, and any copy left by a crash is wiped at the next launch. Secure deletion is overwrite-then-delete, which is **best-effort on SSDs** (wear-levelling/TRIM may retain remnants) and not a forensic guarantee. Windows may also cache thumbnails for files opened while unlocked. For **Google Drive backup**, only encrypted/obfuscated files and a name-stripped manifest are uploaded (Google sees the vault's random id and file sizes, never contents); the OAuth refresh token is stored under `%LocalAppData%\Galileo\gdrive-token`.
 
