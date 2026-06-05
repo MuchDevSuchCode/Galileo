@@ -719,7 +719,7 @@
                 <!-- CanvasControl + markup are drawn in code-behind (Win2D/Ink controls in XAML crash the markup compiler) -->
                 <Canvas x:Name="OverlayCanvas" Background="Transparent" IsHitTestVisible="False"
                         PointerPressed="Overlay_PointerPressed" PointerMoved="Overlay_PointerMoved"
-                        PointerReleased="Overlay_PointerReleased" />
+                        PointerReleased="Overlay_PointerReleased" DoubleTapped="Overlay_DoubleTapped" />
             </Grid>
 
             <!-- Tools rail -->
@@ -839,15 +839,9 @@
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
                         <Button Content="Cancel" Click="EditCancel_Click" />
-                        <Button Content="Save a copy" Click="SaveCopy_Click" />
-                        <DropDownButton Content="&#xE712;" FontFamily="Segoe Fluent Icons" ToolTipService.ToolTip="More save options">
-                            <DropDownButton.Flyout>
-                                <MenuFlyout>
-                                    <MenuFlyoutItem Text="Save as…" Click="SaveAs_Click" />
-                                    <MenuFlyoutItem Text="Overwrite original" Click="SaveOverwrite_Click" />
-                                </MenuFlyout>
-                            </DropDownButton.Flyout>
-                        </DropDownButton>
+                        <Button Content="Save Copy" Click="SaveCopy_Click" />
+                        <Button Content="Overwrite" Click="SaveOverwrite_Click" />
+                        <Button Content="Save As" Click="SaveAs_Click" />
                     </StackPanel>
                 </Grid>
             </Border>

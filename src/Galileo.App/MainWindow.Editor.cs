@@ -42,7 +42,7 @@ public sealed partial class MainWindow
     private bool _dragging;
     private Point _dragStart;       // oriented-image space
     private Rect? _pendingCrop;
-    private bool _cropMoving;
+    private string _cropDrag = "";   // "", new, move, nw/ne/sw/se (corners), n/s/e/w (edges)
     private Rect _cropAtDragStart;
     private Rect _viewSrc;          // oriented-space region currently shown on the canvas
     private MarkupItem? _pendingShape;
@@ -202,12 +202,10 @@ public sealed partial class MainWindow
         if (_cropMode)
         {
             _dragging = true; _dragStart = p;
-            // Press inside the existing crop → move it; otherwise start a new rectangle.
-            if (_edit.Crop is Rect ec && p.X >= ec.X && p.X <= ec.X + ec.Width && p.Y >= ec.Y && p.Y <= ec.Y + ec.Height)
-            {
-                _cropMoving = true; _cropAtDragStart = ec; _pendingCrop = ec;
-            }
-            else { _cropMoving = false; _pendingCrop = new Rect(p.X, p.Y, 0, 0); }
+            // Decide what the drag does: resize a handle/edge, move, or draw a new rectangle.
+            _cropDrag = _edit.Crop is Rect ec ? CropDragMode(ec, p) : "new";
+            _cropAtDragStart = _edit.Crop ?? new Rect(p.X, p.Y, 0, 0);
+            _pendingCrop = _cropDrag == "new" ? new Rect(p.X, p.Y, 0, 0) : _cropAtDragStart;
             OverlayCanvas.CapturePointer(e.Pointer);
         }
         else if (_markupTool == "Text")
@@ -234,13 +232,12 @@ public sealed partial class MainWindow
         var p = DisplayToOriented(e.GetCurrentPoint(OverlayCanvas).Position);
         if (_cropMode)
         {
-            if (_cropMoving)
+            _pendingCrop = _cropDrag switch
             {
-                var nx = Math.Clamp(_cropAtDragStart.X + (p.X - _dragStart.X), 0, _orientedW - _cropAtDragStart.Width);
-                var ny = Math.Clamp(_cropAtDragStart.Y + (p.Y - _dragStart.Y), 0, _orientedH - _cropAtDragStart.Height);
-                _pendingCrop = new Rect(nx, ny, _cropAtDragStart.Width, _cropAtDragStart.Height);
-            }
-            else _pendingCrop = MakeCropRect(_dragStart, p);
+                "new" => MakeCropRect(_dragStart, p),
+                "move" => MoveCrop(_cropAtDragStart, p),
+                _ => ResizeCrop(_cropDrag, _cropAtDragStart, p),
+            };
             _editCanvas?.Invalidate();
         }
         else if (_pendingShape is not null)
@@ -259,7 +256,7 @@ public sealed partial class MainWindow
         if (_cropMode)
         {
             if (_pendingCrop is Rect c && c.Width > 8 && c.Height > 8) { PushUndo(); _edit.Crop = c; }
-            _pendingCrop = null; _cropMoving = false;
+            _pendingCrop = null; _cropDrag = "";
         }
         else if (_pendingShape is MarkupItem ps)
         {
@@ -280,6 +277,66 @@ public sealed partial class MainWindow
         w = Math.Min(w, _orientedW - x);
         h = Math.Min(h, _orientedH - y);
         return new Rect(x, y, w, h);
+    }
+
+    /// <summary>Classifies a press over an existing crop: a corner/edge handle, inside (move), or new.</summary>
+    private string CropDragMode(Rect ec, Point p)
+    {
+        var tol = 12 / Math.Max(0.0001, _editFitScale);
+        double l = ec.X, t = ec.Y, r = ec.X + ec.Width, b = ec.Y + ec.Height;
+        bool nl = Math.Abs(p.X - l) <= tol, nr = Math.Abs(p.X - r) <= tol;
+        bool nt = Math.Abs(p.Y - t) <= tol, nb = Math.Abs(p.Y - b) <= tol;
+        if (p.X >= l - tol && p.X <= r + tol && p.Y >= t - tol && p.Y <= b + tol)
+        {
+            if (nl && nt) return "nw";
+            if (nr && nt) return "ne";
+            if (nl && nb) return "sw";
+            if (nr && nb) return "se";
+            if (nl) return "w";
+            if (nr) return "e";
+            if (nt) return "n";
+            if (nb) return "s";
+            if (p.X >= l && p.X <= r && p.Y >= t && p.Y <= b) return "move";
+        }
+        return "new";
+    }
+
+    private Rect MoveCrop(Rect orig, Point p)
+    {
+        var nx = Math.Clamp(orig.X + (p.X - _dragStart.X), 0, _orientedW - orig.Width);
+        var ny = Math.Clamp(orig.Y + (p.Y - _dragStart.Y), 0, _orientedH - orig.Height);
+        return new Rect(nx, ny, orig.Width, orig.Height);
+    }
+
+    /// <summary>Resizes the crop by a corner or edge. Corners keep the chosen aspect (proportionate).</summary>
+    private Rect ResizeCrop(string mode, Rect orig, Point p)
+    {
+        const double min = 10;
+        double l = orig.X, t = orig.Y, r = orig.X + orig.Width, b = orig.Y + orig.Height;
+        bool left = mode is "nw" or "sw" or "w";
+        bool right = mode is "ne" or "se" or "e";
+        bool top = mode is "nw" or "ne" or "n";
+        bool bottom = mode is "sw" or "se" or "s";
+
+        if (left) l = Math.Clamp(p.X, 0, r - min);
+        if (right) r = Math.Clamp(p.X, l + min, _orientedW);
+        if (top) t = Math.Clamp(p.Y, 0, b - min);
+        if (bottom) b = Math.Clamp(p.Y, t + min, _orientedH);
+
+        if (mode is "nw" or "ne" or "sw" or "se" && _cropAspect > 0)
+        {
+            var w = r - l;
+            var h = w / _cropAspect;
+            if (top) t = b - h; else b = t + h;
+            if (t < 0) { t = 0; h = b - t; w = h * _cropAspect; if (left) l = r - w; else r = l + w; }
+            if (b > _orientedH) { b = _orientedH; h = b - t; w = h * _cropAspect; if (left) l = r - w; else r = l + w; }
+        }
+        return new Rect(l, t, Math.Max(min, r - l), Math.Max(min, b - t));
+    }
+
+    private void Overlay_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
+    {
+        if (_cropMode && _edit.Crop is not null) CropApply_Click(sender, e);
     }
 
     private async Task AddTextAsync(Point at)
