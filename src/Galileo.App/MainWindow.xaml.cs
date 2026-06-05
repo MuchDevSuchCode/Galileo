@@ -1324,6 +1324,12 @@ public sealed partial class MainWindow : Window
         return sorted;
     }
 
+    /// <summary>Expand/collapse a group section when its header is clicked.</summary>
+    private void GroupHeader_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is ExplorerGroup g) g.Toggle();
+    }
+
     private List<ExplorerGroup> BuildGroups(List<ExplorerItem> sorted)
     {
         var map = new Dictionary<string, ExplorerGroup>(StringComparer.OrdinalIgnoreCase);
@@ -1337,10 +1343,11 @@ public sealed partial class MainWindow : Window
                 map[key] = g;
                 groups.Add(g);
             }
-            g.Add(it);
+            g.AddItem(it);
         }
         groups.Sort((a, b) => a.Rank.CompareTo(b.Rank) is var c && c != 0 ? c
             : string.Compare(a.Key, b.Key, StringComparison.OrdinalIgnoreCase));
+        foreach (var g in groups) g.Finish(); // populate visible items now that the group is complete
         return groups;
     }
 
