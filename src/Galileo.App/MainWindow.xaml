@@ -629,6 +629,10 @@
                                 ToolTipService.ToolTip="Rotate (R)">
                             <FontIcon Glyph="&#xE7AD;" FontFamily="Segoe Fluent Icons" />
                         </Button>
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Edit_Click"
+                                ToolTipService.ToolTip="Edit image">
+                            <FontIcon Glyph="&#xE70F;" FontFamily="Segoe Fluent Icons" />
+                        </Button>
                         <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="Info_Click"
                                 ToolTipService.ToolTip="Photo info">
                             <FontIcon Glyph="&#xE946;" FontFamily="Segoe Fluent Icons" />
@@ -691,6 +695,165 @@
                     <TextBlock Text="Photo info" FontWeight="SemiBold" FontSize="16" />
                     <TextBlock x:Name="InfoText" TextWrapping="Wrap" FontSize="13" Opacity="0.9" />
                 </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- ===================== Image editor ===================== -->
+        <Grid x:Name="EditorView" Visibility="Collapsed" Background="#FF0B0B0E">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="300" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.ColumnSpan="2" Text="Edit image" Margin="20,44,20,10"
+                       FontSize="18" FontWeight="SemiBold" Foreground="White" />
+
+            <!-- Canvas + overlays -->
+            <Grid Grid.Row="1" Grid.Column="0" x:Name="EditCanvasHost" Margin="12,0,0,12"
+                  SizeChanged="EditCanvasHost_SizeChanged">
+                <!-- CanvasControl + markup are drawn in code-behind (Win2D/Ink controls in XAML crash the markup compiler) -->
+                <Canvas x:Name="OverlayCanvas" Background="Transparent" IsHitTestVisible="False"
+                        PointerPressed="Overlay_PointerPressed" PointerMoved="Overlay_PointerMoved"
+                        PointerReleased="Overlay_PointerReleased" />
+            </Grid>
+
+            <!-- Tools rail -->
+            <Border Grid.Row="1" Grid.Column="1" Background="#FF15151B"
+                    BorderBrush="#22FFFFFF" BorderThickness="1,0,0,0">
+                <ScrollViewer>
+                    <StackPanel Padding="16" Spacing="20">
+
+                        <!-- Transform -->
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="TRANSFORM" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />
+                            <StackPanel Orientation="Horizontal" Spacing="2">
+                                <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="RotateCcw_Click" ToolTipService.ToolTip="Rotate left">
+                                    <FontIcon Glyph="&#xE7AD;" FontFamily="Segoe Fluent Icons" />
+                                </Button>
+                                <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="RotateCw_Click" ToolTipService.ToolTip="Rotate right">
+                                    <FontIcon Glyph="&#xE7AC;" FontFamily="Segoe Fluent Icons" />
+                                </Button>
+                                <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="FlipH_Click" ToolTipService.ToolTip="Flip horizontal">
+                                    <FontIcon Glyph="&#xE13C;" FontFamily="Segoe Fluent Icons" />
+                                </Button>
+                                <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="FlipV_Click" ToolTipService.ToolTip="Flip vertical">
+                                    <FontIcon Glyph="&#xE174;" FontFamily="Segoe Fluent Icons" />
+                                </Button>
+                            </StackPanel>
+                            <TextBlock Text="Crop" Foreground="White" FontSize="13" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <ComboBox x:Name="CropAspectCombo" MinWidth="130" SelectionChanged="CropAspect_Changed">
+                                    <ComboBoxItem Content="Free" IsSelected="True" />
+                                    <ComboBoxItem Content="Original" />
+                                    <ComboBoxItem Content="1:1" />
+                                    <ComboBoxItem Content="4:3" />
+                                    <ComboBoxItem Content="3:2" />
+                                    <ComboBoxItem Content="16:9" />
+                                </ComboBox>
+                                <Button Content="Reset" Click="CropReset_Click" />
+                            </StackPanel>
+                            <TextBlock Text="Straighten" Foreground="White" FontSize="13" />
+                            <Slider x:Name="StraightenSlider" Minimum="-45" Maximum="45" Value="0"
+                                    StepFrequency="1" ValueChanged="Straighten_Changed" />
+                        </StackPanel>
+
+                        <!-- Adjust -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="ADJUST" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />
+                            <TextBlock Text="Exposure" Foreground="White" FontSize="12" />
+                            <Slider x:Name="ExposureSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                            <TextBlock Text="Brightness" Foreground="White" FontSize="12" />
+                            <Slider x:Name="BrightnessSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                            <TextBlock Text="Contrast" Foreground="White" FontSize="12" />
+                            <Slider x:Name="ContrastSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                            <TextBlock Text="Saturation" Foreground="White" FontSize="12" />
+                            <Slider x:Name="SaturationSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                            <TextBlock Text="Temperature" Foreground="White" FontSize="12" />
+                            <Slider x:Name="TemperatureSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                            <TextBlock Text="Tint" Foreground="White" FontSize="12" />
+                            <Slider x:Name="TintSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                            <TextBlock Text="Sharpness" Foreground="White" FontSize="12" />
+                            <Slider x:Name="SharpnessSlider" Minimum="0" Maximum="100" Value="0" ValueChanged="Adjust_Changed" />
+                        </StackPanel>
+
+                        <!-- Filters -->
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="FILTERS" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button Content="None" Click="Filter_Click" Tag="None" />
+                                <Button Content="Auto" Click="Filter_Click" Tag="Auto" />
+                                <Button Content="B&amp;W" Click="Filter_Click" Tag="BlackWhite" />
+                                <Button Content="Sepia" Click="Filter_Click" Tag="Sepia" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button Content="Vivid" Click="Filter_Click" Tag="Vivid" />
+                                <Button Content="Warm" Click="Filter_Click" Tag="Warm" />
+                                <Button Content="Cool" Click="Filter_Click" Tag="Cool" />
+                                <Button Content="Invert" Click="Filter_Click" Tag="Invert" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- Markup -->
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="MARKUP" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button Content="Pen" Click="MarkupTool_Click" Tag="Pen" />
+                                <Button Content="Text" Click="MarkupTool_Click" Tag="Text" />
+                                <Button Content="Rect" Click="MarkupTool_Click" Tag="Rectangle" />
+                                <Button Content="Ellipse" Click="MarkupTool_Click" Tag="Ellipse" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button Content="Line" Click="MarkupTool_Click" Tag="Line" />
+                                <Button Content="Arrow" Click="MarkupTool_Click" Tag="Arrow" />
+                                <Button Content="Done" Click="MarkupNone_Click" ToolTipService.ToolTip="Stop drawing shapes" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <ComboBox x:Name="MarkupColorCombo" MinWidth="110" SelectedIndex="0">
+                                    <ComboBoxItem Content="Red" />
+                                    <ComboBoxItem Content="Yellow" />
+                                    <ComboBoxItem Content="Lime" />
+                                    <ComboBoxItem Content="White" />
+                                    <ComboBoxItem Content="Black" />
+                                </ComboBox>
+                                <Button Content="Clear" Click="MarkupClear_Click" ToolTipService.ToolTip="Clear shapes &amp; ink" />
+                            </StackPanel>
+                        </StackPanel>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+
+            <!-- Command bar -->
+            <Border Grid.Row="2" Grid.ColumnSpan="2" Background="#FF15151B"
+                    BorderBrush="#22FFFFFF" BorderThickness="0,1,0,0" Padding="12,8">
+                <Grid>
+                    <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Left">
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="EditUndo_Click" ToolTipService.ToolTip="Undo">
+                            <FontIcon Glyph="&#xE7A7;" FontFamily="Segoe Fluent Icons" />
+                        </Button>
+                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="EditRedo_Click" ToolTipService.ToolTip="Redo">
+                            <FontIcon Glyph="&#xE7A6;" FontFamily="Segoe Fluent Icons" />
+                        </Button>
+                        <Button Content="Reset" Click="EditReset_Click" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                        <Button Content="Cancel" Click="EditCancel_Click" />
+                        <Button Content="Save a copy" Click="SaveCopy_Click" />
+                        <DropDownButton Content="&#xE712;" FontFamily="Segoe Fluent Icons" ToolTipService.ToolTip="More save options">
+                            <DropDownButton.Flyout>
+                                <MenuFlyout>
+                                    <MenuFlyoutItem Text="Save as…" Click="SaveAs_Click" />
+                                    <MenuFlyoutItem Text="Overwrite original" Click="SaveOverwrite_Click" />
+                                </MenuFlyout>
+                            </DropDownButton.Flyout>
+                        </DropDownButton>
+                    </StackPanel>
+                </Grid>
             </Border>
         </Grid>
 

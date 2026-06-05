@@ -12,7 +12,7 @@ Highlights over the stock apps:
 4. **💻 Developer Mode** — dock a real **cmd / PowerShell / WSL** terminal (ConPTY) beside the explorer, in the current folder.
 5. **🔄 Live, local-first** — folders update in place as files change on disk (no manual refresh), with network-share / WSL pinning and a resizable layout.
 
-> **Status:** working application. The tabbed file explorer (search, sort/group with collapsible sections, cut-move, drag-drop, bulk rename, live updates, drive auto-detect, pinned network/WSL locations, Windows Hello gate), photo viewer, gallery, collage, embedded **video + audio player** (album art, multichannel/Atmos), **Spacebar Peek**, **`.zip` archives**, **secure vault** with **Google Drive backup**, an embedded **terminal (Developer Mode)**, a full **Settings** panel (5 themes and more), and default-photo-app registration are all implemented and building. Image editing remains on the roadmap — see **[tasks.md](./tasks.md)**.
+> **Status:** working application. The tabbed file explorer (search, sort/group with collapsible sections, cut-move, drag-drop, bulk rename, live updates, drive auto-detect, pinned network/WSL locations, Windows Hello gate), photo viewer, gallery, collage, embedded **video + audio player** (album art, multichannel/Atmos), **Spacebar Peek**, **`.zip` archives**, **secure vault** with **Google Drive backup**, an embedded **terminal (Developer Mode)**, an **image editor** (crop, rotate, adjustments, filters, markup), a full **Settings** panel (5 themes and more), and default-photo-app registration are all implemented and building. See **[tasks.md](./tasks.md)** for the roadmap.
 
 ---
 
@@ -272,6 +272,20 @@ Galileo can store folders in an encrypted **vault** that is hidden from Windows 
 
 ---
 
+## Image editor
+
+Open any image and click **Edit** (the pencil in the viewer toolbar, or right-click → **Edit…**) to open a full editor layered over the viewer, with a live GPU preview:
+
+- **Transform** — rotate left/right, flip horizontal/vertical, **straighten** (−45…45° slider), and **crop** with aspect presets (Free / Original / 1:1 / 4:3 / 3:2 / 16:9 — drag on the image to set the region).
+- **Adjustments** — Exposure, Brightness, Contrast, Saturation, Temperature, Tint, and Sharpness sliders, applied in real time.
+- **Filters** — one-tap presets: Auto, B&W, Sepia, Vivid, Warm, Cool, Invert.
+- **Markup** — annotate with pen/highlighter/eraser (ink), **text**, and **rectangle / ellipse / line / arrow** shapes in your choice of color.
+- **Undo / Redo / Reset**, then **Save** — by default it writes a **copy** next to the original (`<name>-edited.<ext>`) so the source is never touched; the Save dropdown also offers **Save as…** and **Overwrite original**.
+
+Rendering uses **Win2D** (GPU effect graph) for the preview and a full-resolution bake on save. Edits are non-destructive until you save, and the saved copy appears in the folder automatically (live refresh). HEIC/RAW sources are supported when the OS codec is installed.
+
+---
+
 ## Developer Mode (embedded terminal)
 
 Turn on **Settings → Developer → Developer Mode** to dock a real **terminal pane beside the file explorer**. A **Terminal** button then appears in the command strip (and folders get a right-click **Open terminal here**). The pane runs **Command Prompt**, **PowerShell** (`pwsh` if installed, otherwise Windows PowerShell), or **WSL** (when `wsl.exe` is present), starting in the current folder — pick the shell from the dropdown and drag the divider to resize. It's a real console: built on a Windows **pseudo-console (ConPTY)** feeding an **xterm.js** front-end hosted in **WebView2**. (xterm.js loads from a CDN on first use, then is cached; the shell process is terminated when the pane/app closes.)
@@ -307,7 +321,7 @@ Turn on **Settings → Developer → Developer Mode** to dock a real **terminal 
 
 ## Roadmap
 
-See **[tasks.md](./tasks.md)** for the full phased breakdown. Not yet implemented: image editing (crop/adjust/filters/markup), an expandable folder tree in the sidebar, MSIX packaging, slideshow background music, and splitting into `Core`/`Tests` projects.
+See **[tasks.md](./tasks.md)** for the full phased breakdown. Not yet implemented: an expandable folder tree in the sidebar, MSIX packaging, slideshow background music, and splitting into `Core`/`Tests` projects.
 
 ## License
 

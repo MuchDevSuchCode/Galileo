@@ -2589,6 +2589,7 @@ public sealed partial class MainWindow : Window
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(MI("Rename…", "", async (_, _) => await RenameItemAsync(item)));
         menu.Items.Add(MI("Show in Explorer", "", (_, _) => RevealItem(item)));
+        menu.Items.Add(MI("Edit…", "", async (_, _) => await EnterEditModeAsync(item)));
         menu.Items.Add(MI("Delete", "", async (_, _) => await DeleteItemAsync(item)));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(MI("Properties", "", (_, _) => ShowProperties(item)));

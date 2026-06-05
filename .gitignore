@@ -45,6 +45,7 @@ _pkginfo.txt
 *.log
 *.tmp
 *.bak
+editor-build.txt
 
 # ---- OS noise ----
 Thumbs.db
