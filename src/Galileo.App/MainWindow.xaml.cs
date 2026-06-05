@@ -2091,6 +2091,32 @@ public sealed partial class MainWindow : Window
     private List<ExplorerItem> SelectedExplorerItems() =>
         ActiveExplorerList().SelectedItems.OfType<ExplorerItem>().ToList();
 
+    /// <summary>Shows the selection count (and total size) in the status bar; falls back to the item
+    /// count when nothing is selected.</summary>
+    private void ExplorerSelection_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not ListViewBase list) return;
+        var sel = list.SelectedItems.OfType<ExplorerItem>().ToList();
+        if (sel.Count == 0)
+        {
+            StatusText.Text = list.Items.Count > 0 ? $"{list.Items.Count} item{(list.Items.Count == 1 ? "" : "s")}" : "Ready";
+            return;
+        }
+        var bytes = sel.Where(i => i.Kind == ExplorerItemKind.File).Sum(i => i.Size);
+        StatusText.Text = bytes > 0
+            ? $"{sel.Count} selected · {FormatBytes(bytes)}"
+            : $"{sel.Count} selected";
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        double v = bytes;
+        var i = 0;
+        while (v >= 1024 && i < units.Length - 1) { v /= 1024; i++; }
+        return $"{v:0.#} {units[i]}";
+    }
+
     /// <summary>Copies (or cuts) the selected explorer items to the clipboard as files/folders,
     /// so they can be pasted here or into Windows Explorer.</summary>
     private async System.Threading.Tasks.Task CopySelectedExplorerAsync(bool cut)
