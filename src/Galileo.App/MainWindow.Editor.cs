@@ -42,6 +42,9 @@ public sealed partial class MainWindow
     private bool _dragging;
     private Point _dragStart;       // oriented-image space
     private Rect? _pendingCrop;
+    private bool _cropMoving;
+    private Rect _cropAtDragStart;
+    private Rect _viewSrc;          // oriented-space region currently shown on the canvas
     private MarkupItem? _pendingShape;
 
     // ---- enter / exit ----
@@ -108,17 +111,20 @@ public sealed partial class MainWindow
         double cw = sender.Size.Width, ch = sender.Size.Height;
         if (ow <= 0 || oh <= 0 || cw <= 0 || ch <= 0) return;
 
-        double scale = Math.Min(cw / ow, ch / oh);
-        double dw = ow * scale, dh = oh * scale;
+        // Show the cropped region once a crop is applied (not actively cropping); else the whole image.
+        var src = !_cropMode && _edit.Crop is Rect cr ? cr : new Rect(0, 0, ow, oh);
+        _viewSrc = src;
+
+        double scale = Math.Min(cw / src.Width, ch / src.Height);
+        double dw = src.Width * scale, dh = src.Height * scale;
         double ox = (cw - dw) / 2, oy = (ch - dh) / 2;
         _editFitRect = new Rect(ox, oy, dw, dh);
         _editFitScale = scale;
 
-        ds.DrawImage(oriented, new Rect(ox, oy, dw, dh), new Rect(0, 0, ow, oh));
+        ds.DrawImage(oriented, new Rect(ox, oy, dw, dh), src);
 
-        // Crop overlay (dim outside + bright border).
-        var crop = _pendingCrop ?? _edit.Crop;
-        if (crop is Rect c && c.Width > 0 && c.Height > 0)
+        // Crop overlay (dim outside + bright border) — only while actively cropping the whole image.
+        if (_cropMode && (_pendingCrop ?? _edit.Crop) is Rect c && c.Width > 0 && c.Height > 0)
         {
             var disp = new Rect(ox + c.X * scale, oy + c.Y * scale, c.Width * scale, c.Height * scale);
             var shade = Color.FromArgb(120, 0, 0, 0);
@@ -129,8 +135,11 @@ public sealed partial class MainWindow
             ds.DrawRectangle(disp, Microsoft.UI.Colors.White, 2);
         }
 
-        foreach (var m in _markup) DrawShape(ds, m, ox, oy, scale);
-        if (_pendingShape is MarkupItem ps) DrawShape(ds, ps, ox, oy, scale);
+        // Markup is in oriented space; map it through the currently-shown source region.
+        var mx = ox - src.X * scale;
+        var my = oy - src.Y * scale;
+        foreach (var m in _markup) DrawShape(ds, m, mx, my, scale);
+        if (_pendingShape is MarkupItem ps) DrawShape(ds, ps, mx, my, scale);
     }
 
     private static void DrawShape(CanvasDrawingSession ds, MarkupItem m, double offX, double offY, double sc)
@@ -182,8 +191,8 @@ public sealed partial class MainWindow
 
     private Point DisplayToOriented(Point p)
     {
-        var ox = Math.Clamp((p.X - _editFitRect.X) / _editFitScale, 0, _orientedW);
-        var oy = Math.Clamp((p.Y - _editFitRect.Y) / _editFitScale, 0, _orientedH);
+        var ox = Math.Clamp(_viewSrc.X + (p.X - _editFitRect.X) / _editFitScale, 0, _orientedW);
+        var oy = Math.Clamp(_viewSrc.Y + (p.Y - _editFitRect.Y) / _editFitScale, 0, _orientedH);
         return new Point(ox, oy);
     }
 
@@ -192,7 +201,13 @@ public sealed partial class MainWindow
         var p = DisplayToOriented(e.GetCurrentPoint(OverlayCanvas).Position);
         if (_cropMode)
         {
-            _dragging = true; _dragStart = p; _pendingCrop = new Rect(p.X, p.Y, 0, 0);
+            _dragging = true; _dragStart = p;
+            // Press inside the existing crop → move it; otherwise start a new rectangle.
+            if (_edit.Crop is Rect ec && p.X >= ec.X && p.X <= ec.X + ec.Width && p.Y >= ec.Y && p.Y <= ec.Y + ec.Height)
+            {
+                _cropMoving = true; _cropAtDragStart = ec; _pendingCrop = ec;
+            }
+            else { _cropMoving = false; _pendingCrop = new Rect(p.X, p.Y, 0, 0); }
             OverlayCanvas.CapturePointer(e.Pointer);
         }
         else if (_markupTool == "Text")
@@ -217,7 +232,17 @@ public sealed partial class MainWindow
     {
         if (!_dragging) return;
         var p = DisplayToOriented(e.GetCurrentPoint(OverlayCanvas).Position);
-        if (_cropMode) { _pendingCrop = MakeCropRect(_dragStart, p); _editCanvas?.Invalidate(); }
+        if (_cropMode)
+        {
+            if (_cropMoving)
+            {
+                var nx = Math.Clamp(_cropAtDragStart.X + (p.X - _dragStart.X), 0, _orientedW - _cropAtDragStart.Width);
+                var ny = Math.Clamp(_cropAtDragStart.Y + (p.Y - _dragStart.Y), 0, _orientedH - _cropAtDragStart.Height);
+                _pendingCrop = new Rect(nx, ny, _cropAtDragStart.Width, _cropAtDragStart.Height);
+            }
+            else _pendingCrop = MakeCropRect(_dragStart, p);
+            _editCanvas?.Invalidate();
+        }
         else if (_pendingShape is not null)
         {
             _pendingShape.End = p;
@@ -234,7 +259,7 @@ public sealed partial class MainWindow
         if (_cropMode)
         {
             if (_pendingCrop is Rect c && c.Width > 8 && c.Height > 8) { PushUndo(); _edit.Crop = c; }
-            _pendingCrop = null;
+            _pendingCrop = null; _cropMoving = false;
         }
         else if (_pendingShape is MarkupItem ps)
         {
@@ -321,6 +346,23 @@ public sealed partial class MainWindow
     }
 
     private void CropReset_Click(object sender, RoutedEventArgs e) { PushUndo(); _edit.Crop = null; _editCanvas?.Invalidate(); }
+
+    private void CropEnter_Click(object sender, RoutedEventArgs e)
+    {
+        if (_editCanvas is null) return;
+        SetCanvasMode("crop");
+        _editCanvas.Invalidate();
+        StatusText.Text = "Drag to draw a crop; drag inside it to move. Then Apply.";
+    }
+
+    private void CropApply_Click(object sender, RoutedEventArgs e)
+    {
+        if (_editCanvas is null) return;
+        if (_edit.Crop is null) { StatusText.Text = "Draw a crop first."; return; }
+        SetCanvasMode("none");
+        _editCanvas.Invalidate();
+        StatusText.Text = "Crop applied (preview). Use Crop to adjust, Reset to clear.";
+    }
 
     // ---- adjustments & filters ----
 

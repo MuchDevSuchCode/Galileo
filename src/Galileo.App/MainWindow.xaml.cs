@@ -1546,10 +1546,15 @@ public sealed partial class MainWindow : Window
         return sorted;
     }
 
-    /// <summary>Expand/collapse a group section when its header is clicked.</summary>
+    /// <summary>Group section keys the user has collapsed this session (remembered across refreshes).</summary>
+    private readonly HashSet<string> _collapsedGroups = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Expand/collapse a group section when its header is clicked, remembering the choice.</summary>
     private void GroupHeader_Click(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is ExplorerGroup g) g.Toggle();
+        if ((sender as FrameworkElement)?.DataContext is not ExplorerGroup g) return;
+        g.Toggle();
+        if (g.IsExpanded) _collapsedGroups.Remove(g.Key); else _collapsedGroups.Add(g.Key);
     }
 
     private List<ExplorerGroup> BuildGroups(List<ExplorerItem> sorted)
@@ -1569,7 +1574,11 @@ public sealed partial class MainWindow : Window
         }
         groups.Sort((a, b) => a.Rank.CompareTo(b.Rank) is var c && c != 0 ? c
             : string.Compare(a.Key, b.Key, StringComparison.OrdinalIgnoreCase));
-        foreach (var g in groups) g.Finish(); // populate visible items now that the group is complete
+        foreach (var g in groups)
+        {
+            g.SetExpanded(!_collapsedGroups.Contains(g.Key)); // restore remembered collapse state
+            g.Finish();                                       // populate visible items now that the group is complete
+        }
         return groups;
     }
 

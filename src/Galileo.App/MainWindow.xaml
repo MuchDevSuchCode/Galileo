@@ -731,23 +731,15 @@
                         <!-- Transform -->
                         <StackPanel Spacing="8">
                             <TextBlock Text="TRANSFORM" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />
-                            <StackPanel Orientation="Horizontal" Spacing="2">
-                                <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="RotateCcw_Click" ToolTipService.ToolTip="Rotate left">
-                                    <FontIcon Glyph="&#xE7AD;" FontFamily="Segoe Fluent Icons" />
-                                </Button>
-                                <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="RotateCw_Click" ToolTipService.ToolTip="Rotate right">
-                                    <FontIcon Glyph="&#xE7AC;" FontFamily="Segoe Fluent Icons" />
-                                </Button>
-                                <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="FlipH_Click" ToolTipService.ToolTip="Flip horizontal">
-                                    <FontIcon Glyph="&#xE13C;" FontFamily="Segoe Fluent Icons" />
-                                </Button>
-                                <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="FlipV_Click" ToolTipService.ToolTip="Flip vertical">
-                                    <FontIcon Glyph="&#xE174;" FontFamily="Segoe Fluent Icons" />
-                                </Button>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button Content="↺" FontSize="16" MinWidth="40" Click="RotateCcw_Click" ToolTipService.ToolTip="Rotate left" />
+                                <Button Content="↻" FontSize="16" MinWidth="40" Click="RotateCw_Click" ToolTipService.ToolTip="Rotate right" />
+                                <Button Content="↔" FontSize="16" MinWidth="40" Click="FlipH_Click" ToolTipService.ToolTip="Flip horizontal" />
+                                <Button Content="↕" FontSize="16" MinWidth="40" Click="FlipV_Click" ToolTipService.ToolTip="Flip vertical" />
                             </StackPanel>
                             <TextBlock Text="Crop" Foreground="White" FontSize="13" />
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <ComboBox x:Name="CropAspectCombo" MinWidth="130" SelectionChanged="CropAspect_Changed">
+                                <ComboBox x:Name="CropAspectCombo" MinWidth="118" SelectionChanged="CropAspect_Changed">
                                     <ComboBoxItem Content="Free" IsSelected="True" />
                                     <ComboBoxItem Content="Original" />
                                     <ComboBoxItem Content="1:1" />
@@ -755,7 +747,11 @@
                                     <ComboBoxItem Content="3:2" />
                                     <ComboBoxItem Content="16:9" />
                                 </ComboBox>
-                                <Button Content="Reset" Click="CropReset_Click" />
+                                <Button Content="Crop" Click="CropEnter_Click" ToolTipService.ToolTip="Draw / move a crop region" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button Content="Apply" Click="CropApply_Click" ToolTipService.ToolTip="Preview the crop on the image" />
+                                <Button Content="Reset" Click="CropReset_Click" ToolTipService.ToolTip="Clear the crop" />
                             </StackPanel>
                             <TextBlock Text="Straighten" Foreground="White" FontSize="13" />
                             <Slider x:Name="StraightenSlider" Minimum="-45" Maximum="45" Value="0"

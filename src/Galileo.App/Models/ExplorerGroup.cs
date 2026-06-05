@@ -25,6 +25,10 @@ public class ExplorerGroup : ObservableCollection<ExplorerItem>
     /// <summary>Adds to the backing set (call <see cref="Finish"/> once all items are added).</summary>
     public void AddItem(ExplorerItem item) => _all.Add(item);
 
+    /// <summary>Sets the initial expanded state before <see cref="Finish"/> (e.g. to restore a
+    /// remembered collapsed section across refreshes).</summary>
+    public void SetExpanded(bool expanded) => IsExpanded = expanded;
+
     /// <summary>Populates the visible items from the backing set per the current expanded state.</summary>
     public void Finish() => RebuildVisible();
 
