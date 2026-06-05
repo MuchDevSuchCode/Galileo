@@ -10,7 +10,8 @@
         <!-- ===================== File Explorer (home) ===================== -->
         <Grid x:Name="ExplorerView">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="240" />
+                <ColumnDefinition Width="240" x:Name="SidebarCol" MinWidth="160" MaxWidth="560" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="0" x:Name="TerminalCol" />
@@ -115,8 +116,13 @@
                 </ScrollViewer>
             </Grid>
 
+            <!-- Drag handle to resize the sidebar (nav) vs. the file pane -->
+            <Border x:Name="SidebarSplitter" Grid.Column="1" Width="6" Margin="0,40,0,0" Background="Transparent"
+                    ManipulationMode="TranslateX" ManipulationDelta="SidebarSplitter_ManipulationDelta"
+                    ManipulationCompleted="SidebarSplitter_ManipulationCompleted" />
+
             <!-- Content (offset below the 40px title-bar drag region so the nav buttons are clickable) -->
-            <Grid Grid.Column="1" Margin="0,40,0,0">
+            <Grid Grid.Column="2" Margin="0,40,0,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="48" />
@@ -405,10 +411,10 @@
             </Grid>
 
             <!-- Developer-mode embedded terminal: draggable splitter + pane (hidden by default) -->
-            <Border x:Name="TerminalSplitter" Grid.Column="2" Visibility="Collapsed" Width="6" Margin="0,40,0,0"
+            <Border x:Name="TerminalSplitter" Grid.Column="3" Visibility="Collapsed" Width="6" Margin="0,40,0,0"
                     Background="{ThemeResource CardStrokeColorDefaultBrush}" ManipulationMode="TranslateX"
                     ManipulationDelta="TerminalSplitter_ManipulationDelta" />
-            <Grid x:Name="TerminalPane" Grid.Column="3" Visibility="Collapsed" Margin="0,40,0,0"
+            <Grid x:Name="TerminalPane" Grid.Column="4" Visibility="Collapsed" Margin="0,40,0,0"
                   Background="{ThemeResource LayerFillColorAltBrush}"
                   BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,0,0,0">
                 <Grid.RowDefinitions>

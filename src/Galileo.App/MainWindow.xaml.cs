@@ -64,6 +64,11 @@ public sealed partial class MainWindow : Window
     // Open archives: maps a zip's extracted temp dir -> (zip path, display name) for breadcrumb labels.
     private readonly Dictionary<string, (string ZipPath, string Name)> _openZips = new(StringComparer.OrdinalIgnoreCase);
 
+    // Live folder refresh: auto-show files added/removed/renamed outside the app.
+    private FileSystemWatcher? _folderWatcher;
+    private string? _watchedPath;
+    private readonly DispatcherTimer _watchDebounce = new() { Interval = TimeSpan.FromMilliseconds(400) };
+
     // Developer-mode embedded terminal.
     private TerminalSession? _term;
     private bool _termWebReady;
@@ -177,6 +182,8 @@ public sealed partial class MainWindow : Window
 
         ApplyDeveloperMode(); // show/hide the Terminal button per the saved setting
         SetResizeCursor(TerminalSplitter); // ↔ cursor on the explorer/terminal divider
+        SetResizeCursor(SidebarSplitter);  // ↔ cursor on the sidebar/file-pane divider
+        SidebarCol.Width = new GridLength(Math.Clamp(_state.SidebarWidth is > 0 ? _state.SidebarWidth : 240, 160, 560));
 
         IconSizeSlider.Value = _iconSize;
         ApplyIconSize();
@@ -189,6 +196,16 @@ public sealed partial class MainWindow : Window
         _knownDrives = CurrentDriveSignature();
         _driveWatcher.Tick += DriveWatcher_Tick;
         _driveWatcher.Start();
+
+        // Debounced reload when the current folder changes on disk (downloads, other apps, etc.).
+        _watchDebounce.Tick += (_, _) =>
+        {
+            _watchDebounce.Stop();
+            if (ExplorerView.Visibility == Visibility.Visible
+                && string.IsNullOrEmpty(_searchQuery)
+                && string.Equals(_currentFolder, _watchedPath, StringComparison.OrdinalIgnoreCase))
+                ReloadKeepingSelection();
+        };
 
         // Windows may launch us with a file (default app) or folder to open.
         if (!string.IsNullOrEmpty(initialPath) && System.IO.File.Exists(initialPath))
@@ -1298,6 +1315,7 @@ public sealed partial class MainWindow : Window
     {
         HiddenFolderPlaceholder.Visibility = Visibility.Collapsed;
         ExplorerEmpty.Visibility = Visibility.Collapsed;
+        UpdateFolderWatch();
 
         if (_currentFolder is null)
         {
@@ -1325,6 +1343,70 @@ public sealed partial class MainWindow : Window
         ApplyViewMode();
         UpdateHideFolderButton();
         StatusText.Text = $"{_explorerRaw.Count} item(s)";
+    }
+
+    // ---- Live folder refresh ----
+
+    /// <summary>Watches the current real folder for outside changes; debounced reload keeps the
+    /// listing (and sort order) current as files are downloaded/added/removed.</summary>
+    private void UpdateFolderWatch()
+    {
+        var path = _currentFolder is not null
+                   && string.IsNullOrEmpty(_searchQuery)
+                   && !(_state.HiddenFolders.Contains(_currentFolder) && !_showAppHidden)
+                   && Directory.Exists(_currentFolder)
+            ? _currentFolder
+            : null;
+
+        if (string.Equals(path, _watchedPath, StringComparison.OrdinalIgnoreCase) && _folderWatcher is not null)
+            return; // already watching it
+
+        StopFolderWatch();
+        _watchedPath = path;
+        if (path is null) return;
+
+        try
+        {
+            _folderWatcher = new FileSystemWatcher(path)
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                IncludeSubdirectories = false,
+            };
+            void Bump(object? _, FileSystemEventArgs __) => DispatcherQueue.TryEnqueue(RestartWatchDebounce);
+            _folderWatcher.Created += Bump;
+            _folderWatcher.Deleted += Bump;
+            _folderWatcher.Changed += Bump;
+            _folderWatcher.Renamed += (_, _) => DispatcherQueue.TryEnqueue(RestartWatchDebounce);
+            _folderWatcher.Error += (_, _) => DispatcherQueue.TryEnqueue(RestartWatchDebounce);
+            _folderWatcher.EnableRaisingEvents = true;
+        }
+        catch (Exception ex)
+        {
+            App.Log("FolderWatch", ex); // some network/WSL shares don't support change notifications
+            _folderWatcher = null;
+            _watchedPath = null;
+        }
+    }
+
+    private void RestartWatchDebounce() { _watchDebounce.Stop(); _watchDebounce.Start(); }
+
+    private void StopFolderWatch()
+    {
+        if (_folderWatcher is null) return;
+        try { _folderWatcher.EnableRaisingEvents = false; _folderWatcher.Dispose(); } catch { }
+        _folderWatcher = null;
+    }
+
+    /// <summary>Reloads the current folder while preserving the current selection (by path).</summary>
+    private void ReloadKeepingSelection()
+    {
+        var selected = ActiveExplorerList().SelectedItems.OfType<ExplorerItem>()
+            .Select(i => i.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        LoadCurrentFolder();
+        if (selected.Count == 0) return;
+        var list = ActiveExplorerList();
+        foreach (var it in _explorerItems)
+            if (selected.Contains(it.Path)) list.SelectedItems.Add(it);
     }
 
     // ---- Sort & group ----
@@ -2132,7 +2214,13 @@ public sealed partial class MainWindow : Window
     private async System.Threading.Tasks.Task RenameExplorerAsync(ExplorerItem item)
     {
         var box = new TextBox { Text = item.Name };
-        box.Loaded += (_, _) => box.SelectAll();
+        box.Loaded += (_, _) =>
+        {
+            // Preselect only the base name so the extension is kept by default (Explorer behavior).
+            var ext = item.IsFolder ? "" : System.IO.Path.GetExtension(item.Name);
+            var baseLen = item.Name.Length - ext.Length;
+            if (baseLen > 0) box.Select(0, baseLen); else box.SelectAll();
+        };
         var dialog = new ContentDialog
         {
             Title = "Rename",
@@ -2174,8 +2262,14 @@ public sealed partial class MainWindow : Window
         // Primary first, then the rest in their current order.
         items = new[] { primary }.Concat(items.Where(i => i != primary)).ToList();
 
-        var box = new TextBox { Text = System.IO.Path.GetFileNameWithoutExtension(primary.Name) };
-        box.Loaded += (_, _) => box.SelectAll();
+        var box = new TextBox { Text = primary.Name };
+        box.Loaded += (_, _) =>
+        {
+            // Show the extension but preselect only the base name.
+            var ext = primary.IsFolder ? "" : System.IO.Path.GetExtension(primary.Name);
+            var baseLen = primary.Name.Length - ext.Length;
+            if (baseLen > 0) box.Select(0, baseLen); else box.SelectAll();
+        };
         var dlg = new ContentDialog
         {
             Title = $"Rename {items.Count} items",
@@ -2184,7 +2278,7 @@ public sealed partial class MainWindow : Window
                 Spacing = 8,
                 Children =
                 {
-                    new TextBlock { Text = "They'll be named “name”, “name-1”, “name-2”, … (each keeps its extension).",
+                    new TextBlock { Text = "They'll be named “name”, “name-1”, “name-2”, … keeping each file's extension (or the one you type).",
                                     Opacity = 0.7, FontSize = 12, TextWrapping = TextWrapping.Wrap },
                     box,
                 },
@@ -2198,6 +2292,7 @@ public sealed partial class MainWindow : Window
 
         var typed = box.Text.Trim();
         if (string.IsNullOrEmpty(typed)) return;
+        var typedExt = System.IO.Path.GetExtension(typed); // if the user typed an extension, apply it to all
         var baseName = System.IO.Path.GetFileNameWithoutExtension(typed);
         if (string.IsNullOrEmpty(baseName)) baseName = typed;
 
@@ -2227,10 +2322,11 @@ public sealed partial class MainWindow : Window
         var ok = 0;
         foreach (var (si, ext) in resolved)
         {
+            var useExt = string.IsNullOrEmpty(typedExt) ? ext : typedExt; // typed ext wins, else keep own
             string name;
             while (true)
             {
-                name = (counter == 0 ? baseName : $"{baseName}-{counter}") + ext;
+                name = (counter == 0 ? baseName : $"{baseName}-{counter}") + useExt;
                 counter++;
                 var full = System.IO.Path.Combine(dir, name);
                 if (!File.Exists(full) && !Directory.Exists(full)) break;
@@ -2618,7 +2714,12 @@ public sealed partial class MainWindow : Window
     private async System.Threading.Tasks.Task RenameItemAsync(PhotoItem item)
     {
         var box = new TextBox { Text = item.FileName };
-        box.Loaded += (_, _) => box.SelectAll();
+        box.Loaded += (_, _) =>
+        {
+            var ext = System.IO.Path.GetExtension(item.FileName);
+            var baseLen = item.FileName.Length - ext.Length;
+            if (baseLen > 0) box.Select(0, baseLen); else box.SelectAll();
+        };
         var dialog = new ContentDialog
         {
             Title = "Rename",
@@ -3463,6 +3564,18 @@ public sealed partial class MainWindow : Window
         var w = TerminalCol.ActualWidth - e.Delta.Translation.X; // drag left → wider terminal
         var max = Math.Max(280, ExplorerView.ActualWidth - 360);
         TerminalCol.Width = new GridLength(Math.Clamp(w, 240, max));
+    }
+
+    private void SidebarSplitter_ManipulationDelta(object sender, ManipulationDeltaRoutedEventArgs e)
+    {
+        var w = SidebarCol.ActualWidth + e.Delta.Translation.X; // drag right → wider sidebar
+        SidebarCol.Width = new GridLength(Math.Clamp(w, 160, 560));
+    }
+
+    private void SidebarSplitter_ManipulationCompleted(object sender, ManipulationCompletedRoutedEventArgs e)
+    {
+        _state.SidebarWidth = SidebarCol.ActualWidth;
+        _state.Save();
     }
 
     // ===================== Settings =====================
@@ -4528,6 +4641,7 @@ public sealed partial class MainWindow : Window
         Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
     {
         try { _term?.Dispose(); _term = null; } catch { } // kill any terminal shell on close
+        StopFolderWatch();
         if (_closingForVaultLock) return;       // second pass: let the close proceed
         if (!_vaults.IsAnyUnlocked) return;
         args.Cancel = true;                      // defer close until the vault is secured
