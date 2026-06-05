@@ -30,6 +30,9 @@ public sealed class AppState
     /// <summary>User-chosen folder thumbnail: folder path → image inside it shown as the folder preview.</summary>
     public Dictionary<string, string> FolderThumbnails { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Custom locations pinned to the sidebar (local folders, UNC shares, WSL paths).</summary>
+    public List<string> PinnedPaths { get; set; } = new();
+
     public string? LastFolder { get; set; }
 
     // General settings

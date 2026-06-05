@@ -161,6 +161,7 @@ public sealed partial class MainWindow : Window
         ExplorerItem.FolderThumbnails = _state.FolderThumbnails;
 
         PopulateSidebar();
+        PopulatePinned();
 
         // Secure vault: wipe any decrypted working folder left by a crash, list vaults, and arm the
         // idle auto-lock + app-exit lock.
@@ -1192,6 +1193,90 @@ public sealed partial class MainWindow : Window
         if (e.ClickedItem is ExplorerItem item) { ShowExplorer(); NavigateTo(item.Path); }
     }
 
+    // ---- Pinned sidebar locations (local folders, UNC shares, WSL paths) ----
+
+    private void PopulatePinned()
+    {
+        var items = _state.PinnedPaths
+            .Select(p => new ExplorerItem(p, ExplorerItemKind.Folder, 0, default, "Folder", FriendlyPinName(p)))
+            .ToList();
+        PinnedList.ItemsSource = items;
+        foreach (var i in items) _ = i.LoadIconAsync(32);
+    }
+
+    private static string FriendlyPinName(string path)
+    {
+        var trimmed = path.TrimEnd('\\', '/');
+        var name = System.IO.Path.GetFileName(trimmed);
+        return string.IsNullOrEmpty(name) ? trimmed : name;
+    }
+
+    private async void AddLocation_Click(object sender, RoutedEventArgs e)
+    {
+        var box = new TextBox { PlaceholderText = @"e.g. \\server\share  or  \\wsl.localhost\Ubuntu\home" };
+        box.Loaded += (_, _) => box.Focus(FocusState.Programmatic);
+        var note = new TextBlock
+        {
+            Text = "Pin a local folder, a network share, or a WSL path. Paste a full path.",
+            Opacity = 0.6, FontSize = 12, TextWrapping = TextWrapping.Wrap,
+        };
+        var panel = new StackPanel { Spacing = 10, MinWidth = 380 };
+        panel.Children.Add(note);
+        panel.Children.Add(box);
+
+        var dlg = new ContentDialog
+        {
+            Title = "Add location",
+            Content = panel,
+            PrimaryButtonText = "Add",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = RootGrid.XamlRoot,
+        };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var path = box.Text.Trim().Trim('"');
+        if (!string.IsNullOrEmpty(path)) AddPinnedPath(path);
+    }
+
+    private void AddPinnedPath(string path)
+    {
+        path = path.TrimEnd();
+        if (_state.PinnedPaths.Any(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase)))
+        {
+            StatusText.Text = "That location is already pinned.";
+        }
+        else
+        {
+            _state.PinnedPaths.Add(path);
+            _state.Save();
+            PopulatePinned();
+            StatusText.Text = $"Pinned {FriendlyPinName(path)}";
+        }
+        // Jump to it if it's reachable right now (network/WSL may be offline — still pinned).
+        if (Directory.Exists(path)) { ShowExplorer(); NavigateTo(path); }
+    }
+
+    private void PinnedList_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        if ((e.OriginalSource as FrameworkElement)?.DataContext is not ExplorerItem item) return;
+        var menu = new MenuFlyout();
+        var remove = new MenuFlyoutItem { Text = "Remove from sidebar", Icon = new SymbolIcon(Symbol.UnPin) };
+        remove.Click += (_, _) => RemovePinnedPath(item.Path);
+        menu.Items.Add(remove);
+        var target = (FrameworkElement)sender;
+        menu.ShowAt(target, new FlyoutShowOptions { Position = e.GetPosition(target) });
+        e.Handled = true;
+    }
+
+    private void RemovePinnedPath(string path)
+    {
+        _state.PinnedPaths.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+        _state.Save();
+        PopulatePinned();
+        StatusText.Text = "Removed from sidebar.";
+    }
+
     private void NavigateTo(string? path, bool addHistory = true)
     {
         ClearSearch();
@@ -1973,10 +2058,16 @@ public sealed partial class MainWindow : Window
             {
                 var hidden = _state.HiddenFolders.Contains(item.Path);
                 menu.Items.Add(SMI(hidden ? "Unhide folder" : "Hide folder", null, (_, _) => { ToggleFolderHidden(item.Path); LoadCurrentFolder(); }));
+                menu.Items.Add(SMI("Pin to sidebar", Symbol.Pin, (_, _) => AddPinnedPath(item.Path)));
                 if (_state.DeveloperMode)
                     menu.Items.Add(SMI("Open terminal here", null, async (_, _) => await OpenTerminalHereAsync(item.Path)));
             }
-            menu.Items.Add(SMI("Rename…", Symbol.Rename, async (_, _) => await RenameExplorerAsync(item)));
+            menu.Items.Add(SMI("Rename…", Symbol.Rename, async (_, _) =>
+            {
+                var sel = SelectedExplorerItems();
+                if (sel.Count > 1 && sel.Any(s => s == item)) await BulkRenameExplorerAsync(item, sel);
+                else await RenameExplorerAsync(item);
+            }));
             menu.Items.Add(SMI("Delete", Symbol.Delete, async (_, _) => await DeleteExplorerAsync(item)));
             menu.Items.Add(new MenuFlyoutSeparator());
             menu.Items.Add(SMI("Properties", null, (_, _) => { var h = WinRT.Interop.WindowNative.GetWindowHandle(this); ShellOps.ShowProperties(h, item.Path); }));
@@ -2069,6 +2160,87 @@ public sealed partial class MainWindow : Window
             LoadCurrentFolder();
         }
         catch (Exception ex) { StatusText.Text = $"Rename failed: {ex.Message}"; }
+    }
+
+    /// <summary>Bulk-renames a multi-selection like Explorer, but with dash numbering: the primary
+    /// item becomes "name", the rest "name-1", "name-2", … (each keeping its own extension).</summary>
+    private async System.Threading.Tasks.Task BulkRenameExplorerAsync(ExplorerItem primary, List<ExplorerItem> selection)
+    {
+        var items = selection.Where(i => i.Kind != ExplorerItemKind.Drive).ToList();
+        if (items.Count <= 1) { await RenameExplorerAsync(primary); return; }
+        var dir = _currentFolder;
+        if (string.IsNullOrEmpty(dir)) return;
+
+        // Primary first, then the rest in their current order.
+        items = new[] { primary }.Concat(items.Where(i => i != primary)).ToList();
+
+        var box = new TextBox { Text = System.IO.Path.GetFileNameWithoutExtension(primary.Name) };
+        box.Loaded += (_, _) => box.SelectAll();
+        var dlg = new ContentDialog
+        {
+            Title = $"Rename {items.Count} items",
+            Content = new StackPanel
+            {
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock { Text = "They'll be named “name”, “name-1”, “name-2”, … (each keeps its extension).",
+                                    Opacity = 0.7, FontSize = 12, TextWrapping = TextWrapping.Wrap },
+                    box,
+                },
+            },
+            PrimaryButtonText = "Rename",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = RootGrid.XamlRoot,
+        };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var typed = box.Text.Trim();
+        if (string.IsNullOrEmpty(typed)) return;
+        var baseName = System.IO.Path.GetFileNameWithoutExtension(typed);
+        if (string.IsNullOrEmpty(baseName)) baseName = typed;
+
+        // Resolve storage items + each one's extension.
+        var resolved = new List<(IStorageItem si, string ext)>();
+        foreach (var it in items)
+        {
+            try
+            {
+                IStorageItem si = it.IsFolder
+                    ? await StorageFolder.GetFolderFromPathAsync(it.Path)
+                    : await StorageFile.GetFileFromPathAsync(it.Path);
+                resolved.Add((si, it.IsFolder ? "" : System.IO.Path.GetExtension(it.Name)));
+            }
+            catch { /* skip unreadable */ }
+        }
+
+        // Phase 1: move everything to temp names so target names can't collide with current ones.
+        foreach (var (si, _) in resolved)
+        {
+            try { await si.RenameAsync("__galileo_" + Guid.NewGuid().ToString("N"), NameCollisionOption.GenerateUniqueName); }
+            catch { }
+        }
+
+        // Phase 2: assign final names with a monotonic counter, skipping names already on disk.
+        var counter = 0;
+        var ok = 0;
+        foreach (var (si, ext) in resolved)
+        {
+            string name;
+            while (true)
+            {
+                name = (counter == 0 ? baseName : $"{baseName}-{counter}") + ext;
+                counter++;
+                var full = System.IO.Path.Combine(dir, name);
+                if (!File.Exists(full) && !Directory.Exists(full)) break;
+            }
+            try { await si.RenameAsync(name, NameCollisionOption.FailIfExists); ok++; }
+            catch (Exception ex) { StatusText.Text = $"Rename failed: {ex.Message}"; }
+        }
+
+        LoadCurrentFolder();
+        StatusText.Text = $"Renamed {ok} item(s)";
     }
 
     /// <summary>True while Shift is held — used to bypass the Recycle Bin (permanent delete).</summary>
@@ -3659,7 +3831,9 @@ public sealed partial class MainWindow : Window
             case VirtualKey.F2 when ExplorerView.Visibility == Visibility.Visible && !IsTextInputFocused():
             {
                 var sel = SelectedExplorerItems();
-                if (sel.Count > 0) _ = RenameExplorerAsync(sel[0]);
+                var primary = FocusedExplorerItem() ?? sel.FirstOrDefault();
+                if (sel.Count > 1 && primary is not null) _ = BulkRenameExplorerAsync(primary, sel);
+                else if (sel.Count > 0) _ = RenameExplorerAsync(sel[0]);
                 e.Handled = true; break;
             }
             case VirtualKey.Enter when ExplorerView.Visibility == Visibility.Visible && !IsTextInputFocused():
