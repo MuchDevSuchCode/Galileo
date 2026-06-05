@@ -20,6 +20,25 @@ public static class ShellOps
     /// </summary>
     public static void AllowForeground() => AllowSetForegroundWindow(ASFW_ANY);
 
+    // ---- Recycle Bin ----
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHEmptyRecycleBin(IntPtr hwnd, string? pszRootPath, uint dwFlags);
+
+    private const uint SHERB_NOCONFIRMATION = 0x1, SHERB_NOPROGRESSUI = 0x2, SHERB_NOSOUND = 0x4;
+
+    /// <summary>Opens the Windows Recycle Bin in File Explorer.</summary>
+    public static void OpenRecycleBin()
+    {
+        try { Process.Start(new ProcessStartInfo("explorer.exe", "shell:RecycleBinFolder") { UseShellExecute = true }); }
+        catch { }
+    }
+
+    /// <summary>Permanently empties the Recycle Bin (all drives). Returns the HRESULT (0 = success).
+    /// We confirm in the app, so Windows' own prompt/progress/sound are suppressed.</summary>
+    public static int EmptyRecycleBin(IntPtr hwnd)
+        => SHEmptyRecycleBin(hwnd, null, SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
+
     // ---- Set as desktop background ----
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]

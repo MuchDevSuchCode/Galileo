@@ -3649,6 +3649,26 @@ public sealed partial class MainWindow : Window
 
     // ===================== Settings =====================
 
+    private void OpenRecycleBin_Click(object sender, RoutedEventArgs e) => ShellOps.OpenRecycleBin();
+
+    private async void EmptyRecycleBin_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new ContentDialog
+        {
+            Title = "Empty Recycle Bin?",
+            Content = "Permanently delete all items in the Recycle Bin? This can't be undone.",
+            PrimaryButtonText = "Empty",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = RootGrid.XamlRoot,
+        };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var hr = ShellOps.EmptyRecycleBin(hwnd);
+        StatusText.Text = hr == 0 ? "Recycle Bin emptied." : "The Recycle Bin is already empty.";
+    }
+
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         // Snapshot current state and suppress writes; edits apply live for preview but only persist

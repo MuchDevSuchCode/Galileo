@@ -262,6 +262,19 @@
                                 </MenuFlyout>
                             </Button.Flyout>
                         </Button>
+                        <Button ToolTipService.ToolTip="Recycle Bin">
+                            <FontIcon Glyph="&#xE74D;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                            <Button.Flyout>
+                                <MenuFlyout>
+                                    <MenuFlyoutItem Text="Open Recycle Bin" Click="OpenRecycleBin_Click">
+                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE838;" FontFamily="Segoe Fluent Icons" /></MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                    <MenuFlyoutItem Text="Empty Recycle Bin…" Click="EmptyRecycleBin_Click">
+                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" FontFamily="Segoe Fluent Icons" /></MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                </MenuFlyout>
+                            </Button.Flyout>
+                        </Button>
                         <Button Click="Settings_Click" ToolTipService.ToolTip="Settings">
                             <FontIcon Glyph="&#xE713;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </Button>
