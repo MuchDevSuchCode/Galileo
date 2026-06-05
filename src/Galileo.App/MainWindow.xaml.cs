@@ -2019,9 +2019,13 @@ public sealed partial class MainWindow : Window
 
     private void PopulatePhotoPipelineFromCurrent()
     {
+        // Preserve the explorer's current sort order (LoadFiles re-sorts by name) so the viewer's
+        // arrow-key navigation follows whatever sort the user has chosen.
         var paths = _explorerItems.Where(i => i.IsImage).Select(i => i.Path).ToList();
+        var byPath = _library.LoadFiles(paths).ToDictionary(p => p.Path, StringComparer.OrdinalIgnoreCase);
         _allPhotos.Clear();
-        _allPhotos.AddRange(_library.LoadFiles(paths));
+        foreach (var path in paths)
+            if (byPath.TryGetValue(path, out var item)) _allPhotos.Add(item);
         _showHiddenAlbum = false;
         _favoritesOnly = false;
         RefreshView();
