@@ -204,7 +204,7 @@ public sealed partial class MainWindow : Window
             if (ExplorerView.Visibility == Visibility.Visible
                 && string.IsNullOrEmpty(_searchQuery)
                 && string.Equals(_currentFolder, _watchedPath, StringComparison.OrdinalIgnoreCase))
-                ReloadKeepingSelection();
+                RefreshFolderIncremental();
         };
 
         // Windows may launch us with a file (default app) or folder to open.
@@ -1407,6 +1407,61 @@ public sealed partial class MainWindow : Window
         var list = ActiveExplorerList();
         foreach (var it in _explorerItems)
             if (selected.Contains(it.Path)) list.SelectedItems.Add(it);
+    }
+
+    /// <summary>Applies on-disk changes to the live list in place — inserting new items at their
+    /// sorted position and removing deleted ones — so scroll position and selection are kept.
+    /// Falls back to a full reload for grouped/search views.</summary>
+    private void RefreshFolderIncremental()
+    {
+        if (_currentFolder is null || !Directory.Exists(_currentFolder)) return;
+
+        // Grouped or search views: patching grouped sources in place is fiddly — reload (keeps selection).
+        if (_state.GroupBy != "None" || !string.IsNullOrEmpty(_searchQuery)) { ReloadKeepingSelection(); return; }
+
+        _explorerRaw = _fs.List(_currentFolder, showWindowsHidden: false, _showAppHidden);
+        var target = SortItems(_explorerRaw);
+        ReconcileExplorerItems(target);
+
+        if (ActiveExplorerList().SelectedItems.Count == 0)
+            StatusText.Text = $"{_explorerRaw.Count} item(s)";
+        UpdateExplorerEmptyState();
+    }
+
+    /// <summary>Mutates <see cref="_explorerItems"/> to match <paramref name="target"/> (ordered by the
+    /// current sort) using minimal insert/move/remove ops, keeping existing item objects so their loaded
+    /// icons and selection survive.</summary>
+    private void ReconcileExplorerItems(List<ExplorerItem> target)
+    {
+        var coll = _explorerItems;
+        var targetPaths = new HashSet<string>(target.Select(t => t.Path), StringComparer.OrdinalIgnoreCase);
+
+        // Remove items that are gone.
+        for (var i = coll.Count - 1; i >= 0; i--)
+            if (!targetPaths.Contains(coll[i].Path)) coll.RemoveAt(i);
+
+        // Index the survivors by path.
+        var existing = new Dictionary<string, ExplorerItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var it in coll) existing[it.Path] = it;
+
+        // Walk the target order, fixing position i each step.
+        for (var i = 0; i < target.Count; i++)
+        {
+            var path = target[i].Path;
+            if (i < coll.Count && string.Equals(coll[i].Path, path, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (existing.TryGetValue(path, out var item))
+            {
+                var from = coll.IndexOf(item);
+                if (from != i) coll.Move(from, i);
+            }
+            else
+            {
+                coll.Insert(i, target[i]); // new item — its icon loads lazily when realized
+                existing[path] = target[i];
+            }
+        }
     }
 
     // ---- Sort & group ----
