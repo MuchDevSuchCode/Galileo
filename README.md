@@ -81,7 +81,7 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 - **Choose what's in it:** *Select photos* in the gallery's More menu to hand-pick images, or **drag-and-drop** image files onto an open collage to add them.
 - **Shuffle** re-arranges to a fresh fit; a **− N +** stepper sets how many photos; **Save** exports to PNG; clicking a tile opens it in the viewer. Re-fits on window resize.
 
-**Video & audio** — an **embedded media player** complements the image viewer. Open a file from the explorer to play **video** (MP4/M4V/MOV/MKV/AVI/WMV/WEBM and more) or **audio** (MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA, AIFF…) natively, with transport controls plus **mute/unmute** and a **repeat** toggle. **Spacebar** plays/pauses video and **←/→ step one frame** at a time. Audio shows a "now playing" panel with the track name and, when present, **embedded album art** (toggle in **Settings → Media**); a back bar returns to the explorer. Spacebar **Peek** previews media too. Audio/video play in **full multichannel** (5.1/7.1/Atmos) with no forced stereo downmix — enable **Dolby Atmos / DTS:X / Windows Sonic** on your output device and Windows renders the surround/height channels.
+**Video & audio** — an **embedded media player** complements the image viewer. Open a file from the explorer to play **video** (MP4/M4V/MOV/MKV/AVI/WMV/WEBM and more) or **audio** (MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA, AIFF…) natively, with transport controls plus **mute/unmute** and a **repeat** toggle. **Spacebar** plays/pauses video, **←/→ step one frame** at a time, and **Ctrl+C copies the current frame** to the clipboard. Audio shows a "now playing" panel with the track name and, when present, **embedded album art** (toggle in **Settings → Media**); a back bar returns to the explorer. Spacebar **Peek** previews media too. Audio/video play in **full multichannel** (5.1/7.1/Atmos) with no forced stereo downmix — enable **Dolby Atmos / DTS:X / Windows Sonic** on your output device and Windows renders the surround/height channels.
 
 **Settings** — a Settings panel (gear in the title bar / command strip) with:
 - **Appearance → Theme** — System, Light, Dark, **Terminal (green)**, or **Gray**.
@@ -307,6 +307,7 @@ Turn on **Settings → Developer → Developer Mode** to dock a real **terminal 
 | `Shift`+`S` | **Save a screenshot** of the window to `%USERPROFILE%\Pictures\Galileo` |
 | `Space` | Play / pause (video) |
 | `←` / `→` | Step one frame back / forward (video) |
+| `Ctrl`+`C` | Copy the current video frame to the clipboard (video) |
 | `F` | Toggle full screen (viewer only) |
 | `F11` | Toggle full screen (anywhere) |
 | `Del` / `Shift`+`Del` | Delete to Recycle Bin / permanently |

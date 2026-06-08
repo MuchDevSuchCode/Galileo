@@ -4092,6 +4092,26 @@ public sealed partial class MainWindow : Window
         else mp.Play();
     }
 
+    /// <summary>Copies the current video frame (the on-screen video region) to the clipboard.</summary>
+    private async Task CopyVideoFrameAsync()
+    {
+        try
+        {
+            var scale = VideoPlayer.XamlRoot?.RasterizationScale ?? 1.0;
+            var pos = VideoPlayer.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+            double w = VideoPlayer.ActualWidth, h = VideoPlayer.ActualHeight;
+            if (w < 1 || h < 1) return;
+
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            var stream = await ScreenCapture.CaptureClientRectToPngStreamAsync(hwnd, pos.X, pos.Y, w, h, scale);
+            var data = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+            data.SetBitmap(RandomAccessStreamReference.CreateFromStream(stream));
+            Clipboard.SetContent(data);
+            StatusText.Text = "Frame copied to clipboard";
+        }
+        catch (Exception ex) { StatusText.Text = "Copy frame failed: " + ex.Message; App.Log("CopyFrame", ex); }
+    }
+
     /// <summary>Saves a screenshot of the Galileo window to %USERPROFILE%\Pictures\Galileo.</summary>
     private async Task SaveScreenshotAsync()
     {
@@ -4126,6 +4146,8 @@ public sealed partial class MainWindow : Window
                 _ = SaveScreenshotAsync(); e.Handled = true; break;
 
             // ---- Video playback: space = play/pause, arrows = frame step (must precede the viewer cases) ----
+            case VirtualKey.C when InVideo && IsCtrlDown():
+                _ = CopyVideoFrameAsync(); e.Handled = true; break;
             case VirtualKey.Space when InVideo:
                 ToggleVideoPlayPause(); e.Handled = true; break;
             case VirtualKey.Left when InVideo:
