@@ -1320,6 +1320,7 @@ public sealed partial class MainWindow : Window
         HiddenFolderPlaceholder.Visibility = Visibility.Collapsed;
         ExplorerEmpty.Visibility = Visibility.Collapsed;
         UpdateFolderWatch();
+        LoadSortPrefsForCurrentFolder(); // apply this folder's remembered sort/group
 
         if (_currentFolder is null)
         {
@@ -1626,17 +1627,43 @@ public sealed partial class MainWindow : Window
 
     private void Sort_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is RadioMenuFlyoutItem item) { _state.SortBy = item.Tag as string ?? "Name"; _state.Save(); ApplySortAndGroup(); }
+        if (sender is RadioMenuFlyoutItem item) { _state.SortBy = item.Tag as string ?? "Name"; SaveSortPrefsForCurrentFolder(); _state.Save(); ApplySortAndGroup(); }
     }
 
     private void SortDir_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is RadioMenuFlyoutItem item) { _state.SortDescending = (item.Tag as string) == "Desc"; _state.Save(); ApplySortAndGroup(); }
+        if (sender is RadioMenuFlyoutItem item) { _state.SortDescending = (item.Tag as string) == "Desc"; SaveSortPrefsForCurrentFolder(); _state.Save(); ApplySortAndGroup(); }
     }
 
     private void Group_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is RadioMenuFlyoutItem item) { _state.GroupBy = item.Tag as string ?? "None"; _state.Save(); ApplySortAndGroup(); }
+        if (sender is RadioMenuFlyoutItem item) { _state.GroupBy = item.Tag as string ?? "None"; SaveSortPrefsForCurrentFolder(); _state.Save(); ApplySortAndGroup(); }
+    }
+
+    /// <summary>Applies the current folder's saved sort/group (if any) into the live state and
+    /// refreshes the menu/header UI. New folders inherit the last-used sort.</summary>
+    private void LoadSortPrefsForCurrentFolder()
+    {
+        if (_currentFolder is not null && _state.FolderSorts.TryGetValue(_currentFolder, out var p))
+        {
+            _state.SortBy = p.SortBy;
+            _state.SortDescending = p.SortDescending;
+            _state.GroupBy = p.GroupBy;
+        }
+        SyncSortGroupRadios();
+        UpdateSortHeaders();
+    }
+
+    /// <summary>Remembers the current sort/group for the current folder.</summary>
+    private void SaveSortPrefsForCurrentFolder()
+    {
+        if (_currentFolder is null) return;
+        _state.FolderSorts[_currentFolder] = new FolderSortPref
+        {
+            SortBy = _state.SortBy,
+            SortDescending = _state.SortDescending,
+            GroupBy = _state.GroupBy,
+        };
     }
 
     private void SyncSortGroupRadios()
@@ -2859,6 +2886,7 @@ public sealed partial class MainWindow : Window
         if (sender is not Button b || b.Tag is not string key) return;
         if (_state.SortBy == key) _state.SortDescending = !_state.SortDescending;
         else { _state.SortBy = key; _state.SortDescending = false; }
+        SaveSortPrefsForCurrentFolder();
         _state.Save();
         ApplySortAndGroup();
         SyncSortGroupRadios();
