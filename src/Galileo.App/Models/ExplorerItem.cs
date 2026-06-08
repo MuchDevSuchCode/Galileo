@@ -51,7 +51,17 @@ public partial class ExplorerItem : ObservableObject
 
     private bool _iconRequested;
 
-    public ExplorerItem(string path, ExplorerItemKind kind, long size, DateTime modified, string typeName, string? displayName = null, string? shellId = null)
+    /// <summary>Total / free bytes for drives (0 for other items).</summary>
+    public long TotalBytes { get; }
+    public long FreeBytes { get; }
+
+    /// <summary>Show the capacity bar + free/total text (drives with a known size).</summary>
+    public bool ShowCapacity => Kind == ExplorerItemKind.Drive && TotalBytes > 0;
+    public double UsedPercent => TotalBytes > 0 ? (double)(TotalBytes - FreeBytes) / TotalBytes * 100 : 0;
+    public string CapacityText => TotalBytes > 0 ? $"{FormatSize(FreeBytes)} free of {FormatSize(TotalBytes)}" : "";
+    public Visibility CapacityVisibility => ShowCapacity ? Visibility.Visible : Visibility.Collapsed;
+
+    public ExplorerItem(string path, ExplorerItemKind kind, long size, DateTime modified, string typeName, string? displayName = null, string? shellId = null, long totalBytes = 0, long freeBytes = 0)
     {
         Path = path;
         ShellId = shellId;
@@ -59,6 +69,8 @@ public partial class ExplorerItem : ObservableObject
         Size = size;
         Modified = modified;
         TypeName = typeName;
+        TotalBytes = totalBytes;
+        FreeBytes = freeBytes;
         Name = displayName ?? (kind == ExplorerItemKind.Drive ? path : System.IO.Path.GetFileName(path));
         if (string.IsNullOrEmpty(Name)) Name = path;
     }
