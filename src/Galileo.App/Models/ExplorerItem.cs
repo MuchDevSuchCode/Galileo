@@ -31,6 +31,11 @@ public partial class ExplorerItem : ObservableObject
     public string Path { get; }
     public string Name { get; }
 
+    /// <summary>Shell parsing name for items that live in the shell namespace (MTP / portable
+    /// devices) and have no filesystem path; null for ordinary filesystem items.</summary>
+    public string? ShellId { get; }
+    public bool IsShellItem => ShellId is not null;
+
     /// <summary>Name shown in the UI — drops the extension for files when extensions are hidden.</summary>
     public string DisplayName => Kind == ExplorerItemKind.File && !ShowExtensions
         ? System.IO.Path.GetFileNameWithoutExtension(Path)
@@ -46,9 +51,10 @@ public partial class ExplorerItem : ObservableObject
 
     private bool _iconRequested;
 
-    public ExplorerItem(string path, ExplorerItemKind kind, long size, DateTime modified, string typeName, string? displayName = null)
+    public ExplorerItem(string path, ExplorerItemKind kind, long size, DateTime modified, string typeName, string? displayName = null, string? shellId = null)
     {
         Path = path;
+        ShellId = shellId;
         Kind = kind;
         Size = size;
         Modified = modified;
@@ -57,7 +63,7 @@ public partial class ExplorerItem : ObservableObject
         if (string.IsNullOrEmpty(Name)) Name = path;
     }
 
-    public bool IsImage => Kind == ExplorerItemKind.File && PhotoLibrary.IsSupported(Path);
+    public bool IsImage => Kind == ExplorerItemKind.File && PhotoLibrary.IsSupported(IsShellItem ? Name : Path);
 
     public string SizeText => Kind == ExplorerItemKind.File ? FormatSize(Size) : "";
     public string ModifiedText => Modified == default ? "" : Modified.ToString("yyyy-MM-dd HH:mm");
@@ -92,6 +98,20 @@ public partial class ExplorerItem : ObservableObject
         {
         try
         {
+            // Shell-namespace items (MTP/portable devices) have no filesystem path: get the thumbnail
+            // straight from the shell by parsing name (photos thumbnail; folders get the folder icon).
+            if (IsShellItem)
+            {
+                var (sp, sw, sh) = await Task.Run(() => ShellImaging.GetPixels(ShellId!, px, iconOnly: Kind != ExplorerItemKind.File));
+                if (sp is not null && sw > 0 && sh > 0)
+                {
+                    var wb = new WriteableBitmap(sw, sh);
+                    using (var s = wb.PixelBuffer.AsStream()) s.Write(sp, 0, sp.Length);
+                    Icon = wb;
+                }
+                return;
+            }
+
             // Folders & drives: clean shell icon (transparent, orientation-corrected). For folders
             // we also overlay a content preview (the first image inside) — composited ourselves so
             // it's always upright and transparent, unlike the shell's flaky folder thumbnails.
