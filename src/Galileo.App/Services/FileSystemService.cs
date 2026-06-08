@@ -20,9 +20,9 @@ public sealed class FileSystemService
         {
             try
             {
-                if (!d.IsReady) { items.Add(Drive(d.Name, d.Name.TrimEnd('\\'))); continue; }
+                if (!d.IsReady) { items.Add(Drive(d.Name, d.Name.TrimEnd('\\'), 0, 0)); continue; }
                 var label = string.IsNullOrWhiteSpace(d.VolumeLabel) ? "Local Disk" : d.VolumeLabel;
-                items.Add(Drive(d.Name, $"{label} ({d.Name.TrimEnd('\\')})"));
+                items.Add(Drive(d.Name, $"{label} ({d.Name.TrimEnd('\\')})", SafeTotal(d), SafeFree(d)));
             }
             catch { /* skip flaky drives */ }
         }
@@ -117,8 +117,11 @@ public sealed class FileSystemService
         return results;
     }
 
-    private static ExplorerItem Drive(string root, string name) =>
-        new(root, ExplorerItemKind.Drive, 0, default, "Drive", name);
+    private static ExplorerItem Drive(string root, string name, long total, long free) =>
+        new(root, ExplorerItemKind.Drive, 0, default, "Drive", name, totalBytes: total, freeBytes: free);
+
+    private static long SafeTotal(DriveInfo d) { try { return d.TotalSize; } catch { return 0; } }
+    private static long SafeFree(DriveInfo d) { try { return d.TotalFreeSpace; } catch { return 0; } }
 
     private static bool IsWindowsHidden(FileAttributes a) =>
         a.HasFlag(FileAttributes.Hidden) || a.HasFlag(FileAttributes.System);
