@@ -288,6 +288,19 @@ Rendering uses **Win2D** (GPU effect graph) for the preview and a full-resolutio
 
 ---
 
+## Phones & devices (MTP)
+
+Plug in a phone or camera and it appears in the sidebar's **Devices** section and in **This PC** — even though MTP devices have no drive letter or file paths. Galileo browses them through the Windows **shell namespace**:
+
+- **Browse** the device's folders with thumbnails; navigate via the breadcrumb / Up / tabs like any folder.
+- **View** photos and play videos in-app — the file is streamed to a temp copy under `%LocalAppData%\Galileo\.mtp` (wiped at next launch), then opened in the normal viewer/player.
+- **Copy to PC…** (download) the selected items to a folder you choose, and **Upload files…** from your PC onto the device.
+- **New folder**, **Rename…**, and **Delete** on the device — delete is **permanent (no Recycle Bin)** and is confirmed first.
+
+Transfers use the shell's **`IFileOperation`** (with its progress dialog); browsing/thumbnails use `IShellItem` + `IShellItemImageFactory`. *Notes:* file sizes/dates aren't populated for device items yet; the viewer's prev/next doesn't span device photos (single-file view); devices are detected when This PC is shown or on restart (not instant hot-plug).
+
+---
+
 ## Developer Mode (embedded terminal)
 
 Turn on **Settings → Developer → Developer Mode** to dock a real **terminal pane beside the file explorer**. A **Terminal** button then appears in the command strip (and folders get a right-click **Open terminal here**). The pane runs **Command Prompt**, **PowerShell** (`pwsh` if installed, otherwise Windows PowerShell), or **WSL** (when `wsl.exe` is present), starting in the current folder — pick the shell from the dropdown and drag the divider to resize. It's a real console: built on a Windows **pseudo-console (ConPTY)** feeding an **xterm.js** front-end hosted in **WebView2**. (xterm.js loads from a CDN on first use, then is cached; the shell process is terminated when the pane/app closes.)
