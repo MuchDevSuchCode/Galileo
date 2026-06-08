@@ -13,6 +13,14 @@ public enum SlideshowTransition
     KenBurns
 }
 
+/// <summary>A folder's remembered sort/group choice.</summary>
+public sealed class FolderSortPref
+{
+    public string SortBy { get; set; } = "Name";          // Name | Date | Type | Size
+    public bool SortDescending { get; set; }
+    public string GroupBy { get; set; } = "None";         // None | Name | Date | Type | Size
+}
+
 /// <summary>
 /// Persistent app state: which photos are hidden / favorited, plus slideshow
 /// preferences. Stored as JSON under %LocalAppData%\Galileo\state.json.
@@ -32,6 +40,10 @@ public sealed class AppState
 
     /// <summary>Custom locations pinned to the sidebar (local folders, UNC shares, WSL paths).</summary>
     public List<string> PinnedPaths { get; set; } = new();
+
+    /// <summary>Per-folder sort/group overrides (folder path → preference). Folders without an entry
+    /// inherit the last-used global sort below.</summary>
+    public Dictionary<string, FolderSortPref> FolderSorts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public string? LastFolder { get; set; }
 
@@ -137,6 +149,7 @@ public sealed class AppState
                     state.FavoritePaths = new HashSet<string>(state.FavoritePaths, StringComparer.OrdinalIgnoreCase);
                     state.HiddenFolders = new HashSet<string>(state.HiddenFolders ?? new(), StringComparer.OrdinalIgnoreCase);
                     state.FolderThumbnails = new Dictionary<string, string>(state.FolderThumbnails ?? new(), StringComparer.OrdinalIgnoreCase);
+                    state.FolderSorts = new Dictionary<string, FolderSortPref>(state.FolderSorts ?? new(), StringComparer.OrdinalIgnoreCase);
                     return state;
                 }
             }
