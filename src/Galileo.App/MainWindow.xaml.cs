@@ -2016,6 +2016,93 @@ public sealed partial class MainWindow : Window
         _ = LoadCurrentAsync();
     }
 
+    // ---- device write operations (IFileOperation, shell progress UI) ----
+
+    private List<ExplorerItem> SelectedDeviceItems(ExplorerItem clicked)
+    {
+        var sel = SelectedExplorerItems().Where(i => i.IsShellItem).ToList();
+        return sel.Any(s => s == clicked) ? sel : new List<ExplorerItem> { clicked };
+    }
+
+    private async System.Threading.Tasks.Task DeviceCopyToPcAsync(ExplorerItem clicked)
+    {
+        var sel = SelectedDeviceItems(clicked);
+        var picker = new Windows.Storage.Pickers.FolderPicker { SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.Downloads };
+        picker.FileTypeFilter.Add("*");
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        var folder = await picker.PickSingleFolderAsync();
+        if (folder is null) return;
+        try
+        {
+            StatusText.Text = $"Copying {sel.Count} item(s) to {folder.Name}…";
+            _shell.Download(sel.Select(s => s.ShellId!), folder.Path, WinRT.Interop.WindowNative.GetWindowHandle(this));
+            StatusText.Text = "Copied to " + folder.Path;
+        }
+        catch (Exception ex) { StatusText.Text = "Copy failed: " + ex.Message; App.Log("MtpDownload", ex); }
+    }
+
+    private async System.Threading.Tasks.Task DeviceUploadAsync()
+    {
+        if (!ShellLoc.IsShell(_currentFolder)) return;
+        var picker = new Windows.Storage.Pickers.FileOpenPicker { SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.PicturesLibrary };
+        picker.FileTypeFilter.Add("*");
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        var files = await picker.PickMultipleFilesAsync();
+        if (files is null || files.Count == 0) return;
+        try
+        {
+            StatusText.Text = $"Uploading {files.Count} file(s)…";
+            _shell.Upload(files.Select(f => f.Path), ShellLoc.Unwrap(_currentFolder!), WinRT.Interop.WindowNative.GetWindowHandle(this));
+            StatusText.Text = "Uploaded.";
+            LoadCurrentFolder();
+        }
+        catch (Exception ex) { StatusText.Text = "Upload failed: " + ex.Message; App.Log("MtpUpload", ex); }
+    }
+
+    private async System.Threading.Tasks.Task DeviceNewFolderAsync()
+    {
+        if (!ShellLoc.IsShell(_currentFolder)) return;
+        var box = new TextBox { Text = "New folder" };
+        box.Loaded += (_, _) => box.SelectAll();
+        var dlg = new ContentDialog { Title = "New folder", Content = box, PrimaryButtonText = "Create", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = RootGrid.XamlRoot };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        var name = box.Text.Trim();
+        if (name.Length == 0) return;
+        try { _shell.NewFolder(ShellLoc.Unwrap(_currentFolder!), name, WinRT.Interop.WindowNative.GetWindowHandle(this)); LoadCurrentFolder(); }
+        catch (Exception ex) { StatusText.Text = "Couldn't create folder: " + ex.Message; App.Log("MtpNewFolder", ex); }
+    }
+
+    private async System.Threading.Tasks.Task DeviceRenameAsync(ExplorerItem item)
+    {
+        var box = new TextBox { Text = item.Name };
+        box.Loaded += (_, _) =>
+        {
+            var ext = item.IsFolder ? "" : System.IO.Path.GetExtension(item.Name);
+            var baseLen = item.Name.Length - ext.Length;
+            if (baseLen > 0) box.Select(0, baseLen); else box.SelectAll();
+        };
+        var dlg = new ContentDialog { Title = "Rename", Content = box, PrimaryButtonText = "Rename", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = RootGrid.XamlRoot };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        var name = box.Text.Trim();
+        if (name.Length == 0 || name == item.Name) return;
+        try { _shell.Rename(item.ShellId!, name, WinRT.Interop.WindowNative.GetWindowHandle(this)); LoadCurrentFolder(); }
+        catch (Exception ex) { StatusText.Text = "Rename failed: " + ex.Message; App.Log("MtpRename", ex); }
+    }
+
+    private async System.Threading.Tasks.Task DeviceDeleteAsync(ExplorerItem clicked)
+    {
+        var sel = SelectedDeviceItems(clicked);
+        var dlg = new ContentDialog
+        {
+            Title = sel.Count == 1 ? $"Delete “{sel[0].Name}”?" : $"Delete {sel.Count} items?",
+            Content = "This permanently deletes from the device — there is no Recycle Bin.",
+            PrimaryButtonText = "Delete", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, XamlRoot = RootGrid.XamlRoot,
+        };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        try { _shell.Delete(sel.Select(s => s.ShellId!), WinRT.Interop.WindowNative.GetWindowHandle(this)); LoadCurrentFolder(); StatusText.Text = "Deleted."; }
+        catch (Exception ex) { StatusText.Text = "Delete failed: " + ex.Message; App.Log("MtpDelete", ex); }
+    }
+
     private void OpenExplorerItem(ExplorerItem item)
     {
         if (item.IsShellItem)
@@ -2319,6 +2406,16 @@ public sealed partial class MainWindow : Window
 
         if (item is not null)
         {
+            if (item.IsShellItem)
+            {
+                menu.Items.Add(SMI("Open", Symbol.OpenFile, (_, _) => OpenExplorerItem(item)));
+                menu.Items.Add(SMI("Copy to PC…", null, async (_, _) => await DeviceCopyToPcAsync(item)));
+                menu.Items.Add(new MenuFlyoutSeparator());
+                menu.Items.Add(SMI("Rename…", Symbol.Rename, async (_, _) => await DeviceRenameAsync(item)));
+                menu.Items.Add(SMI("Delete", Symbol.Delete, async (_, _) => await DeviceDeleteAsync(item)));
+                menu.ShowAt(target, new FlyoutShowOptions { Position = position });
+                return;
+            }
             menu.Items.Add(SMI(item.IsFolder ? "Open" : "Open", Symbol.OpenFile, (_, _) => OpenExplorerItem(item)));
             if (item.IsImage)
                 menu.Items.Add(SMI("Open in new window", null, (_, _) => OpenInNewWindow(item.Path)));
@@ -2376,6 +2473,12 @@ public sealed partial class MainWindow : Window
             menu.Items.Add(SMI("Delete", Symbol.Delete, async (_, _) => await DeleteExplorerAsync(item)));
             menu.Items.Add(new MenuFlyoutSeparator());
             menu.Items.Add(SMI("Properties", null, (_, _) => { var h = WinRT.Interop.WindowNative.GetWindowHandle(this); ShellOps.ShowProperties(h, item.Path); }));
+        }
+        else if (ShellLoc.IsShell(_currentFolder))
+        {
+            menu.Items.Add(SMI("New folder", Symbol.NewFolder, async (_, _) => await DeviceNewFolderAsync()));
+            menu.Items.Add(SMI("Upload files…", Symbol.Upload, async (_, _) => await DeviceUploadAsync()));
+            menu.Items.Add(SMI("Refresh", Symbol.Refresh, (_, _) => LoadCurrentFolder()));
         }
         else
         {

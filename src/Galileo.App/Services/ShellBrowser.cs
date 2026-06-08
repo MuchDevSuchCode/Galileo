@@ -195,6 +195,82 @@ public sealed class ShellBrowser
         return string.IsNullOrEmpty(name) ? "file" : name;
     }
 
+    // ---- write operations (IFileOperation works across filesystem <-> MTP) ----
+
+    /// <summary>Copies device items (by parsing name) into a filesystem folder.</summary>
+    public void Download(IEnumerable<string> parsingNames, string destFolderPath, IntPtr owner)
+    {
+        var op = CreateOp(owner);
+        var iid = IID_IShellItem;
+        if (SHCreateItemFromParsingName(destFolderPath, IntPtr.Zero, ref iid, out var dest) != 0 || dest is null)
+            throw new IOException("Destination folder not found.");
+        try
+        {
+            foreach (var pn in parsingNames)
+                WithItem(pn, src => op.CopyItem(src, dest, null, IntPtr.Zero));
+            op.PerformOperations();
+        }
+        finally { Marshal.ReleaseComObject(dest); Marshal.ReleaseComObject(op); }
+    }
+
+    /// <summary>Copies filesystem files onto the device folder (by parsing name).</summary>
+    public void Upload(IEnumerable<string> filePaths, string destDeviceParsingName, IntPtr owner)
+    {
+        var op = CreateOp(owner);
+        var iid = IID_IShellItem;
+        if (SHCreateItemFromParsingName(destDeviceParsingName, IntPtr.Zero, ref iid, out var dest) != 0 || dest is null)
+            throw new IOException("Device folder not found.");
+        try
+        {
+            foreach (var fp in filePaths)
+                WithItem(fp, src => op.CopyItem(src, dest, null, IntPtr.Zero));
+            op.PerformOperations();
+        }
+        finally { Marshal.ReleaseComObject(dest); Marshal.ReleaseComObject(op); }
+    }
+
+    public void Delete(IEnumerable<string> parsingNames, IntPtr owner)
+    {
+        var op = CreateOp(owner);
+        try
+        {
+            foreach (var pn in parsingNames)
+                WithItem(pn, src => op.DeleteItem(src, IntPtr.Zero));
+            op.PerformOperations();
+        }
+        finally { Marshal.ReleaseComObject(op); }
+    }
+
+    public void Rename(string parsingName, string newName, IntPtr owner)
+    {
+        var op = CreateOp(owner);
+        try { WithItem(parsingName, src => op.RenameItem(src, newName, IntPtr.Zero)); op.PerformOperations(); }
+        finally { Marshal.ReleaseComObject(op); }
+    }
+
+    public void NewFolder(string parentParsingName, string name, IntPtr owner)
+    {
+        var op = CreateOp(owner);
+        try { WithItem(parentParsingName, dest => op.NewItem(dest, FILE_ATTRIBUTE_DIRECTORY, name, null, IntPtr.Zero)); op.PerformOperations(); }
+        finally { Marshal.ReleaseComObject(op); }
+    }
+
+    private static void WithItem(string parsingName, Action<IShellItem> use)
+    {
+        var iid = IID_IShellItem;
+        if (SHCreateItemFromParsingName(parsingName, IntPtr.Zero, ref iid, out var item) != 0 || item is null) return;
+        try { use(item); } finally { Marshal.ReleaseComObject(item); }
+    }
+
+    private static IFileOperation CreateOp(IntPtr owner)
+    {
+        var t = Type.GetTypeFromCLSID(CLSID_FileOperation) ?? throw new IOException("FileOperation unavailable.");
+        var op = (IFileOperation)Activator.CreateInstance(t)!;
+        op.SetOperationFlags(FOF_NOCONFIRMATION); // we confirm destructive actions ourselves
+        if (owner != IntPtr.Zero) op.SetOwnerWindow(owner);
+        return op;
+    }
+
     // ---- helpers ----
 
     private static IEnumerable<IShellItem> EnumChildren(IShellItem folder)
@@ -231,9 +307,12 @@ public sealed class ShellBrowser
     private static Guid BHID_Stream = new("1CEBB3AB-7C10-499a-A417-92CA16C4CB83");
     private static Guid IID_IStream = new("0000000c-0000-0000-C000-000000000046");
     private static Guid FOLDERID_ComputerFolder = new("0AC0837C-BBF8-452A-850D-79D08E667CA7");
+    private static Guid CLSID_FileOperation = new("3ad05575-8857-4850-9277-11b85bdb8e09");
 
     private const uint SFGAO_STORAGE = 0x00080000, SFGAO_STREAM = 0x00400000,
                        SFGAO_FOLDER = 0x20000000, SFGAO_FILESYSTEM = 0x40000000;
+    private const uint FOF_NOCONFIRMATION = 0x0010;
+    private const uint FILE_ATTRIBUTE_DIRECTORY = 0x0010;
 
     private enum SIGDN : uint
     {
@@ -268,5 +347,31 @@ public sealed class ShellBrowser
         [PreserveSig] int Skip(uint celt);
         [PreserveSig] int Reset();
         [PreserveSig] int Clone(out IEnumShellItems ppenum);
+    }
+
+    // Full vtable in exact order; params we don't use are typed as IntPtr (all pointer-sized).
+    [ComImport, Guid("947aab5f-0a5c-4c13-b4d6-4bf7836fc9f8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IFileOperation
+    {
+        [PreserveSig] int Advise(IntPtr pfops, out uint pdwCookie);
+        [PreserveSig] int Unadvise(uint dwCookie);
+        [PreserveSig] int SetOperationFlags(uint dwOperationFlags);
+        [PreserveSig] int SetProgressMessage([MarshalAs(UnmanagedType.LPWStr)] string pszMessage);
+        [PreserveSig] int SetProgressDialog(IntPtr popd);
+        [PreserveSig] int SetProperties(IntPtr pproparray);
+        [PreserveSig] int SetOwnerWindow(IntPtr hwndOwner);
+        [PreserveSig] int ApplyPropertiesToItem(IShellItem psiItem);
+        [PreserveSig] int ApplyPropertiesToItems(IntPtr punkItems);
+        [PreserveSig] int RenameItem(IShellItem psiItem, [MarshalAs(UnmanagedType.LPWStr)] string pszNewName, IntPtr pfopsItem);
+        [PreserveSig] int RenameItems(IntPtr pUnkItems, [MarshalAs(UnmanagedType.LPWStr)] string pszNewName);
+        [PreserveSig] int MoveItem(IShellItem psiItem, IShellItem psiDestinationFolder, [MarshalAs(UnmanagedType.LPWStr)] string? pszNewName, IntPtr pfopsItem);
+        [PreserveSig] int MoveItems(IntPtr punkItems, IShellItem psiDestinationFolder);
+        [PreserveSig] int CopyItem(IShellItem psiItem, IShellItem psiDestinationFolder, [MarshalAs(UnmanagedType.LPWStr)] string? pszCopyName, IntPtr pfopsItem);
+        [PreserveSig] int CopyItems(IntPtr punkItems, IShellItem psiDestinationFolder);
+        [PreserveSig] int DeleteItem(IShellItem psiItem, IntPtr pfopsItem);
+        [PreserveSig] int DeleteItems(IntPtr punkItems);
+        [PreserveSig] int NewItem(IShellItem psiDestinationFolder, uint dwFileAttributes, [MarshalAs(UnmanagedType.LPWStr)] string pszName, [MarshalAs(UnmanagedType.LPWStr)] string? pszTemplateName, IntPtr pfopsItem);
+        [PreserveSig] int PerformOperations();
+        [PreserveSig] int GetAnyOperationsAborted(out int pfAnyOperationsAborted);
     }
 }
