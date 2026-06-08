@@ -252,6 +252,9 @@ public sealed partial class MainWindow : Window
 
     private bool InViewer => ViewerView.Visibility == Visibility.Visible;
 
+    /// <summary>True while the embedded video player is on screen.</summary>
+    private bool InVideo => VideoPlayer.Visibility == Visibility.Visible;
+
     // ===================== Folder loading =====================
 
     private async void OpenFolder_Click(object sender, RoutedEventArgs e)
@@ -4080,6 +4083,31 @@ public sealed partial class MainWindow : Window
 
     // ===================== Keyboard =====================
 
+    /// <summary>Spacebar toggles video play/pause.</summary>
+    private void ToggleVideoPlayPause()
+    {
+        var mp = VideoPlayer.MediaPlayer;
+        if (mp is null) return;
+        if (mp.PlaybackSession.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing) mp.Pause();
+        else mp.Play();
+    }
+
+    /// <summary>Saves a screenshot of the Galileo window to %USERPROFILE%\Pictures\Galileo.</summary>
+    private async Task SaveScreenshotAsync()
+    {
+        try
+        {
+            var dir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Pictures", "Galileo");
+            Directory.CreateDirectory(dir);
+            var name = $"Galileo_{DateTimeOffset.Now:yyyy-MM-dd_HH-mm-ss}.png";
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            var saved = await ScreenCapture.CaptureWindowAsync(hwnd, System.IO.Path.Combine(dir, name));
+            StatusText.Text = "Screenshot saved: " + saved;
+        }
+        catch (Exception ex) { StatusText.Text = "Screenshot failed: " + ex.Message; App.Log("Screenshot", ex); }
+    }
+
     private void RootGrid_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         // While the Peek overlay is open it owns the keyboard (handled in Peek_KeyDown) — don't let
@@ -4092,6 +4120,18 @@ public sealed partial class MainWindow : Window
                 if (ExplorerView.Visibility == Visibility.Visible) LoadCurrentFolder();
                 else StartSlideshow();
                 e.Handled = true; break;
+
+            // Shift+S: save a screenshot of the window (skip while typing).
+            case VirtualKey.S when IsShiftDown() && !IsTextInputFocused():
+                _ = SaveScreenshotAsync(); e.Handled = true; break;
+
+            // ---- Video playback: space = play/pause, arrows = frame step (must precede the viewer cases) ----
+            case VirtualKey.Space when InVideo:
+                ToggleVideoPlayPause(); e.Handled = true; break;
+            case VirtualKey.Left when InVideo:
+                VideoPlayer.MediaPlayer?.StepBackwardOneFrame(); e.Handled = true; break;
+            case VirtualKey.Right when InVideo:
+                VideoPlayer.MediaPlayer?.StepForwardOneFrame(); e.Handled = true; break;
             case VirtualKey.Delete when ExplorerView.Visibility == Visibility.Visible:
                 _ = DeleteSelectedExplorerAsync(); e.Handled = true; break;
 
