@@ -64,6 +64,9 @@ public sealed partial class MainWindow : Window
     // Open archives: maps a zip's extracted temp dir -> (zip path, display name) for breadcrumb labels.
     private readonly Dictionary<string, (string ZipPath, string Name)> _openZips = new(StringComparer.OrdinalIgnoreCase);
 
+    // Shell-namespace browser for MTP / portable devices (phones, cameras) — no filesystem paths.
+    private readonly ShellBrowser _shell = new();
+
     // Live folder refresh: auto-show files added/removed/renamed outside the app.
     private FileSystemWatcher? _folderWatcher;
     private string? _watchedPath;
@@ -167,6 +170,8 @@ public sealed partial class MainWindow : Window
 
         PopulateSidebar();
         PopulatePinned();
+        PopulateDevices();
+        _shell.WipeTemp(); // clear any device temp copies left by a previous run
 
         // Secure vault: wipe any decrypted working folder left by a crash, list vaults, and arm the
         // idle auto-lock + app-exit lock.
@@ -1228,6 +1233,22 @@ public sealed partial class MainWindow : Window
         foreach (var i in items) _ = i.LoadIconAsync(32);
     }
 
+    /// <summary>Connected portable devices (phones/cameras) as navigable shell-location items.</summary>
+    private List<ExplorerItem> DeviceItems() =>
+        _shell.GetPortableDevices()
+            .Select(d => new ExplorerItem(ShellLoc.Wrap(d.ParsingName), ExplorerItemKind.Folder, 0, default,
+                                          "Portable device", displayName: d.Name, shellId: d.ParsingName))
+            .ToList();
+
+    /// <summary>Refreshes the sidebar's Devices section (hidden when nothing is connected).</summary>
+    private void PopulateDevices()
+    {
+        var items = DeviceItems();
+        DevicesSection.Visibility = items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        DevicesList.ItemsSource = items;
+        foreach (var i in items) _ = i.LoadIconAsync(32);
+    }
+
     private static string FriendlyPinName(string path)
     {
         var trimmed = path.TrimEnd('\\', '/');
@@ -1325,12 +1346,24 @@ public sealed partial class MainWindow : Window
         UpdateFolderWatch();
         LoadSortPrefsForCurrentFolder(); // apply this folder's remembered sort/group
 
-        if (_currentFolder is null)
+        // Shell-namespace location (MTP / portable device) — enumerate via the shell, no filesystem.
+        if (ShellLoc.IsShell(_currentFolder))
         {
-            _explorerRaw = _fs.GetQuickAccess().Concat(_fs.GetDrives()).ToList();
+            _explorerRaw = _shell.List(ShellLoc.Unwrap(_currentFolder!));
             ApplySortAndGroup();
             ApplyViewMode();
             UpdateHideFolderButton();
+            StatusText.Text = $"{_explorerRaw.Count} item(s)";
+            return;
+        }
+
+        if (_currentFolder is null)
+        {
+            _explorerRaw = _fs.GetQuickAccess().Concat(_fs.GetDrives()).Concat(DeviceItems()).ToList();
+            ApplySortAndGroup();
+            ApplyViewMode();
+            UpdateHideFolderButton();
+            PopulateDevices(); // refresh the sidebar's device list whenever This PC is shown
             StatusText.Text = "This PC";
             return;
         }
@@ -1712,6 +1745,28 @@ public sealed partial class MainWindow : Window
     {
         Breadcrumb.Children.Clear();
 
+        // Shell-namespace location (MTP device): build the trail from the shell parent chain.
+        if (ShellLoc.IsShell(_currentFolder))
+        {
+            AddCrumb("This PC", null);
+            var chain = new List<(string Name, string Loc)>();
+            string? pn = ShellLoc.Unwrap(_currentFolder!);
+            var guard = 0;
+            while (pn is not null && guard++ < 64)
+            {
+                chain.Insert(0, (_shell.DisplayName(pn), ShellLoc.Wrap(pn)));
+                pn = _shell.GetParentParsingName(pn);
+            }
+            foreach (var (name, loc) in chain)
+            {
+                Breadcrumb.Children.Add(new TextBlock { Text = "›", Opacity = 0.5, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 2, 0) });
+                AddCrumb(name, loc);
+            }
+            BreadcrumbScroller.UpdateLayout();
+            BreadcrumbScroller.ChangeView(BreadcrumbScroller.ScrollableWidth, null, null, true);
+            return;
+        }
+
         // Inside a vault or an opened zip, root the trail at the friendly name and hide the temp path.
         if (_currentFolder is not null && SpecialRootFor(_currentFolder) is { } sr)
         {
@@ -1781,6 +1836,12 @@ public sealed partial class MainWindow : Window
     private void NavUp_Click(object sender, RoutedEventArgs e)
     {
         if (_currentFolder is null) return;
+        if (ShellLoc.IsShell(_currentFolder))
+        {
+            var parent = _shell.GetParentParsingName(ShellLoc.Unwrap(_currentFolder));
+            NavigateTo(parent is null ? null : ShellLoc.Wrap(parent));
+            return;
+        }
         NavigateTo(Directory.GetParent(_currentFolder)?.FullName);
     }
 
@@ -1925,8 +1986,44 @@ public sealed partial class MainWindow : Window
         StatusText.Text = $"Extracted to {dest}";
     }
 
+    /// <summary>Streams a device file to a temp copy, then opens it with the right viewer.</summary>
+    private async System.Threading.Tasks.Task OpenDeviceFileAsync(ExplorerItem item)
+    {
+        StatusText.Text = $"Opening {item.Name}…";
+        string temp;
+        try { temp = await _shell.CopyToTempAsync(item.ShellId!, item.Name); }
+        catch (Exception ex) { StatusText.Text = "Couldn't open from device: " + ex.Message; App.Log("MtpOpen", ex); return; }
+
+        if (PhotoLibrary.IsSupported(temp)) OpenSingleImage(temp);
+        else if (PhotoLibrary.IsMedia(temp)) OpenVideoFromExplorer(new ExplorerItem(temp, ExplorerItemKind.File, 0, default, "Media"));
+        else
+        {
+            try { ShellOps.AllowForeground(); System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = temp, UseShellExecute = true }); }
+            catch (Exception ex) { StatusText.Text = ex.Message; App.Log("MtpOpenDefault", ex); }
+        }
+    }
+
+    /// <summary>Opens a single local image file in the viewer (one-item pipeline).</summary>
+    private void OpenSingleImage(string path)
+    {
+        _allPhotos.Clear();
+        _allPhotos.AddRange(_library.LoadFiles(new[] { path }));
+        _showHiddenAlbum = false;
+        _favoritesOnly = false;
+        RefreshView();
+        _currentIndex = 0;
+        ShowViewer();
+        _ = LoadCurrentAsync();
+    }
+
     private void OpenExplorerItem(ExplorerItem item)
     {
+        if (item.IsShellItem)
+        {
+            if (item.IsFolder) NavigateTo(ShellLoc.Wrap(item.ShellId!));
+            else _ = OpenDeviceFileAsync(item); // stream to temp, then open (Phase 2)
+            return;
+        }
         if (item.IsFolder) NavigateTo(item.Path);
         else if (item.IsImage) OpenImageFromExplorer(item);
         else if (PhotoLibrary.IsMedia(item.Path)) OpenVideoFromExplorer(item);
@@ -2948,7 +3045,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (_searchRecursive && _currentFolder is not null)
+        if (_searchRecursive && _currentFolder is not null && !ShellLoc.IsShell(_currentFolder))
         {
             var q = _searchQuery;
             var root = _currentFolder;
@@ -3000,6 +3097,7 @@ public sealed partial class MainWindow : Window
     private string TabHeaderFor(string? folder)
     {
         if (folder is null) return "This PC";
+        if (ShellLoc.IsShell(folder)) return _shell.DisplayName(ShellLoc.Unwrap(folder));
         // Inside a vault or an opened zip, show the friendly name at its root (not the temp GUID path).
         if (SpecialRootFor(folder) is { } sr)
         {

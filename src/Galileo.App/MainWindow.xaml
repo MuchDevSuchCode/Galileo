@@ -56,6 +56,21 @@
                             </ListView.ItemTemplate>
                         </ListView>
 
+                        <StackPanel x:Name="DevicesSection" Visibility="Collapsed">
+                            <TextBlock Text="Devices" Opacity="0.6" FontSize="12" Margin="10,12,0,4" />
+                            <ListView x:Name="DevicesList" SelectionMode="None" IsItemClickEnabled="True"
+                                      ItemClick="Sidebar_ItemClick">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Spacing="10" Height="32">
+                                            <Image Source="{Binding Icon}" Width="18" Height="18" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+
                         <TextBlock Text="Pinned" Opacity="0.6" FontSize="12" Margin="10,12,0,4" />
                         <ListView x:Name="PinnedList" SelectionMode="None" IsItemClickEnabled="True"
                                   ItemClick="Sidebar_ItemClick" RightTapped="PinnedList_RightTapped">
