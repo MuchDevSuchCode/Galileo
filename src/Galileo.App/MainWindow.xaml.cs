@@ -1138,6 +1138,10 @@ public sealed partial class MainWindow : Window
         ExplorerIconsView.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler(ExplorerIcons_PointerMoved), true);
         ExplorerIconsView.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(ExplorerIcons_PointerReleased), true);
         ExplorerIconsView.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(ExplorerIcons_PointerCaptureLost), true);
+
+        // Middle-click an image to open it in a new window (both views).
+        ExplorerIconsView.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Explorer_MiddleClick), true);
+        ExplorerDetailsList.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Explorer_MiddleClick), true);
     }
 
     /// <summary>A cheap fingerprint of the current drives (letter + ready state) to detect changes.</summary>
@@ -1796,7 +1800,26 @@ public sealed partial class MainWindow : Window
     private void ExplorerItem_Click(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is not ExplorerItem item) return;
+        if (IsAltDown() && item.IsImage) { OpenInNewWindow(item.Path); return; }
         OpenExplorerItem(item);
+    }
+
+    /// <summary>Launches a fresh Galileo instance to open the path in its own window (works even in
+    /// single-instance mode via the --new-window flag).</summary>
+    private void OpenInNewWindow(string path)
+    {
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(exe)) return;
+            ShellOps.AllowForeground();
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe)
+            {
+                UseShellExecute = false,
+                ArgumentList = { "--new-window", path },
+            });
+        }
+        catch (Exception ex) { StatusText.Text = "Couldn't open a new window: " + ex.Message; App.Log("NewWindow", ex); }
     }
 
     /// <summary>Lets the user drag files/folders out to Explorer, terminals, chat apps, etc.</summary>
@@ -1893,7 +1916,10 @@ public sealed partial class MainWindow : Window
     {
         if (_state.SingleClickToOpen) return; // single-click already opened it
         if ((e.OriginalSource as FrameworkElement)?.DataContext is ExplorerItem item)
+        {
+            if (IsAltDown() && item.IsImage) { OpenInNewWindow(item.Path); return; }
             OpenExplorerItem(item);
+        }
     }
 
     // ---- Embedded video player ----
@@ -2167,6 +2193,8 @@ public sealed partial class MainWindow : Window
         if (item is not null)
         {
             menu.Items.Add(SMI(item.IsFolder ? "Open" : "Open", Symbol.OpenFile, (_, _) => OpenExplorerItem(item)));
+            if (item.IsImage)
+                menu.Items.Add(SMI("Open in new window", null, (_, _) => OpenInNewWindow(item.Path)));
             if (!item.IsFolder)
                 menu.Items.Add(SMI("Open with…", null, (_, _) => OpenWithItem2(item.Path)));
             menu.Items.Add(new MenuFlyoutSeparator());
@@ -2411,6 +2439,13 @@ public sealed partial class MainWindow : Window
     private static bool IsShiftDown()
     {
         var state = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift);
+        return (state & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
+    }
+
+    /// <summary>True while Alt is held — used for the "open in new window" gesture (Shift/Ctrl are taken by multi-select).</summary>
+    private static bool IsAltDown()
+    {
+        var state = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Menu);
         return (state & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
     }
 
@@ -3010,6 +3045,17 @@ public sealed partial class MainWindow : Window
             node = VisualTreeHelper.GetParent(node);
         }
         return null;
+    }
+
+    /// <summary>Middle-clicking an image opens it in a new window (like a browser's open-in-new-tab).</summary>
+    private void Explorer_MiddleClick(object sender, PointerRoutedEventArgs e)
+    {
+        if (!e.GetCurrentPoint((UIElement)sender).Properties.IsMiddleButtonPressed) return;
+        if ((e.OriginalSource as FrameworkElement)?.DataContext is ExplorerItem item && item.IsImage)
+        {
+            OpenInNewWindow(item.Path);
+            e.Handled = true;
+        }
     }
 
     private void ExplorerIcons_PointerPressed(object sender, PointerRoutedEventArgs e)

@@ -38,6 +38,8 @@ public static class Program
     private static bool DecideRedirection()
     {
         if (!App.State.SingleInstance) return false;
+        // "Open in new window" always gets its own window, even in single-instance mode.
+        if (System.Linq.Enumerable.Contains(Environment.GetCommandLineArgs(), "--new-window")) return false;
         try
         {
             var keyInstance = AppInstance.FindOrRegisterForKey("Galileo-SingleInstance");
