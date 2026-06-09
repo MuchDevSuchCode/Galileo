@@ -1266,6 +1266,19 @@
                                             <Button x:Name="BackupNowBtn" Content="Back up all vaults now" Click="BackupNow_Click" IsEnabled="False" />
                                             <Button x:Name="BackupRestoreBtn" Content="Restore from Drive…" Click="BackupRestore_Click" IsEnabled="False" />
                                         </StackPanel>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Automatic backup" />
+                                                <TextBlock Text="Back up all vaults on a schedule while Galileo is open and signed in."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ComboBox Grid.Column="1" x:Name="BackupScheduleCombo" Style="{StaticResource SettingControl}"
+                                                      SelectionChanged="BackupScheduleCombo_SelectionChanged">
+                                                <ComboBoxItem Content="Off" />
+                                                <ComboBoxItem Content="Daily" />
+                                                <ComboBoxItem Content="Weekly" />
+                                            </ComboBox>
+                                        </Grid>
                                         <TextBlock x:Name="LastBackupText" Style="{StaticResource SettingDesc}" />
                                         <TextBlock Text="Only fully-encrypted vault files (obfuscated names) are uploaded. The key never leaves your device."
                                                    Style="{StaticResource SettingDesc}" />

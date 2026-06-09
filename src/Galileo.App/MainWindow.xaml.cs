@@ -91,6 +91,9 @@ public sealed partial class MainWindow : Window
     // Secure vault state.
     private readonly VaultManager _vaults = new();
     private readonly GoogleDriveBackup _drive = new();
+
+    // Scheduled vault backups: a periodic check runs a backup when one is overdue (see AppState.BackupSchedule).
+    private readonly DispatcherTimer _backupTimer = new() { Interval = TimeSpan.FromMinutes(30) };
     private readonly ObservableCollection<Models.VaultInfo> _vaultList = new();
     private readonly DispatcherTimer _vaultIdleTimer = new();
     private bool _closingForVaultLock;  // guards the re-entrant AppWindow.Closing lock flow
@@ -194,6 +197,11 @@ public sealed partial class MainWindow : Window
 
         // Stay signed in to Google Drive across launches (silent token refresh; no browser).
         if (GoogleDriveBackup.IsConfigured) _ = SilentReconnectDriveAsync();
+
+        // Scheduled vault backups: re-check periodically while the app is open (launch check runs
+        // once the silent reconnect above completes).
+        _backupTimer.Tick += async (_, _) => await MaybeRunScheduledBackupAsync();
+        _backupTimer.Start();
 
         ApplyDeveloperMode(); // show/hide the Terminal button per the saved setting
         SetResizeCursor(TerminalSplitter); // ↔ cursor on the explorer/terminal divider
@@ -4030,9 +4038,10 @@ public sealed partial class MainWindow : Window
     {
         try { await _drive.TryReconnectAsync(); }
         catch (Exception ex) { App.Log("DriveReconnect", ex); }
-        DispatcherQueue.TryEnqueue(() =>
+        DispatcherQueue.TryEnqueue(async () =>
         {
             if (SettingsOverlay.Visibility == Visibility.Visible) UpdateBackupUi();
+            await MaybeRunScheduledBackupAsync(); // launch-time backup if overdue and now connected
         });
     }
 
@@ -4048,29 +4057,59 @@ public sealed partial class MainWindow : Window
         UpdateBackupUi();
     }
 
-    private async void BackupNow_Click(object sender, RoutedEventArgs e)
-    {
-        if (!_drive.IsConnected) return;
-        var vaults = _vaults.List();
-        if (vaults.Count == 0) { BackupStatusText.Text = "No vaults to back up."; return; }
+    private async void BackupNow_Click(object sender, RoutedEventArgs e) => await BackupAllVaultsAsync(silent: false);
 
-        BackupNowBtn.IsEnabled = false;
-        var progress = new Progress<string>(m => BackupStatusText.Text = m);
+    private bool _backupRunning;
+
+    /// <summary>Backs up every vault to Google Drive. <paramref name="silent"/> = a scheduled run
+    /// (no button toggling; quiet status), otherwise the user pressed "Back up all vaults now".</summary>
+    private async Task BackupAllVaultsAsync(bool silent)
+    {
+        if (_backupRunning || !_drive.IsConnected) return;
+        var vaults = _vaults.List();
+        if (vaults.Count == 0) { if (!silent) BackupStatusText.Text = "No vaults to back up."; return; }
+
+        _backupRunning = true;
+        if (!silent) BackupNowBtn.IsEnabled = false;
+        var progress = new Progress<string>(m => { if (!silent) BackupStatusText.Text = m; });
         try
         {
             var n = 0;
             foreach (var v in vaults)
             {
-                BackupStatusText.Text = $"Backing up “{v.Name}” ({++n}/{vaults.Count})…";
+                if (!silent) BackupStatusText.Text = $"Backing up “{v.Name}” ({++n}/{vaults.Count})…";
                 await _drive.BackupVaultAsync(v, progress);
             }
             _state.LastVaultBackupUtcTicks = DateTime.UtcNow.Ticks;
             ForceSaveState();
-            UpdateBackupUi();
-            BackupStatusText.Text = $"Backed up {vaults.Count} vault(s).";
+            if (silent) StatusText.Text = $"Scheduled backup complete ({vaults.Count} vault(s)).";
+            else BackupStatusText.Text = $"Backed up {vaults.Count} vault(s).";
+            if (SettingsOverlay.Visibility == Visibility.Visible) UpdateBackupUi();
         }
-        catch (Exception ex) { BackupStatusText.Text = "Backup failed: " + ex.Message; App.Log("DriveBackup", ex); }
-        finally { BackupNowBtn.IsEnabled = _drive.IsConnected; }
+        catch (Exception ex)
+        {
+            if (!silent) BackupStatusText.Text = "Backup failed: " + ex.Message;
+            App.Log("DriveBackup", ex);
+        }
+        finally { _backupRunning = false; if (!silent) BackupNowBtn.IsEnabled = _drive.IsConnected; }
+    }
+
+    /// <summary>Runs a scheduled backup if one is due (cadence elapsed, connected, vaults present).</summary>
+    private async Task MaybeRunScheduledBackupAsync()
+    {
+        if (_backupRunning || !_drive.IsConnected) return;
+        var interval = _state.BackupSchedule switch
+        {
+            "Daily" => TimeSpan.FromDays(1),
+            "Weekly" => TimeSpan.FromDays(7),
+            _ => TimeSpan.Zero, // Off
+        };
+        if (interval == TimeSpan.Zero) return;
+        var last = _state.LastVaultBackupUtcTicks > 0
+            ? new DateTime(_state.LastVaultBackupUtcTicks, DateTimeKind.Utc)
+            : DateTime.MinValue;
+        if (DateTime.UtcNow - last < interval) return; // not due yet
+        await BackupAllVaultsAsync(silent: true);
     }
 
     private async void BackupRestore_Click(object sender, RoutedEventArgs e)
@@ -4320,6 +4359,20 @@ public sealed partial class MainWindow : Window
         _state.Save();
     }
 
+    private async void BackupScheduleCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.BackupSchedule = BackupScheduleCombo.SelectedIndex switch { 1 => "Daily", 2 => "Weekly", _ => "Off" };
+        _state.Save();
+        if (_state.BackupSchedule != "Off")
+        {
+            if (!_drive.IsConnected)
+                BackupStatusText.Text = "Sign in to Google Drive to enable scheduled backups.";
+            else
+                await MaybeRunScheduledBackupAsync(); // back up now if already overdue
+        }
+    }
+
     private void PopulateShells()
     {
         _shells.Clear();
@@ -4473,6 +4526,7 @@ public sealed partial class MainWindow : Window
         };
         SecureEmptySwitch.IsOn = _state.SecureDeleteOnEmpty;
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
+        BackupScheduleCombo.SelectedIndex = _state.BackupSchedule switch { "Daily" => 1, "Weekly" => 2, _ => 0 };
         UpdateBackupUi();
         SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
         SlideshowSecondsValue.Text = $"{_state.SlideshowSeconds}s";
