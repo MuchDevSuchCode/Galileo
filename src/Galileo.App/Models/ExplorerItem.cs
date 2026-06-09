@@ -124,28 +124,19 @@ public partial class ExplorerItem : ObservableObject
                 return;
             }
 
-            // Folders & drives: clean shell icon (transparent, orientation-corrected). For folders
-            // we also overlay a content preview (the first image inside) — composited ourselves so
-            // it's always upright and transparent, unlike the shell's flaky folder thumbnails.
+            // Folders & drives: Galileo's own flat icon (not the Windows shell icon). Folders overlay
+            // a content preview (the first image inside), composited ourselves so it stays upright.
             if (Kind != ExplorerItemKind.File)
             {
-                var (pixels, w, h) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: true));
-                if (pixels is not null && w > 0 && h > 0)
-                {
-                    if (Kind == ExplorerItemKind.Folder && ShowFolderPreviews)
-                        await TryOverlayFirstImageAsync(path, pixels, w, h, px);
+                var pixels = Kind == ExplorerItemKind.Drive
+                    ? await Task.Run(() => IconFactory.RenderDrive(px))
+                    : await Task.Run(() => IconFactory.RenderFolder(px));
+                if (Kind == ExplorerItemKind.Folder && ShowFolderPreviews)
+                    await TryOverlayFirstImageAsync(path, pixels, px, px, px);
 
-                    var wb = new WriteableBitmap(w, h);
-                    using (var s = wb.PixelBuffer.AsStream()) s.Write(pixels, 0, pixels.Length);
-                    Icon = wb;
-                    return;
-                }
-                var folderThumb = await (await StorageFolder.GetFolderFromPathAsync(path))
-                    .GetThumbnailAsync(ThumbnailMode.SingleItem, size, ThumbnailOptions.ResizeThumbnail);
-                if (folderThumb is not null)
-                {
-                    using (folderThumb) { var b = new BitmapImage(); await b.SetSourceAsync(folderThumb); Icon = b; }
-                }
+                var wb = new WriteableBitmap(px, px);
+                using (var s = wb.PixelBuffer.AsStream()) s.Write(pixels, 0, pixels.Length);
+                Icon = wb;
                 return;
             }
 
@@ -161,24 +152,29 @@ public partial class ExplorerItem : ObservableObject
                 return;
             }
 
-            // Otherwise resolve a proper file-type / shortcut icon via the shell so it's never blank
-            // (covers .lnk, .url, .exe, and unknown types). Try a thumbnail-or-icon, then icon-only.
-            var (ip, iw, ih) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: false));
-            if (ip is null) (ip, iw, ih) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: true));
-            if (ip is not null && iw > 0 && ih > 0)
+            // No real preview. Keep app/shortcut branding (those icons aren't Windows' generic ones)
+            // via the shell; for everything else use Galileo's own page-with-extension-badge icon.
+            var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+            var appIcon = ext is ".exe" or ".lnk" or ".url" or ".msi" or ".ico" or ".scr" or ".cpl";
+            if (appIcon)
             {
-                var wb = new WriteableBitmap(iw, ih);
-                using (var s = wb.PixelBuffer.AsStream()) s.Write(ip, 0, ip.Length);
-                Icon = wb;
-                thumb?.Dispose();
-                return;
+                var (ip, iw, ih) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: false));
+                if (ip is null) (ip, iw, ih) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: true));
+                if (ip is not null && iw > 0 && ih > 0)
+                {
+                    var wbApp = new WriteableBitmap(iw, ih);
+                    using (var s = wbApp.PixelBuffer.AsStream()) s.Write(ip, 0, ip.Length);
+                    Icon = wbApp;
+                    thumb?.Dispose();
+                    return;
+                }
             }
 
-            // Last resort: whatever icon thumbnail we got.
-            if (thumb is not null)
-            {
-                using (thumb) { var b = new BitmapImage(); await b.SetSourceAsync(thumb); Icon = b; }
-            }
+            var fp = await Task.Run(() => IconFactory.RenderFile(px, ext));
+            var wbFile = new WriteableBitmap(px, px);
+            using (var s = wbFile.PixelBuffer.AsStream()) s.Write(fp, 0, fp.Length);
+            Icon = wbFile;
+            thumb?.Dispose();
         }
         catch
         {
