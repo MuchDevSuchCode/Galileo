@@ -85,7 +85,7 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 - **Choose what's in it:** *Select photos* in the gallery's More menu to hand-pick images, or **drag-and-drop** image files onto an open collage to add them.
 - **Shuffle** re-arranges to a fresh fit; a **− N +** stepper sets how many photos; **Save** exports to PNG; clicking a tile opens it in the viewer. Re-fits on window resize.
 
-**Video & audio** — an **embedded media player** complements the image viewer. Open a file from the explorer to play **video** (MP4/M4V/MOV/MKV/AVI/WMV/WEBM and more) or **audio** (MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA, AIFF…) natively, with transport controls plus a **volume control** (a speaker icon you click to mute/unmute, with a slider) and a **repeat** toggle. **Spacebar** plays/pauses video, **←/→ step one frame** at a time, and **Ctrl+C copies the current frame** to the clipboard. Videos can **start muted** (Settings → Photos & Videos). Audio shows a "now playing" panel with the track name and, when present, **embedded album art** (toggle in **Settings → Photos & Videos**); a back bar returns to the explorer. Spacebar **Peek** previews media too. Audio/video play in **full multichannel** (5.1/7.1/Atmos) with no forced stereo downmix — enable **Dolby Atmos / DTS:X / Windows Sonic** on your output device and Windows renders the surround/height channels.
+**Video & audio** — an **embedded media player** complements the image viewer. Open a file from the explorer to play **video** (MP4/M4V/MOV/MKV/AVI/WMV/WEBM and more) or **audio** (MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA, AIFF…) natively, with transport controls plus a **volume control** (a speaker icon you click to mute/unmute, with a slider) and a **repeat** toggle. **Spacebar** plays/pauses video, **←/→ step one frame** at a time, and **Ctrl+C copies the current frame** to the clipboard. Videos can **start muted** (Settings → Photos & Videos). Audio shows a "now playing" panel with the track name and, when present, **embedded album art** (toggle in **Settings → Photos & Videos**); a back bar returns to the explorer. Spacebar **Peek** previews media too. Audio/video play in **full multichannel** (5.1/7.1/Atmos) with no forced stereo downmix — enable **Dolby Atmos / DTS:X / Windows Sonic** on your output device and Windows renders the surround/height channels. Click **Edit** in the player to open the **[video editor](#video-editor)** (trim, crop, filters, export).
 
 **Settings** — a Settings panel (gear in the title bar / command strip), organized into clean, logically-grouped sections:
 - **Appearance** — Theme (System, Light, Dark, **Terminal (green)**, Gray), Default icon size (Small / Medium / Large), and **Folder content previews** on/off.
@@ -134,6 +134,7 @@ The panel has **Save / Cancel** buttons, so live edits only persist when you cli
 - **UI:** WinUI 3 (Windows App SDK **1.6**), Fluent Design, Mica backdrop. Unpackaged, self-contained desktop app.
 - **Runtime:** .NET 8, C# 12.
 - **Imaging:** `Windows.Storage` thumbnails + `BitmapImage`; GPU-composited transform-based viewer (zoom/pan/rotate via `CompositeTransform`); **Win2D** for the image editor and Galileo's own folder/drive/file icons.
+- **Video editing:** **bundled FFmpeg + FFprobe** (driven by a parameter→filter-graph builder), ported from the standalone *mp4mix* editor.
 - **MVVM:** CommunityToolkit.Mvvm (observable `PhotoItem`).
 - **Storage:** JSON app-state (`%LocalAppData%\Galileo\state.json`) for hidden/favorite flags and slideshow settings.
 
@@ -157,6 +158,7 @@ Galileo/
 │     │                        #   FileTransfer (copy/move engine with progress, pause/resume/cancel),
 │     │                        #   ShellOps (clipboard / properties / wallpaper / lock screen), ImageCompositor, CollageLayout,
 │     │                        #   ImageEditor (Win2D crop/rotate/adjust/filter/markup), ScreenCapture (screenshots / video-frame copy),
+│     │                        #   FfmpegVideo (bundled FFmpeg video editor: trim/crop/filters/export),
 │     │                        #   HelloAuth + HelloKey (Windows Hello), DecodeThrottle (scroll-safe thumbnail decoding),
 │     │                        #   Vault / VaultManager / VaultCrypto (AES-256-GCM + Argon2id secure vault),
 │     │                        #   GoogleDriveBackup (encrypted cloud backup), ArchiveService (.zip),
@@ -291,6 +293,22 @@ Open any image and click **Edit** (the pencil in the viewer toolbar, or right-cl
 - **Undo / Redo / Reset**, then **Save** — by default it writes a **copy** next to the original (`<name>-edited.<ext>`) so the source is never touched; the Save dropdown also offers **Save as…** and **Overwrite original**.
 
 Rendering uses **Win2D** (GPU effect graph) for the preview and a full-resolution bake on save. Edits are non-destructive until you save, and the saved copy appears in the folder automatically (live refresh). HEIC/RAW sources are supported when the OS codec is installed.
+
+---
+
+## Video editor
+
+Open a video and click **Edit** (the pencil in the player's controls) for a full **FFmpeg-powered video editor**, docked beside the player. Editing is **non-destructive** — your settings are turned into an FFmpeg filter graph that runs against the **original** file at export time, so quality is never compromised.
+
+- **Trim** — Set start / Set end from the current playback position; or build a **multi-segment** cut (add several ranges and they're stitched into one export — great for removing ads or mistakes).
+- **Transform** — rotate (90° steps), flip horizontal/vertical, **crop** (pixel margins), and **resize** (Lanczos).
+- **Filters** — deinterlace, denoise, sharpen, **stabilize** shaky footage (two-pass vidstab), and **brightness / contrast / saturation**.
+- **Speed & audio** — playback speed 0.25×–4× (audio pitch-corrected with atempo), output frame-rate change, and audio mode (keep / re-encode AAC / re-encode MP3 / mute).
+- **Output** — containers **MP4 / MKV / MPEG-TS / animated GIF**; codecs **H.264 / H.265 / stream-copy** plus any **detected GPU encoders** (NVENC / Quick Sync / AMD); a **CRF** quality slider and encoder preset.
+- **Save frame** — export the current frame as a PNG.
+- Exports run on a background thread and show the **floating progress card** with **Cancel** (and **Hide** to keep working). FFmpeg & FFprobe are **bundled** with the app — nothing to install.
+
+> Ported from the standalone *mp4mix* editor. AI upscaling (Real-ESRGAN) from mp4mix is not included.
 
 ---
 

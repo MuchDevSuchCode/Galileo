@@ -35,6 +35,10 @@
     <Content Include="Assets\google-oauth.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('Assets\google-oauth.json')" />
     <!-- google-oauth.json is gitignored (holds the OAuth client secret); ship it with the build, never commit it. -->
     <None Remove="Assets\google-oauth.json" />
+    <!-- Bundled FFmpeg/FFprobe power the video editor. Gitignored (large binaries); copied into builds. -->
+    <Content Include="Assets\ffmpeg\ffmpeg.exe" CopyToOutputDirectory="PreserveNewest" Condition="Exists('Assets\ffmpeg\ffmpeg.exe')" />
+    <Content Include="Assets\ffmpeg\ffprobe.exe" CopyToOutputDirectory="PreserveNewest" Condition="Exists('Assets\ffmpeg\ffprobe.exe')" />
+    <None Remove="Assets\ffmpeg\**" />
   </ItemGroup>
 
   <ItemGroup>
