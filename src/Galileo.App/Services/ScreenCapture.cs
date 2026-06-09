@@ -44,6 +44,25 @@ public static class ScreenCapture
         return stream;
     }
 
+    /// <summary>Captures a client-relative rectangle (in DIPs, scaled) and writes it to a PNG file —
+    /// used for "screenshot just the media" (the video/image region, no window chrome or controls).</summary>
+    public static async Task<string> CaptureClientRectToPngFileAsync(
+        IntPtr hwnd, double dipX, double dipY, double dipW, double dipH, double scale, string destPath)
+    {
+        var origin = new POINT { X = 0, Y = 0 };
+        ClientToScreen(hwnd, ref origin);
+        int left = origin.X + (int)Math.Round(dipX * scale);
+        int top = origin.Y + (int)Math.Round(dipY * scale);
+        int w = (int)Math.Round(dipW * scale), h = (int)Math.Round(dipH * scale);
+
+        var (pixels, gw, gh) = Grab(left, top, w, h);
+        var folder = await StorageFolder.GetFolderFromPathAsync(System.IO.Path.GetDirectoryName(destPath)!);
+        var file = await folder.CreateFileAsync(System.IO.Path.GetFileName(destPath), CreationCollisionOption.GenerateUniqueName);
+        using (var stream = await file.OpenAsync(FileAccessMode.ReadWrite))
+            await EncodePngAsync(pixels, gw, gh, stream);
+        return file.Path;
+    }
+
     // ---- core grab + encode ----
 
     private static (byte[] pixels, int w, int h) Grab(int left, int top, int w, int h)

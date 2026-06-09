@@ -2242,6 +2242,7 @@ public sealed partial class MainWindow : Window
                 mp.AudioCategory = Windows.Media.Playback.MediaPlayerAudioCategory.Movie;
                 if (!isAudio && _state.StartVideoMuted) _videoMuted = true; // "Start videos muted" setting
                 mp.IsMuted = _videoMuted;
+                mp.Volume = VideoVolumeSlider.Value / 100.0;
                 mp.IsLoopingEnabled = _videoRepeat;
                 mp.Play();
             }
@@ -2251,9 +2252,18 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { StatusText.Text = $"Couldn't play video: {ex.Message}"; App.Log("OpenVideo", ex); }
     }
 
-    private void VideoMute_Click(object sender, RoutedEventArgs e)
+    /// <summary>Speaker icon: toggle mute/unmute.</summary>
+    private void VideoVolume_Click(object sender, RoutedEventArgs e)
     {
         _videoMuted = !_videoMuted;
+        if (VideoPlayer.MediaPlayer is not null) VideoPlayer.MediaPlayer.IsMuted = _videoMuted;
+        UpdateVideoToggleIcons();
+    }
+
+    private void VideoVolume_SliderChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (VideoPlayer.MediaPlayer is not null) VideoPlayer.MediaPlayer.Volume = e.NewValue / 100.0;
+        _videoMuted = e.NewValue <= 0; // dragging to 0 mutes; above 0 unmutes
         if (VideoPlayer.MediaPlayer is not null) VideoPlayer.MediaPlayer.IsMuted = _videoMuted;
         UpdateVideoToggleIcons();
     }
@@ -2267,7 +2277,8 @@ public sealed partial class MainWindow : Window
 
     private void UpdateVideoToggleIcons()
     {
-        VideoMuteIcon.Glyph = _videoMuted ? "" : ""; // Mute / Volume
+        var vol = VideoVolumeSlider?.Value ?? 100;
+        VideoVolumeIcon.Glyph = ((char)((_videoMuted || vol <= 0) ? 0xE74F : vol <= 33 ? 0xE993 : vol <= 66 ? 0xE994 : 0xE995)).ToString();
         VideoRepeatIcon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
             _videoRepeat ? Microsoft.UI.Colors.Gold : Microsoft.UI.Colors.White);
     }
@@ -2880,15 +2891,9 @@ public sealed partial class MainWindow : Window
         try
         {
             if (permanent)
-            {
-                StatusText.Text = $"Securely erasing \"{item.Name}\"…";
-                await SecureWipe.WipePathAsync(item.Path, CurrentWipeMethod);
-                StatusText.Text = $"Securely erased \"{item.Name}\".";
-            }
+                await RunWipeWithUiAsync(new[] { item.Path }, CurrentWipeMethod, "Securely deleting 1 item");
             else if (!_bin.MoveToBin(item.Path))
-            {
                 StatusText.Text = "Delete failed: item not found.";
-            }
             LoadCurrentFolder();
         }
         catch (Exception ex) { StatusText.Text = $"Delete failed: {ex.Message}"; }
@@ -2919,20 +2924,21 @@ public sealed partial class MainWindow : Window
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
-        foreach (var item in selection)
+        if (permanent)
         {
-            try
-            {
-                if (permanent)
-                {
-                    StatusText.Text = $"Securely erasing \"{item.Name}\"…";
-                    await SecureWipe.WipePathAsync(item.Path, CurrentWipeMethod);
-                }
-                else _bin.MoveToBin(item.Path);
-            }
+            var paths = selection.Select(i => i.Path).ToList();
+            try { await RunWipeWithUiAsync(paths, CurrentWipeMethod, selection.Count == 1 ? "Securely deleting 1 item" : $"Securely deleting {selection.Count} items"); }
             catch (Exception ex) { StatusText.Text = $"Delete failed: {ex.Message}"; }
         }
-        StatusText.Text = permanent ? $"Securely erased {selection.Count} item(s)." : $"Moved {selection.Count} item(s) to the Recycle Bin.";
+        else
+        {
+            foreach (var item in selection)
+            {
+                try { _bin.MoveToBin(item.Path); }
+                catch (Exception ex) { StatusText.Text = $"Delete failed: {ex.Message}"; }
+            }
+            StatusText.Text = $"Moved {selection.Count} item(s) to the Recycle Bin.";
+        }
         LoadCurrentFolder();
     }
 
@@ -2951,13 +2957,10 @@ public sealed partial class MainWindow : Window
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
-        foreach (var item in selection)
-        {
-            StatusText.Text = $"Securely erasing \"{item.Name}\"…";
-            try { await _bin.DeleteEntryAsync(item.Path, CurrentWipeMethod); }
-            catch (Exception ex) { StatusText.Text = $"Erase failed: {ex.Message}"; }
-        }
-        StatusText.Text = $"Permanently erased {selection.Count} item(s).";
+        var paths = selection.Select(i => i.Path).ToList(); // bin items' Path = their store path
+        try { await RunWipeWithUiAsync(paths, CurrentWipeMethod, "Deleting permanently"); }
+        catch (Exception ex) { StatusText.Text = $"Erase failed: {ex.Message}"; }
+        _bin.RemoveMissing();
         LoadCurrentFolder();
     }
 
@@ -2966,8 +2969,7 @@ public sealed partial class MainWindow : Window
     {
         selection = selection.Where(s => !s.IsShellItem).ToList();
         if (selection.Count == 0) return;
-        var method = CurrentWipeMethod;
-        var effective = method == WipeMethod.None ? WipeMethod.Random : method; // shred always overwrites
+        var effective = CurrentWipeMethod == WipeMethod.None ? WipeMethod.Random : CurrentWipeMethod; // shred always overwrites
         var what = selection.Count == 1 ? $"\"{selection[0].Name}\"" : $"{selection.Count} item(s)";
         var dialog = new ContentDialog
         {
@@ -2980,14 +2982,9 @@ public sealed partial class MainWindow : Window
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
-        var progress = new Progress<string>(s => StatusText.Text = s);
-        foreach (var item in selection)
-        {
-            StatusText.Text = $"Shredding \"{item.Name}\"…";
-            try { await SecureWipe.WipePathAsync(item.Path, effective, progress); }
-            catch (Exception ex) { StatusText.Text = $"Shred failed: {ex.Message}"; }
-        }
-        StatusText.Text = $"Securely erased {selection.Count} item(s).";
+        var paths = selection.Select(i => i.Path).ToList();
+        try { await RunWipeWithUiAsync(paths, effective, selection.Count == 1 ? "Securely deleting 1 item" : $"Securely deleting {selection.Count} items"); }
+        catch (Exception ex) { StatusText.Text = $"Shred failed: {ex.Message}"; }
         LoadCurrentFolder();
     }
 
@@ -3210,7 +3207,7 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            if (permanent) await SecureWipe.WipePathAsync(item.Path, CurrentWipeMethod);
+            if (permanent) await RunWipeWithUiAsync(new[] { item.Path }, CurrentWipeMethod, "Securely deleting 1 item");
             else if (!_bin.MoveToBin(item.Path)) { StatusText.Text = "Delete failed: item not found."; return; }
         }
         catch (Exception ex)
@@ -3616,45 +3613,86 @@ public sealed partial class MainWindow : Window
 
     // ===================== File-transfer progress (Apple-style panel) =====================
 
-    private FileTransfer? _activeTransfer;
     private bool _transferPanelShown;
     private double _transferFrac;
+    private object? _activeOp;                 // token identifying the operation that owns the card
+    private Action? _progressCancel;           // cancels the active operation
+    private Action? _progressPauseToggle;      // null → the operation can't pause (hides the Pause button)
+    private Func<bool>? _progressIsPaused;
 
     /// <summary>Runs a copy/move through the cancellable/pausable engine, showing the floating progress
     /// card (after a short delay so instant operations don't flash it). Returns files completed.</summary>
     private async System.Threading.Tasks.Task<int> RunTransferWithUiAsync(string destDir, List<string> paths, bool move)
     {
-        _activeTransfer?.Cancel(); // only one panel at a time
+        _progressCancel?.Invoke(); // only one panel at a time
         var transfer = new FileTransfer();
-        _activeTransfer = transfer;
+        var token = new object();
+        BeginProgressOp(token,
+            title: (move ? "Moving " : "Copying ") + (paths.Count == 1 ? "1 item" : $"{paths.Count} items"),
+            cancel: transfer.Cancel, pauseToggle: transfer.TogglePause, isPaused: () => transfer.IsPaused);
+
+        var revealCts = ScheduleReveal(token);
+        var progress = new Progress<TransferProgress>(UpdateTransferUi);
+        TransferResult result;
+        try { result = await transfer.RunAsync(destDir, paths, move, progress, ResolveConflictAsync); }
+        finally { EndProgressOp(token, revealCts); }
+
+        if (result.Skipped > 0) StatusText.Text = $"{(move ? "Moved" : "Copied")} {result.FilesCompleted}, skipped {result.Skipped}.";
+        return result.FilesCompleted;
+    }
+
+    /// <summary>Runs a secure wipe of the given paths behind the same floating progress card (with Cancel;
+    /// wiping can't pause). Used by Empty Recycle Bin, right-click shred, and Shift+Delete.</summary>
+    private async System.Threading.Tasks.Task RunWipeWithUiAsync(IReadOnlyList<string> paths, WipeMethod method, string title)
+    {
+        _progressCancel?.Invoke();
+        var cts = new System.Threading.CancellationTokenSource();
+        var token = new object();
+        BeginProgressOp(token, title, cancel: cts.Cancel, pauseToggle: null, isPaused: null);
+
+        var revealCts = ScheduleReveal(token);
+        var progress = new Progress<TransferProgress>(UpdateTransferUi);
+        try { await SecureWipe.WipePathsAsync(paths, method, progress, cts.Token); }
+        finally { EndProgressOp(token, revealCts); }
+    }
+
+    private void BeginProgressOp(object token, string title, Action cancel, Action? pauseToggle, Func<bool>? isPaused)
+    {
+        _activeOp = token;
+        _progressCancel = cancel;
+        _progressPauseToggle = pauseToggle;
+        _progressIsPaused = isPaused;
         _transferPanelShown = false;
         _transferFrac = 0;
-
-        TransferTitle.Text = (move ? "Moving " : "Copying ") + (paths.Count == 1 ? "1 item" : $"{paths.Count} items");
+        TransferTitle.Text = title;
         TransferFile.Text = "Preparing…";
         TransferStats.Text = "";
         TransferEta.Text = "";
         TransferBarFill.Width = 0;
         SetTransferPaused(false);
+    }
 
-        // Delayed reveal: skip the panel entirely for operations that finish in <350ms (e.g. same-volume moves).
+    private System.Threading.CancellationTokenSource ScheduleReveal(object token)
+    {
+        // Delayed reveal: skip the panel entirely for operations that finish in <350ms.
         var revealCts = new System.Threading.CancellationTokenSource();
         _ = System.Threading.Tasks.Task.Delay(350, revealCts.Token).ContinueWith(t =>
         {
             if (t.IsCanceled) return;
-            DispatcherQueue.TryEnqueue(() => { if (ReferenceEquals(_activeTransfer, transfer)) ShowTransferPanel(); });
+            DispatcherQueue.TryEnqueue(() => { if (ReferenceEquals(_activeOp, token)) ShowTransferPanel(); });
         }, System.Threading.Tasks.TaskScheduler.Default);
+        return revealCts;
+    }
 
-        var progress = new Progress<TransferProgress>(UpdateTransferUi);
-        TransferResult result;
-        try { result = await transfer.RunAsync(destDir, paths, move, progress, ResolveConflictAsync); }
-        finally
-        {
-            revealCts.Cancel();
-            if (ReferenceEquals(_activeTransfer, transfer)) { _activeTransfer = null; HideTransferPanel(); }
-        }
-        if (result.Skipped > 0) StatusText.Text = $"{(move ? "Moved" : "Copied")} {result.FilesCompleted}, skipped {result.Skipped}.";
-        return result.FilesCompleted;
+    private void EndProgressOp(object token, System.Threading.CancellationTokenSource revealCts)
+    {
+        revealCts.Cancel();
+        if (!ReferenceEquals(_activeOp, token)) return;
+        _activeOp = null;
+        _progressCancel = null;
+        _progressPauseToggle = null;
+        _progressIsPaused = null;
+        HideTransferPanel();
     }
 
     /// <summary>Conflict callback for <see cref="FileTransfer"/>: marshals to the UI thread and shows the
@@ -3773,6 +3811,7 @@ public sealed partial class MainWindow : Window
     {
         if (_transferPanelShown) return;
         _transferPanelShown = true;
+        TransferPauseBtn.Visibility = _progressPauseToggle is null ? Visibility.Collapsed : Visibility.Visible;
         TransferPanel.Visibility = Visibility.Visible;
         try
         {
@@ -3823,15 +3862,16 @@ public sealed partial class MainWindow : Window
 
     private void TransferPause_Click(object sender, RoutedEventArgs e)
     {
-        if (_activeTransfer is null) return;
-        _activeTransfer.TogglePause();
-        SetTransferPaused(_activeTransfer.IsPaused);
-        if (_activeTransfer.IsPaused) TransferEta.Text = "Paused";
+        if (_progressPauseToggle is null) return;
+        _progressPauseToggle();
+        var paused = _progressIsPaused?.Invoke() ?? false;
+        SetTransferPaused(paused);
+        if (paused) TransferEta.Text = "Paused";
     }
 
     private void TransferCancel_Click(object sender, RoutedEventArgs e)
     {
-        _activeTransfer?.Cancel();
+        _progressCancel?.Invoke();
         TransferFile.Text = "Cancelling…";
     }
 
@@ -4246,13 +4286,19 @@ public sealed partial class MainWindow : Window
         if (_loadingSettings) return;
         _state.WipeMethod = WipeMethodCombo.SelectedIndex switch
         {
-            1 => "Zero",
-            2 => "Random",
-            3 => "Dod3",
-            4 => "Dod7",
-            5 => "Gutmann35",
-            _ => "None",
+            0 => "Zero",
+            2 => "Dod3",
+            3 => "Dod7",
+            4 => "Gutmann35",
+            _ => "Random",
         };
+        _state.Save();
+    }
+
+    private void SecureEmptySwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.SecureDeleteOnEmpty = SecureEmptySwitch.IsOn;
         _state.Save();
     }
 
@@ -4338,7 +4384,8 @@ public sealed partial class MainWindow : Window
         var count = _bin.Count;
         if (count == 0) { StatusText.Text = "The Recycle Bin is already empty."; return; }
 
-        var method = CurrentWipeMethod;
+        // The empty-bin overwrite is opt-in (the toggle); right-click shred always overwrites.
+        var method = _state.SecureDeleteOnEmpty ? CurrentWipeMethod : WipeMethod.None;
         var dlg = new ContentDialog
         {
             Title = "Empty Recycle Bin?",
@@ -4352,11 +4399,11 @@ public sealed partial class MainWindow : Window
         };
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
 
-        var progress = new Progress<string>(s => StatusText.Text = s);
-        StatusText.Text = "Emptying Recycle Bin…";
-        try { await _bin.EmptyAsync(method, progress); }
-        catch (Exception ex) { StatusText.Text = $"Empty failed: {ex.Message}"; return; }
-        StatusText.Text = "Recycle Bin emptied.";
+        var paths = _bin.StorePaths();
+        try { await RunWipeWithUiAsync(paths, method, "Emptying Recycle Bin"); }
+        catch (Exception ex) { StatusText.Text = $"Empty failed: {ex.Message}"; }
+        _bin.RemoveMissing();
+        StatusText.Text = $"{_bin.Count} item(s) in Recycle Bin.";
         if (_currentFolder == RecycleBin.Location) LoadCurrentFolder();
     }
 
@@ -4400,13 +4447,13 @@ public sealed partial class MainWindow : Window
         DeveloperModeSwitch.IsOn = _state.DeveloperMode;
         WipeMethodCombo.SelectedIndex = CurrentWipeMethod switch
         {
-            WipeMethod.Zero => 1,
-            WipeMethod.Random => 2,
-            WipeMethod.Dod3 => 3,
-            WipeMethod.Dod7 => 4,
-            WipeMethod.Gutmann35 => 5,
-            _ => 0,
+            WipeMethod.Zero => 0,
+            WipeMethod.Dod3 => 2,
+            WipeMethod.Dod7 => 3,
+            WipeMethod.Gutmann35 => 4,
+            _ => 1, // Random
         };
+        SecureEmptySwitch.IsOn = _state.SecureDeleteOnEmpty;
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
         UpdateBackupUi();
         SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
@@ -4769,7 +4816,8 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { StatusText.Text = "Copy frame failed: " + ex.Message; App.Log("CopyFrame", ex); }
     }
 
-    /// <summary>Saves a screenshot of the Galileo window to %USERPROFILE%\Pictures\Galileo.</summary>
+    /// <summary>Saves a screenshot to %USERPROFILE%\Pictures\Galileo. In the viewer it captures just the
+    /// media (video frame or image) with the chrome/controls hidden; elsewhere the whole window.</summary>
     private async Task SaveScreenshotAsync()
     {
         try
@@ -4777,12 +4825,60 @@ public sealed partial class MainWindow : Window
             var dir = System.IO.Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Pictures", "Galileo");
             Directory.CreateDirectory(dir);
-            var name = $"Galileo_{DateTimeOffset.Now:yyyy-MM-dd_HH-mm-ss}.png";
+            var path = System.IO.Path.Combine(dir, $"Galileo_{DateTimeOffset.Now:yyyy-MM-dd_HH-mm-ss}.png");
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-            var saved = await ScreenCapture.CaptureWindowAsync(hwnd, System.IO.Path.Combine(dir, name));
+
+            FrameworkElement? media = InVideo ? VideoPlayer
+                : (InViewer && ViewerImage.Source is not null ? ViewerImage : null);
+
+            var saved = media is { ActualWidth: >= 1, ActualHeight: >= 1 }
+                ? await CaptureMediaOnlyAsync(hwnd, media, path)
+                : await ScreenCapture.CaptureWindowAsync(hwnd, path);
             StatusText.Text = "Screenshot saved: " + saved;
         }
         catch (Exception ex) { StatusText.Text = "Screenshot failed: " + ex.Message; App.Log("Screenshot", ex); }
+    }
+
+    /// <summary>Grabs only the media element's region, with the floating chrome and the player's transport
+    /// bar hidden for the capture, then restores them.</summary>
+    private async Task<string> CaptureMediaOnlyAsync(IntPtr hwnd, FrameworkElement media, string path)
+    {
+        var prevControls = VideoControlsBar.Visibility;
+        var prevBack = VideoBackBar.Visibility;
+        var prevChrome = ViewerChrome.Visibility;
+        VideoControlsBar.Visibility = Visibility.Collapsed;
+        VideoBackBar.Visibility = Visibility.Collapsed;
+        ViewerChrome.Visibility = Visibility.Collapsed;
+        try { VideoPlayer.TransportControls?.Hide(); } catch { }
+        try
+        {
+            await WaitForRenderAsync();           // let the compositor present a frame without the chrome
+            var scale = media.XamlRoot?.RasterizationScale ?? 1.0;
+            var pos = media.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+            return await ScreenCapture.CaptureClientRectToPngFileAsync(
+                hwnd, pos.X, pos.Y, media.ActualWidth, media.ActualHeight, scale, path);
+        }
+        finally
+        {
+            VideoControlsBar.Visibility = prevControls;
+            VideoBackBar.Visibility = prevBack;
+            ViewerChrome.Visibility = prevChrome;
+        }
+    }
+
+    /// <summary>Completes after <paramref name="frames"/> composition frames have rendered.</summary>
+    private Task WaitForRenderAsync(int frames = 2)
+    {
+        var tcs = new TaskCompletionSource();
+        var count = 0;
+        void OnRendering(object? s, object e)
+        {
+            if (++count < frames) return;
+            CompositionTarget.Rendering -= OnRendering;
+            tcs.TrySetResult();
+        }
+        CompositionTarget.Rendering += OnRendering;
+        return tcs.Task;
     }
 
     private void RootGrid_KeyDown(object sender, KeyRoutedEventArgs e)

@@ -40,6 +40,23 @@ public sealed class RecycleBin
 
     public int Count => Load().Count;
 
+    /// <summary>Store paths of every entry (files or folders) — used to wipe the whole bin with progress.</summary>
+    public List<string> StorePaths() => Load().Select(StorePathOf).ToList();
+
+    /// <summary>Drops index entries whose stored item no longer exists (e.g. after a wipe), and tidies
+    /// the store directory. Lets an external wipe handle the bytes while the index stays consistent.</summary>
+    public void RemoveMissing()
+    {
+        lock (_lock)
+        {
+            var list = Load();
+            list.RemoveAll(e => { var p = StorePathOf(e); return !File.Exists(p) && !Directory.Exists(p); });
+            Save(list);
+            if (list.Count == 0)
+                try { foreach (var f in Directory.EnumerateFileSystemEntries(StoreDir)) TryRemove(f); } catch { }
+        }
+    }
+
     public List<RecycleEntry> Load()
     {
         try { if (File.Exists(IndexPath)) return JsonSerializer.Deserialize<List<RecycleEntry>>(File.ReadAllText(IndexPath)) ?? new(); }
