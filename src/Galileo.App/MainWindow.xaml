@@ -1335,5 +1335,55 @@
         <TextBlock x:Name="StatusText" Text="Ready" FontSize="12" Opacity="0.55"
                    HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="16,0,0,8"
                    IsHitTestVisible="False" />
+
+        <!-- ===================== File-transfer progress (Apple-style floating card) ===================== -->
+        <Border x:Name="TransferPanel" Visibility="Collapsed" Opacity="0"
+                HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,46" Width="404"
+                Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}" BorderThickness="1"
+                CornerRadius="16" Padding="18,15,16,16" Translation="0,0,40">
+            <Border.Shadow>
+                <ThemeShadow />
+            </Border.Shadow>
+            <Border.RenderTransform>
+                <TranslateTransform x:Name="TransferPanelShift" Y="24" />
+            </Border.RenderTransform>
+            <StackPanel Spacing="12">
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock x:Name="TransferTitle" Text="Copying" FontSize="14" FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="TransferFile" Text="" FontSize="12" Opacity="0.6"
+                                   TextTrimming="CharacterEllipsis" Margin="0,1,0,0" />
+                    </StackPanel>
+                    <Button x:Name="TransferPauseBtn" Grid.Column="1" Click="TransferPause_Click"
+                            Width="32" Height="32" CornerRadius="16" Padding="0" VerticalAlignment="Center"
+                            ToolTipService.ToolTip="Pause">
+                        <FontIcon x:Name="TransferPauseIcon" Glyph="&#xE769;" FontFamily="Segoe Fluent Icons" FontSize="13" />
+                    </Button>
+                    <Button x:Name="TransferCancelBtn" Grid.Column="2" Click="TransferCancel_Click"
+                            Width="32" Height="32" CornerRadius="16" Padding="0" VerticalAlignment="Center"
+                            ToolTipService.ToolTip="Cancel">
+                        <FontIcon Glyph="&#xE711;" FontFamily="Segoe Fluent Icons" FontSize="12" />
+                    </Button>
+                </Grid>
+                <Grid x:Name="TransferBarTrack" Height="6" CornerRadius="3" Background="#30808080"
+                      SizeChanged="TransferBarTrack_SizeChanged">
+                    <Border x:Name="TransferBarFill" HorizontalAlignment="Left" Width="0" CornerRadius="3">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                <GradientStop Color="#6EA8FF" Offset="0" />
+                                <GradientStop Color="#5A8AE0" Offset="1" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock x:Name="TransferStats" Text="" FontSize="11" Opacity="0.6" VerticalAlignment="Center" />
+                    <TextBlock x:Name="TransferEta" Grid.Column="1" Text="" FontSize="11" Opacity="0.6"
+                               VerticalAlignment="Center" TextAlignment="Right" />
+                </Grid>
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>
