@@ -87,6 +87,10 @@ public sealed class AppState
     /// <summary>UTC ticks of the last successful Google Drive vault backup (0 = never).</summary>
     public long LastVaultBackupUtcTicks { get; set; }
 
+    /// <summary>Automatic vault backup cadence: Off | Daily | Weekly. Runs while the app is open and
+    /// signed in to Google Drive (it backs up on launch/while running once a backup is overdue).</summary>
+    public string BackupSchedule { get; set; } = "Off";
+
     // Developer mode (embedded terminal)
     public bool DeveloperMode { get; set; }
     public string TerminalShell { get; set; } = "cmd";   // cmd | powershell | wsl
@@ -226,5 +230,6 @@ public sealed class AppState
         TerminalShell = o.TerminalShell;
         WipeMethod = o.WipeMethod;
         SecureDeleteOnEmpty = o.SecureDeleteOnEmpty;
+        BackupSchedule = o.BackupSchedule;
     }
 }
