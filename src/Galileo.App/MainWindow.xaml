@@ -621,7 +621,162 @@
                             Click="VideoRepeat_Click" ToolTipService.ToolTip="Repeat">
                         <FontIcon x:Name="VideoRepeatIcon" Glyph="&#xE8EE;" FontFamily="Segoe Fluent Icons" />
                     </Button>
+                    <Button x:Name="VideoEditBtn" Style="{StaticResource GlyphButton}" Foreground="White"
+                            Click="VideoEdit_Click" ToolTipService.ToolTip="Edit / export video">
+                        <FontIcon Glyph="&#xE70F;" FontFamily="Segoe Fluent Icons" />
+                    </Button>
                 </StackPanel>
+            </Border>
+
+            <!-- ===================== Video editor panel (FFmpeg-powered) ===================== -->
+            <Border x:Name="VideoEditorPanel" Visibility="Collapsed"
+                    HorizontalAlignment="Right" VerticalAlignment="Stretch" Width="360"
+                    Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,0,0,0">
+                <Grid RowDefinitions="Auto,*,Auto">
+                    <!-- Header -->
+                    <Grid Grid.Row="0" Padding="16,12" ColumnDefinitions="*,Auto"
+                          Background="{ThemeResource LayerFillColorAltBrush}">
+                        <TextBlock Text="Edit video" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Style="{StaticResource GlyphButton}" Click="CloseVideoEditor_Click"
+                                ToolTipService.ToolTip="Close">
+                            <FontIcon Glyph="&#xE711;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                        </Button>
+                    </Grid>
+
+                    <ScrollViewer Grid.Row="1" Padding="16,8,16,8" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Spacing="18">
+
+                            <!-- Trim -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="TRIM" Style="{StaticResource SettingSectionHeader}" />
+                                <TextBlock x:Name="EditTrimText" Text="Whole clip" Opacity="0.8" FontSize="13" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="Set start" Click="EditSetStart_Click" />
+                                    <Button Content="Set end" Click="EditSetEnd_Click" />
+                                    <Button Content="Reset" Click="EditResetTrim_Click" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="Add as segment" Click="EditAddSegment_Click" />
+                                    <Button Content="Clear segments" Click="EditClearSegments_Click" />
+                                </StackPanel>
+                                <TextBlock x:Name="EditSegmentsText" Text="" Opacity="0.7" FontSize="12" TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <!-- Transform -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="TRANSFORM" Style="{StaticResource SettingSectionHeader}" />
+                                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Button Click="EditRotateLeft_Click" ToolTipService.ToolTip="Rotate left">
+                                        <FontIcon Glyph="&#xE7AD;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                                    </Button>
+                                    <Button Click="EditRotateRight_Click" ToolTipService.ToolTip="Rotate right">
+                                        <FontIcon Glyph="&#xE7AE;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                                    </Button>
+                                    <TextBlock x:Name="EditRotateText" Text="0°" VerticalAlignment="Center" Opacity="0.8" />
+                                </StackPanel>
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                                    <ToggleSwitch x:Name="EditFlipHSwitch" Header="Flip horizontal" />
+                                    <ToggleSwitch x:Name="EditFlipVSwitch" Grid.Column="1" Header="Flip vertical" />
+                                </Grid>
+                                <TextBlock Text="Crop margins (px): left / top / right / bottom" FontSize="12" Opacity="0.7" />
+                                <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="6">
+                                    <NumberBox x:Name="EditCropL" Value="0" Minimum="0" SpinButtonPlacementMode="Hidden" />
+                                    <NumberBox x:Name="EditCropT" Grid.Column="1" Value="0" Minimum="0" SpinButtonPlacementMode="Hidden" />
+                                    <NumberBox x:Name="EditCropR" Grid.Column="2" Value="0" Minimum="0" SpinButtonPlacementMode="Hidden" />
+                                    <NumberBox x:Name="EditCropB" Grid.Column="3" Value="0" Minimum="0" SpinButtonPlacementMode="Hidden" />
+                                </Grid>
+                                <TextBlock Text="Resize (px): width × height (0 = keep)" FontSize="12" Opacity="0.7" />
+                                <Grid ColumnDefinitions="*,Auto,*" ColumnSpacing="6">
+                                    <NumberBox x:Name="EditResizeW" Value="0" Minimum="0" SpinButtonPlacementMode="Hidden" />
+                                    <TextBlock Grid.Column="1" Text="×" VerticalAlignment="Center" />
+                                    <NumberBox x:Name="EditResizeH" Grid.Column="2" Value="0" Minimum="0" SpinButtonPlacementMode="Hidden" />
+                                </Grid>
+                            </StackPanel>
+
+                            <!-- Filters -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="FILTERS" Style="{StaticResource SettingSectionHeader}" />
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                                    <ToggleSwitch x:Name="EditDeinterlace" Header="Deinterlace" />
+                                    <ToggleSwitch x:Name="EditDenoise" Grid.Column="1" Header="Denoise" />
+                                </Grid>
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                                    <ToggleSwitch x:Name="EditSharpen" Header="Sharpen" />
+                                    <ToggleSwitch x:Name="EditStabilize" Grid.Column="1" Header="Stabilize" />
+                                </Grid>
+                                <TextBlock Text="Brightness" FontSize="12" Opacity="0.7" />
+                                <Slider x:Name="EditBrightness" Minimum="-1" Maximum="1" StepFrequency="0.05" Value="0" />
+                                <TextBlock Text="Contrast" FontSize="12" Opacity="0.7" />
+                                <Slider x:Name="EditContrast" Minimum="0" Maximum="2" StepFrequency="0.05" Value="1" />
+                                <TextBlock Text="Saturation" FontSize="12" Opacity="0.7" />
+                                <Slider x:Name="EditSaturation" Minimum="0" Maximum="3" StepFrequency="0.05" Value="1" />
+                            </StackPanel>
+
+                            <!-- Playback / audio -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="SPEED &amp; AUDIO" Style="{StaticResource SettingSectionHeader}" />
+                                <TextBlock Text="Speed (×)" FontSize="12" Opacity="0.7" />
+                                <Slider x:Name="EditSpeed" Minimum="0.25" Maximum="4" StepFrequency="0.05" Value="1" />
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                    <TextBlock Text="Frame rate" VerticalAlignment="Center" />
+                                    <NumberBox x:Name="EditFps" Grid.Column="1" Value="0" Minimum="0" SpinButtonPlacementMode="Hidden"
+                                               PlaceholderText="0 = keep" />
+                                </Grid>
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                    <TextBlock Text="Audio" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="EditAudioCombo" Grid.Column="1" HorizontalAlignment="Stretch" SelectedIndex="0">
+                                        <ComboBoxItem Content="Keep" />
+                                        <ComboBoxItem Content="Re-encode AAC" />
+                                        <ComboBoxItem Content="Re-encode MP3" />
+                                        <ComboBoxItem Content="Mute (no audio)" />
+                                    </ComboBox>
+                                </Grid>
+                            </StackPanel>
+
+                            <!-- Output -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="OUTPUT" Style="{StaticResource SettingSectionHeader}" />
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                    <TextBlock Text="Format" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="EditContainerCombo" Grid.Column="1" HorizontalAlignment="Stretch"
+                                              SelectedIndex="0" SelectionChanged="EditContainer_SelectionChanged">
+                                        <ComboBoxItem Content="MP4" />
+                                        <ComboBoxItem Content="MKV" />
+                                        <ComboBoxItem Content="MPEG-TS" />
+                                        <ComboBoxItem Content="Animated GIF" />
+                                    </ComboBox>
+                                </Grid>
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                    <TextBlock Text="Codec" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="EditCodecCombo" Grid.Column="1" HorizontalAlignment="Stretch" SelectedIndex="0" />
+                                </Grid>
+                                <TextBlock Text="Quality (CRF — lower is better)" FontSize="12" Opacity="0.7" />
+                                <Slider x:Name="EditCrf" Minimum="0" Maximum="51" StepFrequency="1" Value="21" />
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                    <TextBlock Text="Preset" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="EditPresetCombo" Grid.Column="1" HorizontalAlignment="Stretch" SelectedIndex="2">
+                                        <ComboBoxItem Content="ultrafast" />
+                                        <ComboBoxItem Content="veryfast" />
+                                        <ComboBoxItem Content="medium" />
+                                        <ComboBoxItem Content="slow" />
+                                        <ComboBoxItem Content="veryslow" />
+                                    </ComboBox>
+                                </Grid>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Footer -->
+                    <StackPanel Grid.Row="2" Padding="16,12" Spacing="8"
+                                Background="{ThemeResource LayerFillColorAltBrush}">
+                        <TextBlock x:Name="EditorStatus" Text="" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Save frame" Click="EditSaveFrame_Click" />
+                            <Button Content="Export…" Click="EditExport_Click" Style="{StaticResource AccentButtonStyle}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
             </Border>
 
             <!-- Eye obscure: plain black curtain -->
@@ -958,12 +1113,6 @@
                         <Setter Property="FontSize" Value="12" />
                         <Setter Property="TextWrapping" Value="Wrap" />
                         <Setter Property="Margin" Value="0,2,0,0" />
-                    </Style>
-                    <Style x:Key="SettingSectionHeader" TargetType="TextBlock">
-                        <Setter Property="FontWeight" Value="SemiBold" />
-                        <Setter Property="FontSize" Value="13" />
-                        <Setter Property="Opacity" Value="0.7" />
-                        <Setter Property="Margin" Value="2,0,0,0" />
                     </Style>
                     <Style x:Key="SettingCard" TargetType="Border">
                         <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />

@@ -2241,6 +2241,12 @@ public sealed partial class MainWindow : Window
             AudioOverlay.Visibility = isAudio ? Visibility.Visible : Visibility.Collapsed;
             AudioTitle.Text = isAudio ? item.Name : "";
             if (isAudio) _ = LoadAlbumArtAsync(file);
+
+            // Track the real file for the FFmpeg editor; offer Edit for real video files only.
+            _currentVideoPath = item.IsShellItem ? null : item.Path;
+            VideoEditBtn.Visibility = (!isAudio && !item.IsShellItem && FfmpegVideo.Available)
+                ? Visibility.Visible : Visibility.Collapsed;
+            VideoEditorPanel.Visibility = Visibility.Collapsed;
             VideoPlayer.Source = MediaSource.CreateFromStorageFile(file);
             var mp = VideoPlayer.MediaPlayer;
             if (mp is not null)

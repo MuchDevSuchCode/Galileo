@@ -24,6 +24,14 @@
             </Style>
             <SolidColorBrush x:Key="PillBrush" Color="#E6262626" />
 
+            <!-- Section header used by the Settings panel and the video editor (app-level so both see it). -->
+            <Style x:Key="SettingSectionHeader" TargetType="TextBlock">
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="Opacity" Value="0.7" />
+                <Setter Property="Margin" Value="2,0,0,0" />
+            </Style>
+
             <!-- Clickable Details-view column header -->
             <Style x:Key="ColumnHeaderButton" TargetType="Button">
                 <Setter Property="Background" Value="Transparent" />

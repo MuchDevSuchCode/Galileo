@@ -57,5 +57,9 @@ desktop.ini
 google-oauth.json
 client_secret*.json
 
+# ---- Bundled FFmpeg binaries (large; shipped with the build, not committed) ----
+Assets/ffmpeg/*.exe
+src/Galileo.App/Assets/ffmpeg/*.exe
+
 # ---- Local tooling ----
 .claude/settings.local.json
