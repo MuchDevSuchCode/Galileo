@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Geometry;
 using Microsoft.Graphics.Canvas.Text;
@@ -6,6 +7,9 @@ using Windows.Foundation;
 using Windows.UI;
 
 namespace Galileo.Services;
+
+/// <summary>Known media-folder kinds that get a themed icon instead of the plain folder.</summary>
+public enum FolderKind { Normal, Pictures, Music, Videos }
 
 /// <summary>
 /// Draws Galileo's own folder / drive / generic-file icons with Win2D — original, flat, accent-tinted
@@ -23,13 +27,105 @@ public static class IconFactory
     private static readonly Color Page = Color.FromArgb(255, 0xFB, 0xFC, 0xFE);
     private static readonly Color PageEdge = Color.FromArgb(255, 0xBD, 0xC6, 0xD6);
 
-    public static byte[] RenderFolder(int px) => Render(px, (ds, s) =>
+    // Per-kind two-tone folder colors (back tab/body, lighter front face). Media folders get their
+    // own hue so Pictures/Music/Videos read differently from an ordinary blue folder at a glance.
+    private static (Color back, Color front) FolderColors(FolderKind kind) => kind switch
     {
+        FolderKind.Pictures => (Color.FromArgb(255, 0x2E, 0x8F, 0x84), Color.FromArgb(255, 0x3F, 0xB6, 0xA8)), // teal
+        FolderKind.Music => (Color.FromArgb(255, 0x8A, 0x5C, 0xD6), Color.FromArgb(255, 0xB5, 0x8B, 0xFF)),    // purple
+        FolderKind.Videos => (Color.FromArgb(255, 0xCE, 0x6E, 0x33), Color.FromArgb(255, 0xF0, 0x93, 0x4E)),  // amber
+        _ => (Blue, BlueLight),
+    };
+
+    /// <summary>Maps a folder path to a known media-folder kind (by known-folder path or name).</summary>
+    public static FolderKind FolderKindFor(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return FolderKind.Normal;
+        if (Same(path, Environment.SpecialFolder.MyPictures)) return FolderKind.Pictures;
+        if (Same(path, Environment.SpecialFolder.MyMusic)) return FolderKind.Music;
+        if (Same(path, Environment.SpecialFolder.MyVideos)) return FolderKind.Videos;
+
+        var name = Path.GetFileName(path.TrimEnd('\\', '/')).ToLowerInvariant();
+        return name switch
+        {
+            "pictures" or "photos" or "camera roll" or "screenshots" or "saved pictures" => FolderKind.Pictures,
+            "music" or "musik" => FolderKind.Music,
+            "videos" or "movies" => FolderKind.Videos,
+            _ => FolderKind.Normal,
+        };
+
+        static bool Same(string p, Environment.SpecialFolder sf)
+        {
+            var k = Environment.GetFolderPath(sf);
+            return !string.IsNullOrEmpty(k) &&
+                   string.Equals(p.TrimEnd('\\', '/'), k.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    public static byte[] RenderFolder(int px, FolderKind kind = FolderKind.Normal) => Render(px, (ds, s) =>
+    {
+        var (back, front) = FolderColors(kind);
         // Back tab + body, with a lighter front face for a flat two-tone look.
-        ds.FillRoundedRectangle(new Rect(0.14 * s, 0.26 * s, 0.34 * s, 0.16 * s), 0.045f * s, 0.045f * s, Blue);
-        ds.FillRoundedRectangle(new Rect(0.10 * s, 0.32 * s, 0.80 * s, 0.46 * s), 0.06f * s, 0.06f * s, Blue);
-        ds.FillRoundedRectangle(new Rect(0.10 * s, 0.44 * s, 0.80 * s, 0.34 * s), 0.06f * s, 0.06f * s, BlueLight);
+        ds.FillRoundedRectangle(new Rect(0.14 * s, 0.26 * s, 0.34 * s, 0.16 * s), 0.045f * s, 0.045f * s, back);
+        ds.FillRoundedRectangle(new Rect(0.10 * s, 0.32 * s, 0.80 * s, 0.46 * s), 0.06f * s, 0.06f * s, back);
+        ds.FillRoundedRectangle(new Rect(0.10 * s, 0.44 * s, 0.80 * s, 0.34 * s), 0.06f * s, 0.06f * s, front);
+
+        if (kind != FolderKind.Normal) DrawFolderGlyph(ds, s, kind);
     });
+
+    // White media glyph centered on the folder's front face (face spans ~y 0.44–0.78).
+    private static void DrawFolderGlyph(CanvasDrawingSession ds, float s, FolderKind kind)
+    {
+        var white = Microsoft.UI.Colors.White;
+        float cx = 0.50f * s, cy = 0.61f * s;
+        switch (kind)
+        {
+            case FolderKind.Pictures:
+            {
+                // Sun + mountain (a little photo scene).
+                ds.FillCircle(cx - 0.085f * s, cy - 0.045f * s, 0.030f * s, white);
+                using var pb = new CanvasPathBuilder(ds);
+                pb.BeginFigure(cx - 0.13f * s, cy + 0.085f * s);
+                pb.AddLine(cx - 0.02f * s, cy - 0.045f * s);
+                pb.AddLine(cx + 0.045f * s, cy + 0.02f * s);
+                pb.AddLine(cx + 0.085f * s, cy - 0.02f * s);
+                pb.AddLine(cx + 0.14f * s, cy + 0.085f * s);
+                pb.EndFigure(CanvasFigureLoop.Closed);
+                using var mtn = CanvasGeometry.CreatePath(pb);
+                ds.FillGeometry(mtn, white);
+                break;
+            }
+            case FolderKind.Music:
+            {
+                // Beamed eighth notes: two heads + stems + a top beam.
+                ds.FillEllipse(cx - 0.075f * s, cy + 0.075f * s, 0.052f * s, 0.038f * s, white);
+                ds.FillEllipse(cx + 0.085f * s, cy + 0.045f * s, 0.052f * s, 0.038f * s, white);
+                ds.FillRectangle(new Rect(cx - 0.030f * s, cy - 0.11f * s, 0.020f * s, 0.19f * s), white);
+                ds.FillRectangle(new Rect(cx + 0.130f * s, cy - 0.14f * s, 0.020f * s, 0.19f * s), white);
+                using var beam = new CanvasPathBuilder(ds);
+                beam.BeginFigure(cx - 0.030f * s, cy - 0.11f * s);
+                beam.AddLine(cx + 0.150f * s, cy - 0.14f * s);
+                beam.AddLine(cx + 0.150f * s, cy - 0.085f * s);
+                beam.AddLine(cx - 0.030f * s, cy - 0.055f * s);
+                beam.EndFigure(CanvasFigureLoop.Closed);
+                using var beamGeo = CanvasGeometry.CreatePath(beam);
+                ds.FillGeometry(beamGeo, white);
+                break;
+            }
+            case FolderKind.Videos:
+            {
+                // Play triangle.
+                using var pb = new CanvasPathBuilder(ds);
+                pb.BeginFigure(cx - 0.065f * s, cy - 0.105f * s);
+                pb.AddLine(cx + 0.105f * s, cy);
+                pb.AddLine(cx - 0.065f * s, cy + 0.105f * s);
+                pb.EndFigure(CanvasFigureLoop.Closed);
+                using var tri = CanvasGeometry.CreatePath(pb);
+                ds.FillGeometry(tri, white);
+                break;
+            }
+        }
+    }
 
     public static byte[] RenderDrive(int px) => Render(px, (ds, s) =>
     {
