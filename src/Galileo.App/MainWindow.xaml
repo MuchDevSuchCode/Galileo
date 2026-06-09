@@ -1396,23 +1396,30 @@
                 <TranslateTransform x:Name="TransferPanelShift" Y="24" />
             </Border.RenderTransform>
             <StackPanel Spacing="12">
-                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock x:Name="TransferTitle" Text="Copying" FontSize="14" FontWeight="SemiBold"
                                    TextTrimming="CharacterEllipsis" />
                         <TextBlock x:Name="TransferFile" Text="" FontSize="12" Opacity="0.6"
                                    TextTrimming="CharacterEllipsis" Margin="0,1,0,0" />
                     </StackPanel>
-                    <Button x:Name="TransferPauseBtn" Grid.Column="1" Click="TransferPause_Click"
-                            Width="32" Height="32" CornerRadius="16" Padding="0" VerticalAlignment="Center"
-                            ToolTipService.ToolTip="Pause">
-                        <FontIcon x:Name="TransferPauseIcon" Glyph="&#xE769;" FontFamily="Segoe Fluent Icons" FontSize="13" />
-                    </Button>
-                    <Button x:Name="TransferCancelBtn" Grid.Column="2" Click="TransferCancel_Click"
-                            Width="32" Height="32" CornerRadius="16" Padding="0" VerticalAlignment="Center"
-                            ToolTipService.ToolTip="Cancel">
-                        <FontIcon Glyph="&#xE711;" FontFamily="Segoe Fluent Icons" FontSize="12" />
-                    </Button>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                        <Button x:Name="TransferPauseBtn" Click="TransferPause_Click"
+                                Width="32" Height="32" CornerRadius="16" Padding="0" VerticalAlignment="Center"
+                                ToolTipService.ToolTip="Pause">
+                            <FontIcon x:Name="TransferPauseIcon" Glyph="&#xE769;" FontFamily="Segoe Fluent Icons" FontSize="13" />
+                        </Button>
+                        <Button x:Name="TransferHideBtn" Click="TransferHide_Click"
+                                Width="32" Height="32" CornerRadius="16" Padding="0" VerticalAlignment="Center"
+                                ToolTipService.ToolTip="Hide (keeps running)">
+                            <FontIcon Glyph="&#xE921;" FontFamily="Segoe Fluent Icons" FontSize="12" />
+                        </Button>
+                        <Button x:Name="TransferCancelBtn" Click="TransferCancel_Click"
+                                Width="32" Height="32" CornerRadius="16" Padding="0" VerticalAlignment="Center"
+                                ToolTipService.ToolTip="Cancel">
+                            <FontIcon Glyph="&#xE711;" FontFamily="Segoe Fluent Icons" FontSize="12" />
+                        </Button>
+                    </StackPanel>
                 </Grid>
                 <Grid x:Name="TransferBarTrack" Height="6" CornerRadius="3" Background="#30808080"
                       SizeChanged="TransferBarTrack_SizeChanged">
