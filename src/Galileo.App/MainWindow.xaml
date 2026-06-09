@@ -588,6 +588,14 @@
                     <MediaTransportControls IsVolumeButtonVisible="False" IsVolumeEnabled="False" />
                 </MediaPlayerElement.TransportControls>
             </MediaPlayerElement>
+            <!-- Live edit preview (Win2D frame-server output): shown while editing, over the player. -->
+            <Image x:Name="EditPreviewImage" Visibility="Collapsed" Stretch="Uniform"
+                   HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="0,0,360,96"
+                   RenderTransformOrigin="0.5,0.5">
+                <Image.RenderTransform>
+                    <CompositeTransform x:Name="EditPreviewTransform" />
+                </Image.RenderTransform>
+            </Image>
             <!-- "Now playing" art for audio (no video frame); clicks pass through to the controls -->
             <StackPanel x:Name="AudioOverlay" Visibility="Collapsed" IsHitTestVisible="False"
                         HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="18">
@@ -626,6 +634,25 @@
                         <FontIcon Glyph="&#xE70F;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                 </StackPanel>
+            </Border>
+
+            <!-- Filmstrip timeline (scrub) — shown while editing, left of the editor panel -->
+            <Border x:Name="EditTimeline" Visibility="Collapsed" Height="80"
+                    HorizontalAlignment="Stretch" VerticalAlignment="Bottom" Margin="12,0,372,14"
+                    CornerRadius="8" Background="#E6101013"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                    PointerPressed="EditTimeline_PointerPressed"
+                    PointerMoved="EditTimeline_PointerMoved"
+                    PointerReleased="EditTimeline_PointerReleased">
+                <Grid>
+                    <Grid x:Name="EditFilmstrip" />
+                    <Border x:Name="EditPlayhead" Width="2.5" Background="#FF6EA8FF"
+                            HorizontalAlignment="Left" IsHitTestVisible="False">
+                        <Border.RenderTransform>
+                            <TranslateTransform x:Name="EditPlayheadShift" />
+                        </Border.RenderTransform>
+                    </Border>
+                </Grid>
             </Border>
 
             <!-- ===================== Video editor panel (FFmpeg-powered) ===================== -->

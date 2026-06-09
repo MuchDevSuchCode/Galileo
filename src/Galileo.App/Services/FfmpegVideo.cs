@@ -296,6 +296,20 @@ public static class FfmpegVideo
         finally { TryDeleteDir(partDir); }
     }
 
+    /// <summary>Generates an evenly-spaced strip of JPEG thumbnails into a temp folder; returns their paths.</summary>
+    public static async Task<List<string>> GenerateThumbnailsAsync(string input, int count, double duration, CancellationToken ct = default)
+    {
+        var dir = Directory.CreateTempSubdirectory("galileo-thumbs-").FullName;
+        count = Math.Max(1, count);
+        var rate = count / Math.Max(0.001, duration);
+        await RunCaptureAsync(FfmpegPath,
+            new[] { "-y", "-i", input, "-vf", $"fps={N(rate)},scale=160:-2", "-frames:v", count.ToString(), Path.Combine(dir, "t_%04d.jpg") },
+            ct, captureStdErr: true);
+        var files = Directory.GetFiles(dir, "t_*.jpg");
+        Array.Sort(files, StringComparer.Ordinal);
+        return files.ToList();
+    }
+
     /// <summary>Save a single frame to a PNG.</summary>
     public static async Task SnapshotAsync(string input, double time, string outPath, CancellationToken ct = default)
         => await RunCaptureAsync(FfmpegPath,

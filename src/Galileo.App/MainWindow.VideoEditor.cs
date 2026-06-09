@@ -1,11 +1,20 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Effects;
+using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Galileo.Services;
+using Windows.Foundation;
+using Windows.Graphics.Imaging;
+using Windows.Media.Playback;
 using Windows.Storage.Pickers;
 
 namespace Galileo;
@@ -90,10 +99,28 @@ public sealed partial class MainWindow
             EditorStatus.Text = $"{info.Width}×{info.Height} · {info.Fps:0.##} fps · {FormatClock(info.Duration)}";
         else
             EditorStatus.Text = "Couldn't probe the file; export may still work.";
+
+        HookEditorPreviewHandlers();
+        _editorReady = true;
+        EditTimeline.Visibility = Visibility.Visible;
+        SubscribePlayhead();
+        StartLivePreview();
+        _ = BuildTimelineAsync();
     }
 
-    private void CloseVideoEditor_Click(object sender, RoutedEventArgs e)
-        => VideoEditorPanel.Visibility = Visibility.Collapsed;
+    private void CloseVideoEditor_Click(object sender, RoutedEventArgs e) => CloseVideoEditor();
+
+    /// <summary>Full teardown — stops the live preview (restoring normal playback) and hides editor chrome.</summary>
+    private void CloseVideoEditor()
+    {
+        _editorReady = false;
+        StopLivePreview();
+        UnsubscribePlayhead();
+        VideoEditorPanel.Visibility = Visibility.Collapsed;
+        EditTimeline.Visibility = Visibility.Collapsed;
+        try { if (_thumbsDir is not null && Directory.Exists(_thumbsDir)) Directory.Delete(_thumbsDir, true); } catch { }
+        _thumbsDir = null;
+    }
 
     private void EditSetStart_Click(object sender, RoutedEventArgs e) { _editTrimStart = CurrentVideoSeconds(); UpdateTrimText(); }
     private void EditSetEnd_Click(object sender, RoutedEventArgs e) { _editTrimEnd = CurrentVideoSeconds(); UpdateTrimText(); }
@@ -122,8 +149,8 @@ public sealed partial class MainWindow
             : $"{_editSegments.Count} segment(s) will be stitched: " +
               string.Join(", ", _editSegments.ConvertAll(s => $"{FormatClock(s.Start)}–{FormatClock(s.End)}"));
 
-    private void EditRotateLeft_Click(object sender, RoutedEventArgs e) { _editRotate = (_editRotate + 270) % 360; EditRotateText.Text = $"{_editRotate}°"; }
-    private void EditRotateRight_Click(object sender, RoutedEventArgs e) { _editRotate = (_editRotate + 90) % 360; EditRotateText.Text = $"{_editRotate}°"; }
+    private void EditRotateLeft_Click(object sender, RoutedEventArgs e) { _editRotate = (_editRotate + 270) % 360; EditRotateText.Text = $"{_editRotate}°"; UpdatePreviewTransform(); }
+    private void EditRotateRight_Click(object sender, RoutedEventArgs e) { _editRotate = (_editRotate + 90) % 360; EditRotateText.Text = $"{_editRotate}°"; UpdatePreviewTransform(); }
 
     private void EditContainer_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -227,6 +254,273 @@ public sealed partial class MainWindow
         }
         catch (Exception ex) { EditorStatus.Text = "Export failed: " + ex.Message; App.Log("VideoExport", ex); }
         finally { EndProgressOp(token, null); }
+    }
+
+    // ---- Timeline (filmstrip + scrub) ----
+
+    private string? _thumbsDir;
+    private bool _scrubbing;
+    private bool _playheadHooked;
+
+    private async Task BuildTimelineAsync()
+    {
+        EditFilmstrip.Children.Clear();
+        EditFilmstrip.ColumnDefinitions.Clear();
+        EditPlayheadShift.X = 0;
+        if (_currentVideoPath is null || _editVideoInfo is null || _editVideoInfo.Duration <= 0) return;
+        try
+        {
+            var thumbs = await FfmpegVideo.GenerateThumbnailsAsync(_currentVideoPath, 16, _editVideoInfo.Duration);
+            _thumbsDir = thumbs.Count > 0 ? Path.GetDirectoryName(thumbs[0]) : null;
+            if (!_editorReady) return; // editor closed while generating
+            for (var i = 0; i < thumbs.Count; i++)
+            {
+                EditFilmstrip.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                var img = new Image
+                {
+                    Source = new BitmapImage(new Uri(thumbs[i])),
+                    Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
+                };
+                img.Clip = null;
+                Grid.SetColumn(img, i);
+                EditFilmstrip.Children.Add(img);
+            }
+        }
+        catch (Exception ex) { App.Log("Timeline", ex); }
+    }
+
+    private void EditTimeline_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        _scrubbing = true;
+        EditTimeline.CapturePointer(e.Pointer);
+        ScrubTo(e);
+    }
+
+    private void EditTimeline_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (_scrubbing) ScrubTo(e);
+    }
+
+    private void EditTimeline_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        _scrubbing = false;
+        EditTimeline.ReleasePointerCapture(e.Pointer);
+    }
+
+    private void ScrubTo(PointerRoutedEventArgs e)
+    {
+        var w = EditTimeline.ActualWidth;
+        var dur = _editVideoInfo?.Duration ?? 0;
+        if (w <= 0 || dur <= 0) return;
+        var frac = Math.Clamp(e.GetCurrentPoint(EditTimeline).Position.X / w, 0, 1);
+        EditPlayheadShift.X = frac * w;
+        var mp = VideoPlayer.MediaPlayer;
+        if (mp?.PlaybackSession is { } ps) ps.Position = TimeSpan.FromSeconds(frac * dur);
+        if (_previewOn) RenderFromLastFrame(); // refresh the still preview at the new spot
+    }
+
+    private void SubscribePlayhead()
+    {
+        var mp = VideoPlayer.MediaPlayer;
+        if (mp?.PlaybackSession is { } ps && !_playheadHooked)
+        {
+            ps.PositionChanged += OnPlaybackPositionChanged;
+            _playheadHooked = true;
+        }
+    }
+
+    private void UnsubscribePlayhead()
+    {
+        var mp = VideoPlayer.MediaPlayer;
+        if (mp?.PlaybackSession is { } ps && _playheadHooked)
+        {
+            ps.PositionChanged -= OnPlaybackPositionChanged;
+            _playheadHooked = false;
+        }
+    }
+
+    private void OnPlaybackPositionChanged(MediaPlaybackSession session, object args)
+    {
+        var pos = session.Position.TotalSeconds;
+        var dur = _editVideoInfo?.Duration ?? 0;
+        if (dur <= 0) return;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_scrubbing || EditTimeline.Visibility != Visibility.Visible) return;
+            EditPlayheadShift.X = Math.Clamp(pos / dur, 0, 1) * EditTimeline.ActualWidth;
+        });
+    }
+
+    // ---- Live preview (Win2D frame server) ----
+
+    private SoftwareBitmap? _frameDest;
+    private CanvasImageSource? _previewSource;
+    private CanvasRenderTarget? _lastFrame;
+    private int _previewSrcW, _previewSrcH;
+    private bool _previewOn;
+    private bool _previewBusy;
+    private bool _editorReady;
+    private bool _editorHandlersHooked;
+    private MediaPlayer? _previewPlayer;
+
+    private void StartLivePreview()
+    {
+        var mp = VideoPlayer.MediaPlayer;
+        var w = _editVideoInfo?.Width ?? 0;
+        var h = _editVideoInfo?.Height ?? 0;
+        if (mp is null || w <= 0 || h <= 0) return; // no probe info → keep the normal player
+        try
+        {
+            _frameDest = new SoftwareBitmap(BitmapPixelFormat.Bgra8, w, h, BitmapAlphaMode.Premultiplied);
+            _previewPlayer = mp;
+            mp.IsVideoFrameServerEnabled = true;
+            mp.VideoFrameAvailable += OnVideoFrameAvailable;
+            _previewOn = true;
+            EditPreviewImage.Visibility = Visibility.Visible;
+            UpdatePreviewTransform();
+        }
+        catch (Exception ex)
+        {
+            App.Log("LivePreviewStart", ex);
+            StopLivePreview();
+            EditorStatus.Text = "Live preview unavailable on this video; edits still export.";
+        }
+    }
+
+    private void StopLivePreview()
+    {
+        _previewOn = false;
+        if (_previewPlayer is not null)
+        {
+            try { _previewPlayer.VideoFrameAvailable -= OnVideoFrameAvailable; _previewPlayer.IsVideoFrameServerEnabled = false; } catch { }
+            _previewPlayer = null;
+        }
+        EditPreviewImage.Visibility = Visibility.Collapsed;
+        EditPreviewImage.Source = null;
+        _previewSource = null; _previewSrcW = _previewSrcH = 0;
+        try { _lastFrame?.Dispose(); } catch { }
+        _lastFrame = null;
+        try { _frameDest?.Dispose(); } catch { }
+        _frameDest = null;
+        if (EditPreviewTransform is not null) { EditPreviewTransform.Rotation = 0; EditPreviewTransform.ScaleX = EditPreviewTransform.ScaleY = 1; }
+    }
+
+    private void OnVideoFrameAvailable(MediaPlayer sender, object args)
+    {
+        if (!_previewOn || _previewBusy) return;
+        _previewBusy = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            try { GrabAndRenderFrame(sender); }
+            catch (Exception ex) { App.Log("PreviewFrame", ex); }
+            finally { _previewBusy = false; }
+        });
+    }
+
+    private void GrabAndRenderFrame(MediaPlayer mp)
+    {
+        if (!_previewOn || _frameDest is null) return;
+        var device = CanvasDevice.GetSharedDevice();
+        using var input = CanvasBitmap.CreateFromSoftwareBitmap(device, _frameDest);
+        mp.CopyFrameToVideoSurface(input);
+
+        var w = (float)input.Size.Width;
+        var h = (float)input.Size.Height;
+        if (_lastFrame is null || _lastFrame.SizeInPixels.Width != input.SizeInPixels.Width || _lastFrame.SizeInPixels.Height != input.SizeInPixels.Height)
+        {
+            _lastFrame?.Dispose();
+            _lastFrame = new CanvasRenderTarget(device, w, h, 96);
+        }
+        using (var ds = _lastFrame.CreateDrawingSession()) { ds.Clear(Microsoft.UI.Colors.Black); ds.DrawImage(input); }
+
+        RenderPreview(input, input.Size.Width, input.Size.Height);
+    }
+
+    private void RenderFromLastFrame()
+    {
+        if (!_previewOn || _lastFrame is null) return;
+        try { RenderPreview(_lastFrame, _lastFrame.Size.Width, _lastFrame.Size.Height); }
+        catch (Exception ex) { App.Log("PreviewRedraw", ex); }
+    }
+
+    private void RenderPreview(ICanvasImage frame, double w, double h)
+    {
+        if (!_previewOn) return;
+        double Nz(double v) => double.IsNaN(v) ? 0 : v;
+        var l = (int)Math.Clamp(Nz(EditCropL.Value), 0, w - 2);
+        var t = (int)Math.Clamp(Nz(EditCropT.Value), 0, h - 2);
+        var r = (int)Math.Clamp(Nz(EditCropR.Value), 0, w - 2 - l);
+        var b = (int)Math.Clamp(Nz(EditCropB.Value), 0, h - 2 - t);
+        var cw = Math.Max(2, (int)w - l - r);
+        var ch = Math.Max(2, (int)h - t - b);
+
+        var img = BuildPreviewColor(frame);
+
+        var device = CanvasDevice.GetSharedDevice();
+        if (_previewSource is null || _previewSrcW != cw || _previewSrcH != ch)
+        {
+            _previewSrcW = cw; _previewSrcH = ch;
+            _previewSource = new CanvasImageSource(device, cw, ch, 96);
+            EditPreviewImage.Source = _previewSource;
+        }
+        using (var ds = _previewSource.CreateDrawingSession(Microsoft.UI.Colors.Black))
+            ds.DrawImage(img, new Rect(0, 0, cw, ch), new Rect(l, t, cw, ch));
+
+        UpdatePreviewTransform();
+    }
+
+    // Color/sharpen only (crop is applied by the source rect, rotate/flip by the Image transform).
+    private ICanvasImage BuildPreviewColor(ICanvasImage src)
+    {
+        var img = src;
+        double br = EditBrightness.Value, co = EditContrast.Value, sa = EditSaturation.Value;
+        if (br != 0) img = new LinearTransferEffect { Source = img, RedOffset = (float)br, GreenOffset = (float)br, BlueOffset = (float)br };
+        if (co != 1) img = new ContrastEffect { Source = img, Contrast = (float)Math.Clamp(co - 1, -1, 1) };
+        if (sa != 1) img = new ColorMatrixEffect { Source = img, ColorMatrix = SaturationMatrix((float)sa) };
+        if (EditSharpen.IsOn) img = new SharpenEffect { Source = img, Amount = 4f, Threshold = 0 };
+        return img;
+    }
+
+    private void UpdatePreviewTransform()
+    {
+        if (EditPreviewTransform is null) return;
+        EditPreviewTransform.Rotation = _editRotate;
+        EditPreviewTransform.ScaleX = EditFlipHSwitch.IsOn ? -1 : 1;
+        EditPreviewTransform.ScaleY = EditFlipVSwitch.IsOn ? -1 : 1;
+    }
+
+    // Re-render the still preview when a tool changes (so paused edits update immediately).
+    private void OnEditPreviewChanged() { if (_editorReady) RenderFromLastFrame(); }
+
+    private void HookEditorPreviewHandlers()
+    {
+        if (_editorHandlersHooked) return;
+        _editorHandlersHooked = true;
+        EditBrightness.ValueChanged += (_, _) => OnEditPreviewChanged();
+        EditContrast.ValueChanged += (_, _) => OnEditPreviewChanged();
+        EditSaturation.ValueChanged += (_, _) => OnEditPreviewChanged();
+        EditSharpen.Toggled += (_, _) => OnEditPreviewChanged();
+        EditDenoise.Toggled += (_, _) => OnEditPreviewChanged();
+        EditFlipHSwitch.Toggled += (_, _) => { if (_editorReady) UpdatePreviewTransform(); };
+        EditFlipVSwitch.Toggled += (_, _) => { if (_editorReady) UpdatePreviewTransform(); };
+        EditCropL.ValueChanged += (_, _) => OnEditPreviewChanged();
+        EditCropT.ValueChanged += (_, _) => OnEditPreviewChanged();
+        EditCropR.ValueChanged += (_, _) => OnEditPreviewChanged();
+        EditCropB.ValueChanged += (_, _) => OnEditPreviewChanged();
+    }
+
+    private static Matrix5x4 SaturationMatrix(float sat)
+    {
+        const float lr = 0.2125f, lg = 0.7154f, lb = 0.0721f;
+        float ir = (1 - sat) * lr, ig = (1 - sat) * lg, ib = (1 - sat) * lb;
+        return new Matrix5x4
+        {
+            M11 = ir + sat, M12 = ir, M13 = ir, M14 = 0,
+            M21 = ig, M22 = ig + sat, M23 = ig, M24 = 0,
+            M31 = ib, M32 = ib, M33 = ib + sat, M34 = 0,
+            M41 = 0, M42 = 0, M43 = 0, M44 = 1,
+            M51 = 0, M52 = 0, M53 = 0, M54 = 0,
+        };
     }
 
     private static string FormatClock(double seconds)
