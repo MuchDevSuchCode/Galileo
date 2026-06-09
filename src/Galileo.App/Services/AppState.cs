@@ -83,6 +83,10 @@ public sealed class AppState
     public bool DeveloperMode { get; set; }
     public string TerminalShell { get; set; } = "cmd";   // cmd | powershell | wsl
 
+    // Secure delete: overwrite method used when emptying the bin / shredding / Shift+Delete.
+    // None | Zero | Random | Dod3 | Dod7 | Gutmann35
+    public string WipeMethod { get; set; } = "Random";
+
     // Slideshow settings
     public int SlideshowSeconds { get; set; } = 4;
     public bool SlideshowShuffle { get; set; }
@@ -205,5 +209,6 @@ public sealed class AppState
         SlideshowTransition = o.SlideshowTransition;
         DeveloperMode = o.DeveloperMode;
         TerminalShell = o.TerminalShell;
+        WipeMethod = o.WipeMethod;
     }
 }

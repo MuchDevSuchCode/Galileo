@@ -67,6 +67,12 @@ public sealed partial class MainWindow : Window
     // Shell-namespace browser for MTP / portable devices (phones, cameras) — no filesystem paths.
     private readonly ShellBrowser _shell = new();
 
+    // Galileo's own self-contained recycle bin (independent of the Windows Recycle Bin).
+    private readonly RecycleBin _bin = new();
+
+    /// <summary>The secure-wipe method chosen in Settings (used for Empty / shred / Shift+Delete).</summary>
+    private WipeMethod CurrentWipeMethod => SecureWipe.Parse(_state.WipeMethod);
+
     // Live folder refresh: auto-show files added/removed/renamed outside the app.
     private FileSystemWatcher? _folderWatcher;
     private string? _watchedPath;
@@ -1346,6 +1352,17 @@ public sealed partial class MainWindow : Window
         UpdateFolderWatch();
         LoadSortPrefsForCurrentFolder(); // apply this folder's remembered sort/group
 
+        // Galileo's own recycle bin — list the moved-in items (real files, so previews work).
+        if (_currentFolder == RecycleBin.Location)
+        {
+            _explorerRaw = _bin.ListItems();
+            ApplySortAndGroup();
+            ApplyViewMode();
+            UpdateHideFolderButton();
+            StatusText.Text = $"Recycle Bin — {_explorerRaw.Count} item(s)";
+            return;
+        }
+
         // Shell-namespace location (MTP / portable device) — enumerate via the shell, no filesystem.
         if (ShellLoc.IsShell(_currentFolder))
         {
@@ -1780,6 +1797,17 @@ public sealed partial class MainWindow : Window
     {
         Breadcrumb.Children.Clear();
 
+        // Galileo's own recycle bin: This PC › Recycle Bin.
+        if (_currentFolder == RecycleBin.Location)
+        {
+            AddCrumb("This PC", null);
+            Breadcrumb.Children.Add(new TextBlock { Text = "›", Opacity = 0.5, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 2, 0) });
+            AddCrumb("Recycle Bin", RecycleBin.Location);
+            BreadcrumbScroller.UpdateLayout();
+            BreadcrumbScroller.ChangeView(BreadcrumbScroller.ScrollableWidth, null, null, true);
+            return;
+        }
+
         // Shell-namespace location (MTP device): build the trail from the shell parent chain.
         if (ShellLoc.IsShell(_currentFolder))
         {
@@ -1871,6 +1899,7 @@ public sealed partial class MainWindow : Window
     private void NavUp_Click(object sender, RoutedEventArgs e)
     {
         if (_currentFolder is null) return;
+        if (_currentFolder == RecycleBin.Location) { NavigateTo(null); return; }
         if (ShellLoc.IsShell(_currentFolder))
         {
             var parent = _shell.GetParentParsingName(ShellLoc.Unwrap(_currentFolder));
@@ -2439,6 +2468,28 @@ public sealed partial class MainWindow : Window
             return i;
         }
 
+        // Recycle Bin view: Restore / Delete permanently (shred). No move/cut/paste here.
+        if (_currentFolder == RecycleBin.Location)
+        {
+            if (item is not null)
+            {
+                List<ExplorerItem> BinSel()
+                {
+                    var sel = SelectedExplorerItems();
+                    return sel.Any(s => s == item) ? sel : new List<ExplorerItem> { item };
+                }
+                if (!item.IsFolder)
+                    menu.Items.Add(SMI("Open", Symbol.OpenFile, (_, _) => OpenExplorerItem(item)));
+                menu.Items.Add(SMI("Restore", Symbol.Undo, (_, _) => RestoreBinEntries(BinSel())));
+                menu.Items.Add(SMI("Delete permanently", Symbol.Delete, async (_, _) => await ShredBinEntriesAsync(BinSel())));
+                menu.Items.Add(new MenuFlyoutSeparator());
+            }
+            menu.Items.Add(SMI("Empty Recycle Bin", null, EmptyRecycleBin_Click));
+            menu.Items.Add(SMI("Refresh", Symbol.Refresh, (_, _) => LoadCurrentFolder()));
+            menu.ShowAt(target, new FlyoutShowOptions { Position = position });
+            return;
+        }
+
         if (item is not null)
         {
             if (item.IsShellItem)
@@ -2506,6 +2557,12 @@ public sealed partial class MainWindow : Window
                 else await RenameExplorerAsync(item);
             }));
             menu.Items.Add(SMI("Delete", Symbol.Delete, async (_, _) => await DeleteExplorerAsync(item)));
+            menu.Items.Add(SMI("Secure delete (shred)…", null, async (_, _) =>
+            {
+                var sel = SelectedExplorerItems();
+                if (sel.All(s => s != item)) sel = new List<ExplorerItem> { item };
+                await SecureShredAsync(sel);
+            }));
             menu.Items.Add(new MenuFlyoutSeparator());
             menu.Items.Add(SMI("Properties", null, (_, _) => { var h = WinRT.Interop.WindowNative.GetWindowHandle(this); ShellOps.ShowProperties(h, item.Path); }));
         }
@@ -2785,27 +2842,35 @@ public sealed partial class MainWindow : Window
 
     private async System.Threading.Tasks.Task DeleteExplorerAsync(ExplorerItem item)
     {
+        // In the bin view, "delete" means permanently shred that entry.
+        if (_currentFolder == RecycleBin.Location) { await ShredBinEntriesAsync(new() { item }); return; }
+
         var permanent = IsShiftDown();
         var dialog = new ContentDialog
         {
-            Title = permanent ? "Permanently delete" : "Delete",
+            Title = permanent ? "Securely delete" : "Delete",
             Content = permanent
-                ? $"Permanently delete \"{item.Name}\"? This can't be undone."
+                ? $"Securely erase \"{item.Name}\" with overwrites? This can't be undone."
                 : $"Move \"{item.Name}\" to the Recycle Bin?",
-            PrimaryButtonText = "Delete",
+            PrimaryButtonText = permanent ? "Erase" : "Delete",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = RootGrid.XamlRoot
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
-        var option = permanent ? StorageDeleteOption.PermanentDelete : StorageDeleteOption.Default;
         try
         {
-            if (item.IsFolder)
-                await (await StorageFolder.GetFolderFromPathAsync(item.Path)).DeleteAsync(option);
-            else
-                await (await StorageFile.GetFileFromPathAsync(item.Path)).DeleteAsync(option);
+            if (permanent)
+            {
+                StatusText.Text = $"Securely erasing \"{item.Name}\"…";
+                await SecureWipe.WipePathAsync(item.Path, CurrentWipeMethod);
+                StatusText.Text = $"Securely erased \"{item.Name}\".";
+            }
+            else if (!_bin.MoveToBin(item.Path))
+            {
+                StatusText.Text = "Delete failed: item not found.";
+            }
             LoadCurrentFolder();
         }
         catch (Exception ex) { StatusText.Text = $"Delete failed: {ex.Message}"; }
@@ -2819,32 +2884,103 @@ public sealed partial class MainWindow : Window
         var selection = active.SelectedItems.OfType<ExplorerItem>().ToList();
         if (selection.Count == 0) return;
 
+        // In the bin view, "delete" means permanently shred the selected entries.
+        if (_currentFolder == RecycleBin.Location) { await ShredBinEntriesAsync(selection); return; }
+
         var permanent = IsShiftDown();
         var dialog = new ContentDialog
         {
-            Title = permanent ? "Permanently delete" : "Delete",
+            Title = permanent ? "Securely delete" : "Delete",
             Content = permanent
-                ? $"Permanently delete {selection.Count} item(s)? This can't be undone."
+                ? $"Securely erase {selection.Count} item(s) with overwrites? This can't be undone."
                 : $"Move {selection.Count} item(s) to the Recycle Bin?",
-            PrimaryButtonText = "Delete",
+            PrimaryButtonText = permanent ? "Erase" : "Delete",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = RootGrid.XamlRoot
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
-        var option = permanent ? StorageDeleteOption.PermanentDelete : StorageDeleteOption.Default;
         foreach (var item in selection)
         {
             try
             {
-                if (item.IsFolder)
-                    await (await StorageFolder.GetFolderFromPathAsync(item.Path)).DeleteAsync(option);
-                else
-                    await (await StorageFile.GetFileFromPathAsync(item.Path)).DeleteAsync(option);
+                if (permanent)
+                {
+                    StatusText.Text = $"Securely erasing \"{item.Name}\"…";
+                    await SecureWipe.WipePathAsync(item.Path, CurrentWipeMethod);
+                }
+                else _bin.MoveToBin(item.Path);
             }
             catch (Exception ex) { StatusText.Text = $"Delete failed: {ex.Message}"; }
         }
+        StatusText.Text = permanent ? $"Securely erased {selection.Count} item(s)." : $"Moved {selection.Count} item(s) to the Recycle Bin.";
+        LoadCurrentFolder();
+    }
+
+    /// <summary>Permanently shreds bin entries (secure overwrite), used by the bin view's Delete.</summary>
+    private async System.Threading.Tasks.Task ShredBinEntriesAsync(List<ExplorerItem> selection)
+    {
+        if (selection.Count == 0) return;
+        var dialog = new ContentDialog
+        {
+            Title = "Delete permanently",
+            Content = $"Permanently erase {selection.Count} item(s) from the Recycle Bin with overwrites? This can't be undone.",
+            PrimaryButtonText = "Erase",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = RootGrid.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        foreach (var item in selection)
+        {
+            StatusText.Text = $"Securely erasing \"{item.Name}\"…";
+            try { await _bin.DeleteEntryAsync(item.Path, CurrentWipeMethod); }
+            catch (Exception ex) { StatusText.Text = $"Erase failed: {ex.Message}"; }
+        }
+        StatusText.Text = $"Permanently erased {selection.Count} item(s).";
+        LoadCurrentFolder();
+    }
+
+    /// <summary>Right-click "Secure delete (shred)" — overwrites the files immediately, bypassing the bin.</summary>
+    private async System.Threading.Tasks.Task SecureShredAsync(List<ExplorerItem> selection)
+    {
+        selection = selection.Where(s => !s.IsShellItem).ToList();
+        if (selection.Count == 0) return;
+        var method = CurrentWipeMethod;
+        var effective = method == WipeMethod.None ? WipeMethod.Random : method; // shred always overwrites
+        var what = selection.Count == 1 ? $"\"{selection[0].Name}\"" : $"{selection.Count} item(s)";
+        var dialog = new ContentDialog
+        {
+            Title = "Secure delete (shred)",
+            Content = $"Securely erase {what} with overwrites ({WipeMethodLabel(effective)})? This bypasses the Recycle Bin and can't be undone.",
+            PrimaryButtonText = "Shred",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = RootGrid.XamlRoot
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var progress = new Progress<string>(s => StatusText.Text = s);
+        foreach (var item in selection)
+        {
+            StatusText.Text = $"Shredding \"{item.Name}\"…";
+            try { await SecureWipe.WipePathAsync(item.Path, effective, progress); }
+            catch (Exception ex) { StatusText.Text = $"Shred failed: {ex.Message}"; }
+        }
+        StatusText.Text = $"Securely erased {selection.Count} item(s).";
+        LoadCurrentFolder();
+    }
+
+    /// <summary>Restores bin entries to their original locations.</summary>
+    private void RestoreBinEntries(List<ExplorerItem> selection)
+    {
+        if (selection.Count == 0) return;
+        var restored = 0;
+        foreach (var item in selection)
+            if (_bin.Restore(item.Path, out _)) restored++;
+        StatusText.Text = restored == 1 ? "Restored 1 item." : $"Restored {restored} item(s).";
         LoadCurrentFolder();
     }
 
@@ -3043,11 +3179,11 @@ public sealed partial class MainWindow : Window
         var permanent = IsShiftDown();
         var dialog = new ContentDialog
         {
-            Title = permanent ? "Permanently delete" : "Delete photo",
+            Title = permanent ? "Securely delete" : "Delete photo",
             Content = permanent
-                ? $"Permanently delete \"{item.FileName}\"? This can't be undone."
+                ? $"Securely erase \"{item.FileName}\" with overwrites? This can't be undone."
                 : $"Move \"{item.FileName}\" to the Recycle Bin?",
-            PrimaryButtonText = "Delete",
+            PrimaryButtonText = permanent ? "Erase" : "Delete",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = RootGrid.XamlRoot
@@ -3056,8 +3192,8 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var file = await StorageFile.GetFileFromPathAsync(item.Path);
-            await file.DeleteAsync(permanent ? StorageDeleteOption.PermanentDelete : StorageDeleteOption.Default);
+            if (permanent) await SecureWipe.WipePathAsync(item.Path, CurrentWipeMethod);
+            else if (!_bin.MoveToBin(item.Path)) { StatusText.Text = "Delete failed: item not found."; return; }
         }
         catch (Exception ex)
         {
@@ -3183,7 +3319,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (_searchRecursive && _currentFolder is not null && !ShellLoc.IsShell(_currentFolder))
+        if (_searchRecursive && _currentFolder is not null && _currentFolder != RecycleBin.Location && !ShellLoc.IsShell(_currentFolder))
         {
             var q = _searchQuery;
             var root = _currentFolder;
@@ -3235,6 +3371,7 @@ public sealed partial class MainWindow : Window
     private string TabHeaderFor(string? folder)
     {
         if (folder is null) return "This PC";
+        if (folder == RecycleBin.Location) return "Recycle Bin";
         if (ShellLoc.IsShell(folder)) return _shell.DisplayName(ShellLoc.Unwrap(folder));
         // Inside a vault or an opened zip, show the friendly name at its root (not the temp GUID path).
         if (SpecialRootFor(folder) is { } sr)
@@ -3887,6 +4024,21 @@ public sealed partial class MainWindow : Window
         if (_term is not null) StartTerminalSession(_termCols, _termRows); // restart in the chosen shell
     }
 
+    private void WipeMethodCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.WipeMethod = WipeMethodCombo.SelectedIndex switch
+        {
+            1 => "Zero",
+            2 => "Random",
+            3 => "Dod3",
+            4 => "Dod7",
+            5 => "Gutmann35",
+            _ => "None",
+        };
+        _state.Save();
+    }
+
     private void PopulateShells()
     {
         _shells.Clear();
@@ -3962,14 +4114,20 @@ public sealed partial class MainWindow : Window
 
     // ===================== Settings =====================
 
-    private void OpenRecycleBin_Click(object sender, RoutedEventArgs e) => ShellOps.OpenRecycleBin();
+    private void OpenRecycleBin_Click(object sender, RoutedEventArgs e) => NavigateTo(RecycleBin.Location);
 
     private async void EmptyRecycleBin_Click(object sender, RoutedEventArgs e)
     {
+        var count = _bin.Count;
+        if (count == 0) { StatusText.Text = "The Recycle Bin is already empty."; return; }
+
+        var method = CurrentWipeMethod;
         var dlg = new ContentDialog
         {
             Title = "Empty Recycle Bin?",
-            Content = "Permanently delete all items in the Recycle Bin? This can't be undone.",
+            Content = method == WipeMethod.None
+                ? $"Permanently delete all {count} item(s) in the Recycle Bin? This can't be undone."
+                : $"Securely erase all {count} item(s) in the Recycle Bin with overwrites ({WipeMethodLabel(method)})? This can't be undone.",
             PrimaryButtonText = "Empty",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
@@ -3977,10 +4135,23 @@ public sealed partial class MainWindow : Window
         };
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
 
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        var hr = ShellOps.EmptyRecycleBin(hwnd);
-        StatusText.Text = hr == 0 ? "Recycle Bin emptied." : "The Recycle Bin is already empty.";
+        var progress = new Progress<string>(s => StatusText.Text = s);
+        StatusText.Text = "Emptying Recycle Bin…";
+        try { await _bin.EmptyAsync(method, progress); }
+        catch (Exception ex) { StatusText.Text = $"Empty failed: {ex.Message}"; return; }
+        StatusText.Text = "Recycle Bin emptied.";
+        if (_currentFolder == RecycleBin.Location) LoadCurrentFolder();
     }
+
+    private static string WipeMethodLabel(WipeMethod m) => m switch
+    {
+        WipeMethod.Zero => "Zero, 1 pass",
+        WipeMethod.Random => "Random, 1 pass",
+        WipeMethod.Dod3 => "DoD 5220.22-M, 3 passes",
+        WipeMethod.Dod7 => "DoD ECE, 7 passes",
+        WipeMethod.Gutmann35 => "Gutmann, 35 passes",
+        _ => "no overwrite",
+    };
 
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
@@ -4007,6 +4178,15 @@ public sealed partial class MainWindow : Window
         VaultWipeCountBox.Value = _state.VaultWipeAfterAttempts;
         VaultWipeCountRow.Visibility = _state.VaultWipeOnFailure ? Visibility.Visible : Visibility.Collapsed;
         DeveloperModeSwitch.IsOn = _state.DeveloperMode;
+        WipeMethodCombo.SelectedIndex = CurrentWipeMethod switch
+        {
+            WipeMethod.Zero => 1,
+            WipeMethod.Random => 2,
+            WipeMethod.Dod3 => 3,
+            WipeMethod.Dod7 => 4,
+            WipeMethod.Gutmann35 => 5,
+            _ => 0,
+        };
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
         UpdateBackupUi();
         SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
