@@ -2277,6 +2277,9 @@ public sealed partial class MainWindow : Window
 
     private void UpdateVideoToggleIcons()
     {
+        // The volume slider's Value="100" raises ValueChanged during XAML load, before the repeat
+        // button is built — guard against the not-yet-created controls.
+        if (VideoVolumeIcon is null || VideoRepeatIcon is null) return;
         var vol = VideoVolumeSlider?.Value ?? 100;
         VideoVolumeIcon.Glyph = ((char)((_videoMuted || vol <= 0) ? 0xE74F : vol <= 33 ? 0xE993 : vol <= 66 ? 0xE994 : 0xE995)).ToString();
         VideoRepeatIcon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
