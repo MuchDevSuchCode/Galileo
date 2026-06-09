@@ -1112,6 +1112,33 @@
                                 </Border>
                             </StackPanel>
 
+                            <!-- Secure delete -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="SECURE DELETE" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <StackPanel Spacing="14">
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Overwrite method" />
+                                                <TextBlock Text="Used when emptying the Recycle Bin, shredding, or Shift+Delete. More passes are slower."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ComboBox Grid.Column="1" x:Name="WipeMethodCombo" Style="{StaticResource SettingControl}"
+                                                      SelectionChanged="WipeMethodCombo_SelectionChanged">
+                                                <ComboBoxItem Content="None (plain delete)" />
+                                                <ComboBoxItem Content="Zero (1 pass)" />
+                                                <ComboBoxItem Content="Random (1 pass)" />
+                                                <ComboBoxItem Content="DoD 5220.22-M (3 passes)" />
+                                                <ComboBoxItem Content="DoD ECE (7 passes)" />
+                                                <ComboBoxItem Content="Gutmann (35 passes)" />
+                                            </ComboBox>
+                                        </Grid>
+                                        <TextBlock Text="Best-effort: on SSDs/NVMe and copy-on-write drives, wear-leveling and TRIM mean overwriting can't guarantee the original bytes are gone."
+                                                   Style="{StaticResource SettingDesc}" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+
                             <!-- Slideshow -->
                             <StackPanel Spacing="8">
                                 <TextBlock Text="SLIDESHOW" Style="{StaticResource SettingSectionHeader}" />
