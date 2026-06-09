@@ -91,9 +91,13 @@ public sealed class AppState
     public bool DeveloperMode { get; set; }
     public string TerminalShell { get; set; } = "cmd";   // cmd | powershell | wsl
 
-    // Secure delete: overwrite method used when emptying the bin / shredding / Shift+Delete.
-    // None | Zero | Random | Dod3 | Dod7 | Gutmann35
+    // Secure delete: overwrite method used when shredding / Shift+Delete (and emptying the bin when
+    // the toggle below is on). Right-click "Secure delete" always overwrites regardless of the toggle.
+    // Zero | Random | Dod3 | Dod7 | Gutmann35
     public string WipeMethod { get; set; } = "Random";
+
+    /// <summary>Overwrite (secure-wipe) files when emptying the Recycle Bin, instead of a plain delete (off by default).</summary>
+    public bool SecureDeleteOnEmpty { get; set; }
 
     // Slideshow settings
     public int SlideshowSeconds { get; set; } = 4;
@@ -221,5 +225,6 @@ public sealed class AppState
         DeveloperMode = o.DeveloperMode;
         TerminalShell = o.TerminalShell;
         WipeMethod = o.WipeMethod;
+        SecureDeleteOnEmpty = o.SecureDeleteOnEmpty;
     }
 }

@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Galileo.Services;
@@ -47,6 +49,114 @@ public static class SecureWipe
     {
         try { return Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).ToList(); }
         catch { return Enumerable.Empty<string>(); }
+    }
+
+    /// <summary>Number of overwrite passes for a method (0 for None / plain delete).</summary>
+    public static int PassCount(WipeMethod m) => m == WipeMethod.None ? 0 : Passes(m).Count;
+
+    /// <summary>
+    /// Wipes a batch of paths (files and/or folders) on a background thread, reporting aggregate
+    /// progress (bytes overwritten across all passes, plus file counts) and honoring cancellation.
+    /// Drives the floating progress card for Empty Recycle Bin / shred / Shift+Delete.
+    /// </summary>
+    public static Task WipePathsAsync(IReadOnlyList<string> paths, WipeMethod method,
+        IProgress<TransferProgress>? progress, CancellationToken ct = default) => Task.Run(() =>
+    {
+        var files = new List<string>();
+        var dirs = new List<string>();
+        foreach (var p in paths)
+        {
+            if (Directory.Exists(p)) { files.AddRange(SafeFiles(p)); dirs.Add(p); }
+            else if (File.Exists(p)) files.Add(p);
+        }
+
+        var passes = PassCount(method);
+        long bytesTotal = 0;
+        if (passes > 0)
+            foreach (var f in files) { try { bytesTotal += new FileInfo(f).Length; } catch { } }
+        bytesTotal *= passes; // total bytes we'll actually overwrite (0 for plain delete → progress by file count)
+
+        long bytesDone = 0;
+        var filesDone = 0;
+        var filesTotal = files.Count;
+        var clock = Stopwatch.StartNew();
+        long lastReportMs = -1000, rateBytesMark = 0, rateMsMark = 0;
+        double ema = 0;
+
+        void Report(string name, bool force)
+        {
+            var ms = clock.ElapsedMilliseconds;
+            if (!force && ms - lastReportMs < 33) return;
+            var dt = (ms - rateMsMark) / 1000.0;
+            if (dt >= 0.25)
+            {
+                var inst = (bytesDone - rateBytesMark) / dt;
+                ema = ema <= 0 ? inst : ema * 0.75 + inst * 0.25;
+                rateBytesMark = bytesDone; rateMsMark = ms;
+            }
+            lastReportMs = ms;
+            progress?.Report(new TransferProgress
+            {
+                CurrentFile = name, BytesDone = bytesDone, BytesTotal = bytesTotal,
+                FilesDone = filesDone, FilesTotal = filesTotal, BytesPerSecond = ema,
+            });
+        }
+
+        Report("", true);
+        foreach (var f in files)
+        {
+            if (ct.IsCancellationRequested) break;
+            WipeFileCore(f, method, ref bytesDone, ct, name => Report(name, false));
+            filesDone++;
+            Report(Path.GetFileName(f), true);
+        }
+        if (!ct.IsCancellationRequested)
+            foreach (var d in dirs) { try { Directory.Delete(d, recursive: true); } catch { } }
+    });
+
+    // Overwrite a single file pass-by-pass, reporting bytes and honoring cancellation, then delete it.
+    private static void WipeFileCore(string path, WipeMethod method, ref long bytesDone, CancellationToken ct, Action<string>? tick)
+    {
+        try
+        {
+            if (!File.Exists(path)) return;
+            var fi = new FileInfo(path);
+            if (fi.Attributes.HasFlag(FileAttributes.ReadOnly)) fi.Attributes = FileAttributes.Normal;
+            long len = fi.Length;
+
+            if (method != WipeMethod.None && len > 0)
+            {
+                var passes = Passes(method);
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None);
+                var buf = new byte[(int)Math.Min(len, Chunk)];
+                for (var p = 0; p < passes.Count; p++)
+                {
+                    if (ct.IsCancellationRequested) return;
+                    fs.Position = 0;
+                    long written = 0;
+                    while (written < len)
+                    {
+                        if (ct.IsCancellationRequested) return;
+                        var n = (int)Math.Min(buf.Length, len - written);
+                        Fill(buf, n, passes[p], written);
+                        fs.Write(buf, 0, n);
+                        written += n; bytesDone += n;
+                        tick?.Invoke(fi.Name);
+                    }
+                    fs.Flush(flushToDisk: true);
+                }
+                fs.SetLength(0);
+                fs.Flush(flushToDisk: true);
+            }
+
+            var scrambled = Path.Combine(Path.GetDirectoryName(path)!, Guid.NewGuid().ToString("N"));
+            try { File.Move(path, scrambled); File.Delete(scrambled); }
+            catch { File.Delete(path); }
+        }
+        catch
+        {
+            try { File.Delete(path); } catch { }
+        }
     }
 
     private static void WipeFile(string path, WipeMethod method, IProgress<string>? progress)
