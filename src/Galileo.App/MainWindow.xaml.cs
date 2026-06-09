@@ -23,6 +23,7 @@ using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
 using Windows.System;
+using Windows.UI;
 
 namespace Galileo;
 
@@ -69,6 +70,9 @@ public sealed partial class MainWindow : Window
 
     // Galileo's own self-contained recycle bin (independent of the Windows Recycle Bin).
     private readonly RecycleBin _bin = new();
+
+    // One-shot: suppress "always open in new window" for the next programmatic open (startup / shell hand-off).
+    private bool _bypassAlwaysNewWindow;
 
     /// <summary>The secure-wipe method chosen in Settings (used for Empty / shred / Shift+Delete).</summary>
     private WipeMethod CurrentWipeMethod => SecureWipe.Parse(_state.WipeMethod);
@@ -239,7 +243,7 @@ public sealed partial class MainWindow : Window
     private void OpenPathInCurrentTab(string path)
     {
         var match = _explorerItems.FirstOrDefault(i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase));
-        if (match is not null) OpenExplorerItem(match);
+        if (match is not null) { _bypassAlwaysNewWindow = true; OpenExplorerItem(match); }
     }
 
     /// <summary>Opens a file/folder handed to us by another (redirected) instance, in a new tab.</summary>
@@ -2169,12 +2173,25 @@ public sealed partial class MainWindow : Window
 
     private void OpenExplorerItem(ExplorerItem item)
     {
+        // One-shot bypass so programmatic opens (startup / shell hand-off) don't recurse into a new window.
+        var bypassNewWindow = _bypassAlwaysNewWindow;
+        _bypassAlwaysNewWindow = false;
+
         if (item.IsShellItem)
         {
             if (item.IsFolder) NavigateTo(ShellLoc.Wrap(item.ShellId!));
             else _ = OpenDeviceFileAsync(item); // stream to temp, then open (Phase 2)
             return;
         }
+
+        // "Always open photos & videos in a new window": route real media files to a separate window.
+        if (!bypassNewWindow && _state.AlwaysOpenMediaInNewWindow && !item.IsFolder
+            && (item.IsImage || PhotoLibrary.IsMedia(item.Path)))
+        {
+            OpenInNewWindow(item.Path);
+            return;
+        }
+
         if (item.IsFolder) NavigateTo(item.Path);
         else if (item.IsImage) OpenImageFromExplorer(item);
         else if (PhotoLibrary.IsMedia(item.Path)) OpenVideoFromExplorer(item);
@@ -2223,6 +2240,7 @@ public sealed partial class MainWindow : Window
                 // Movie category → full multichannel output (no stereo downmix); Windows' spatial
                 // engine (Dolby Atmos / DTS:X / Windows Sonic) on the output device renders surround.
                 mp.AudioCategory = Windows.Media.Playback.MediaPlayerAudioCategory.Movie;
+                if (!isAudio && _state.StartVideoMuted) _videoMuted = true; // "Start videos muted" setting
                 mp.IsMuted = _videoMuted;
                 mp.IsLoopingEnabled = _videoRepeat;
                 mp.Play();
@@ -3629,13 +3647,107 @@ public sealed partial class MainWindow : Window
 
         var progress = new Progress<TransferProgress>(UpdateTransferUi);
         TransferResult result;
-        try { result = await transfer.RunAsync(destDir, paths, move, progress); }
+        try { result = await transfer.RunAsync(destDir, paths, move, progress, ResolveConflictAsync); }
         finally
         {
             revealCts.Cancel();
             if (ReferenceEquals(_activeTransfer, transfer)) { _activeTransfer = null; HideTransferPanel(); }
         }
+        if (result.Skipped > 0) StatusText.Text = $"{(move ? "Moved" : "Copied")} {result.FilesCompleted}, skipped {result.Skipped}.";
         return result.FilesCompleted;
+    }
+
+    /// <summary>Conflict callback for <see cref="FileTransfer"/>: marshals to the UI thread and shows the
+    /// Overwrite / Skip / Keep-both dialog (with file details + an identical-contents check).</summary>
+    private Task<ConflictChoice> ResolveConflictAsync(ConflictInfo info)
+    {
+        var tcs = new TaskCompletionSource<ConflictChoice>();
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            try { tcs.SetResult(await ShowConflictDialogAsync(info)); }
+            catch { tcs.SetResult(new ConflictChoice { Action = ConflictAction.Skip }); }
+        });
+        return tcs.Task;
+    }
+
+    private async Task<ConflictChoice> ShowConflictDialogAsync(ConflictInfo info)
+    {
+        TextBlock Line(string label, string value) => new()
+        {
+            FontSize = 12,
+            Inlines =
+            {
+                new Microsoft.UI.Xaml.Documents.Run { Text = label + "  ", Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] },
+                new Microsoft.UI.Xaml.Documents.Run { Text = value },
+            },
+        };
+
+        Border Card(string heading, long size, DateTime modified, bool accent) => new()
+        {
+            Background = (Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"],
+            BorderBrush = accent
+                ? new SolidColorBrush(Color.FromArgb(255, 0x6E, 0xA8, 0xFF))
+                : (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
+            BorderThickness = new Thickness(accent ? 1.5 : 1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(14, 12, 14, 12),
+            Child = new StackPanel
+            {
+                Spacing = 3,
+                Children =
+                {
+                    new TextBlock { Text = heading, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 13 },
+                    Line("Size", FormatBytes(size)),
+                    Line("Modified", modified == default ? "—" : modified.ToString("yyyy-MM-dd HH:mm")),
+                },
+            },
+        };
+
+        var body = new StackPanel { Spacing = 12, MinWidth = 360 };
+        body.Children.Add(new TextBlock
+        {
+            Text = info.Identical
+                ? "These files are identical — same size and contents (verified by hash)."
+                : "A different file with this name is already here. Compare and choose:",
+            FontSize = 12.5,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = info.Identical
+                ? new SolidColorBrush(Color.FromArgb(255, 0x5A, 0xD1, 0x9A))
+                : (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+        });
+        body.Children.Add(Card("Replace with this file", info.SourceSize, info.SourceModified, accent: true));
+        body.Children.Add(Card("Keep the existing file", info.DestSize, info.DestModified, accent: false));
+
+        CheckBox? applyAll = null;
+        if (info.RemainingConflicts > 0)
+        {
+            applyAll = new CheckBox { Content = $"Do this for all {info.RemainingConflicts + 1} conflicts", FontSize = 12.5 };
+            body.Children.Add(applyAll);
+        }
+
+        var canceled = false;
+        var cancelLink = new HyperlinkButton { Content = "Cancel the whole transfer", FontSize = 12, Padding = new Thickness(0) };
+
+        var dialog = new ContentDialog
+        {
+            Title = $"“{info.Name}” already exists",
+            Content = new StackPanel { Spacing = 12, Children = { body, cancelLink } },
+            PrimaryButtonText = "Replace",
+            SecondaryButtonText = "Keep both",
+            CloseButtonText = "Skip",
+            DefaultButton = info.Identical ? ContentDialogButton.Close : ContentDialogButton.Primary,
+            XamlRoot = RootGrid.XamlRoot,
+        };
+        cancelLink.Click += (_, _) => { canceled = true; dialog.Hide(); };
+
+        var result = await dialog.ShowAsync();
+        var action = canceled ? ConflictAction.Cancel : result switch
+        {
+            ContentDialogResult.Primary => ConflictAction.Overwrite,
+            ContentDialogResult.Secondary => ConflictAction.KeepBoth,
+            _ => ConflictAction.Skip,
+        };
+        return new ConflictChoice { Action = action, ApplyToAll = applyAll?.IsChecked == true };
     }
 
     private void UpdateTransferUi(TransferProgress p)
@@ -4273,7 +4385,10 @@ public sealed partial class MainWindow : Window
         ShowExtensionsSwitch.IsOn = _state.ShowExtensions;
         PeekSwitch.IsOn = _state.PeekEnabled;
         AlbumArtSwitch.IsOn = _state.ShowAlbumArt;
+        StartMutedSwitch.IsOn = _state.StartVideoMuted;
         SingleInstanceSwitch.IsOn = _state.SingleInstance;
+        AlwaysNewWindowSwitch.IsOn = _state.AlwaysOpenMediaInNewWindow;
+        CloseToBackSwitch.IsOn = _state.CloseToViewerBack;
         LockHiddenSwitch.IsOn = _state.LockHiddenAlbum;
         var vaultIdleMin = Math.Clamp(_state.VaultIdleSeconds / 60, 0, 60);
         VaultIdleSlider.Value = vaultIdleMin;
@@ -4312,6 +4427,20 @@ public sealed partial class MainWindow : Window
     {
         if (_loadingSettings) return;
         _state.SingleInstance = SingleInstanceSwitch.IsOn;
+        _state.Save();
+    }
+
+    private void AlwaysNewWindowSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.AlwaysOpenMediaInNewWindow = AlwaysNewWindowSwitch.IsOn;
+        _state.Save();
+    }
+
+    private void CloseToBackSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.CloseToViewerBack = CloseToBackSwitch.IsOn;
         _state.Save();
     }
 
@@ -4556,6 +4685,13 @@ public sealed partial class MainWindow : Window
     {
         if (_loadingSettings) return;
         _state.ShowAlbumArt = AlbumArtSwitch.IsOn;
+        _state.Save();
+    }
+
+    private void StartMutedSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.StartVideoMuted = StartMutedSwitch.IsOn;
         _state.Save();
     }
 
@@ -5386,6 +5522,14 @@ public sealed partial class MainWindow : Window
     private async void AppWindow_Closing(Microsoft.UI.Windowing.AppWindow sender,
         Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
     {
+        // "Close button returns to files": while viewing a single photo/video, X acts like Back, not quit.
+        if (!_closingForVaultLock && _state.CloseToViewerBack && InViewer)
+        {
+            args.Cancel = true;
+            ShowExplorer();
+            return;
+        }
+
         try { _term?.Dispose(); _term = null; } catch { } // kill any terminal shell on close
         StopFolderWatch();
         if (_closingForVaultLock) return;       // second pass: let the close proceed

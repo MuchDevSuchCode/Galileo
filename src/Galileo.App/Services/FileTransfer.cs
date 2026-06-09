@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -24,15 +26,41 @@ public sealed class TransferProgress
 public sealed class TransferResult
 {
     public int FilesCompleted { get; init; }
+    public int Skipped { get; init; }
     public bool Canceled { get; init; }
     public int Errors { get; init; }
+}
+
+public enum ConflictAction { Overwrite, Skip, KeepBoth, Cancel }
+
+/// <summary>Details of a name collision, handed to the UI so the user can choose what to do.</summary>
+public sealed class ConflictInfo
+{
+    public string Name { get; init; } = "";
+    public string SourcePath { get; init; } = "";
+    public string DestPath { get; init; } = "";
+    public long SourceSize { get; init; }
+    public long DestSize { get; init; }
+    public DateTime SourceModified { get; init; }
+    public DateTime DestModified { get; init; }
+    /// <summary>True when both files have identical contents (verified by SHA-256).</summary>
+    public bool Identical { get; init; }
+    /// <summary>How many further conflicts remain after this one (for an "apply to all" option).</summary>
+    public int RemainingConflicts { get; init; }
+}
+
+public sealed class ConflictChoice
+{
+    public ConflictAction Action { get; init; }
+    public bool ApplyToAll { get; init; }
 }
 
 /// <summary>
 /// Copies or moves files/folders into a destination directory with granular progress, and supports
 /// <see cref="Pause"/> / <see cref="Resume"/> / <see cref="Cancel"/> while running. Same-volume moves
-/// use an instant rename; everything else streams in chunks (so multi-GB copies report progress and
-/// stay responsive to pause/cancel mid-file). Name collisions are resolved like Explorer ("name (2)").
+/// use an instant rename; everything else streams in chunks. Name collisions raise a conflict callback
+/// so the user can Overwrite / Skip / Keep both (with "apply to all"); identical files are detected by
+/// hashing both sides first so the choice is informed. Existing folders are merged (per-file conflicts).
 /// </summary>
 public sealed class FileTransfer
 {
@@ -49,18 +77,19 @@ public sealed class FileTransfer
     public void TogglePause() { if (IsPaused) Resume(); else Pause(); }
     public void Cancel() { _cts.Cancel(); _gate.Set(); } // release the gate so a paused copy can observe the cancel
 
-    private sealed record CopyOp(string Src, string Dest, long Size);
+    private sealed class CopyOp { public string Src = ""; public string Dest = ""; public long Size; }
 
-    public Task<TransferResult> RunAsync(string destDir, IReadOnlyList<string> paths, bool move, IProgress<TransferProgress>? progress)
-        => Task.Run(() => Run(destDir, paths, move, progress));
+    public Task<TransferResult> RunAsync(string destDir, IReadOnlyList<string> paths, bool move,
+        IProgress<TransferProgress>? progress, Func<ConflictInfo, Task<ConflictChoice>>? onConflict = null)
+        => Task.Run(() => Run(destDir, paths, move, progress, onConflict));
 
-    private TransferResult Run(string destDir, IReadOnlyList<string> paths, bool move, IProgress<TransferProgress>? progress)
+    private TransferResult Run(string destDir, IReadOnlyList<string> paths, bool move,
+        IProgress<TransferProgress>? progress, Func<ConflictInfo, Task<ConflictChoice>>? onConflict)
     {
         var copies = new List<CopyOp>();      // files to stream-copy
-        var dirsToCreate = new List<string>(); // destination dirs (preserves empty subdirs)
+        var dirsToCreate = new List<string>(); // destination dirs (preserves empty subdirs / merges)
         var fastMoves = new List<(string src, string dest, bool isDir)>(); // instant same-volume renames
-        var moveSourcesToDelete = new List<(string path, bool isDir)>();    // copied move-sources removed on success
-        long bytesTotal = 0;
+        var moveDirSources = new List<string>(); // top-level dirs that were merged on a move (empty-dir cleanup)
 
         // ---- Plan ----
         foreach (var src in paths)
@@ -74,41 +103,72 @@ public sealed class FileTransfer
                 {
                     var srcParent = Path.GetDirectoryName(src.TrimEnd('\\', '/'));
                     if (move && string.Equals(srcParent, destDir, StringComparison.OrdinalIgnoreCase)) continue; // no-op
-                    var dest = UniquePath(Path.Combine(destDir, name), isDir: true);
-                    if (IsSubPath(src, dest)) continue; // can't move a folder into itself
+                    var destBase = Path.Combine(destDir, name);
+                    if (IsSubPath(src, destBase)) continue; // can't move a folder into itself
 
-                    if (move && SameVolume(src, dest))
+                    if (!Directory.Exists(destBase) && move && SameVolume(src, destBase))
                     {
-                        fastMoves.Add((src, dest, true));
+                        fastMoves.Add((src, destBase, true)); // brand-new dir on the same volume → rename
                     }
                     else
                     {
-                        PlanDirectory(src, dest, copies, dirsToCreate, ref bytesTotal);
-                        if (move) moveSourcesToDelete.Add((src, true));
+                        // dest exists → merge into it; otherwise create it. Inner files conflict-check individually.
+                        PlanDirectory(src, destBase, copies, dirsToCreate);
+                        if (move) moveDirSources.Add(src);
                     }
                 }
                 else if (File.Exists(src))
                 {
                     var srcParent = Path.GetDirectoryName(src);
                     if (move && string.Equals(srcParent, destDir, StringComparison.OrdinalIgnoreCase)) continue; // no-op
-                    var dest = UniquePath(Path.Combine(destDir, name), isDir: false);
+                    var destPath = Path.Combine(destDir, name);
 
-                    if (move && SameVolume(src, dest))
-                    {
-                        fastMoves.Add((src, dest, false));
-                    }
+                    if (!File.Exists(destPath) && move && SameVolume(src, destPath))
+                        fastMoves.Add((src, destPath, false));
                     else
-                    {
-                        long size = 0; try { size = new FileInfo(src).Length; } catch { }
-                        copies.Add(new CopyOp(src, dest, size));
-                        bytesTotal += size;
-                        if (move) moveSourcesToDelete.Add((src, false));
-                    }
+                        copies.Add(NewOp(src, destPath));
                 }
             }
             catch { /* skip the offending item, keep planning the rest */ }
         }
 
+        // ---- Resolve conflicts (files whose destination already exists) ----
+        var skipped = 0;
+        ConflictChoice? batch = null;
+        var totalConflicts = copies.Count(o => File.Exists(o.Dest));
+        var conflictsSeen = 0;
+        var resolved = new List<CopyOp>(copies.Count);
+        foreach (var op in copies)
+        {
+            if (IsCanceled) return new TransferResult { Canceled = true, Skipped = skipped };
+            if (!File.Exists(op.Dest)) { resolved.Add(op); continue; }
+
+            ConflictAction action;
+            if (batch is not null) action = batch.Action;
+            else if (onConflict is null) action = ConflictAction.KeepBoth; // no UI hook → old auto-rename behavior
+            else
+            {
+                var info = BuildConflictInfo(op, totalConflicts - conflictsSeen - 1);
+                ConflictChoice choice;
+                try { choice = onConflict(info).GetAwaiter().GetResult(); }
+                catch { choice = new ConflictChoice { Action = ConflictAction.KeepBoth }; }
+                action = choice.Action;
+                if (choice.ApplyToAll) batch = choice;
+            }
+            conflictsSeen++;
+
+            switch (action)
+            {
+                case ConflictAction.Overwrite: resolved.Add(op); break;                          // Create truncates
+                case ConflictAction.KeepBoth: op.Dest = UniquePath(op.Dest); resolved.Add(op); break;
+                case ConflictAction.Skip: skipped++; break;                                       // drop it
+                case ConflictAction.Cancel: return new TransferResult { Canceled = true, Skipped = skipped };
+            }
+        }
+        copies = resolved;
+
+        // ---- Totals (after conflict resolution) ----
+        long bytesTotal = copies.Sum(o => o.Size);
         var filesTotal = copies.Count + fastMoves.Count;
         var clock = Stopwatch.StartNew();
         long bytesDone = 0;
@@ -116,7 +176,6 @@ public sealed class FileTransfer
         var errors = 0;
         var canceled = false;
 
-        // rate (exponential moving average) + throttled reporting
         long lastReportMs = -1000, rateBytesMark = 0, rateMsMark = 0;
         double ema = 0;
 
@@ -134,13 +193,8 @@ public sealed class FileTransfer
             lastReportMs = ms;
             progress?.Report(new TransferProgress
             {
-                CurrentFile = file,
-                BytesDone = bytesDone,
-                BytesTotal = bytesTotal,
-                FilesDone = filesDone,
-                FilesTotal = filesTotal,
-                BytesPerSecond = ema,
-                Paused = IsPaused,
+                CurrentFile = file, BytesDone = bytesDone, BytesTotal = bytesTotal,
+                FilesDone = filesDone, FilesTotal = filesTotal, BytesPerSecond = ema, Paused = IsPaused,
             });
         }
 
@@ -151,49 +205,71 @@ public sealed class FileTransfer
         {
             _gate.Wait();
             if (IsCanceled) { canceled = true; break; }
-            try
-            {
-                if (isDir) Directory.Move(src, dest); else File.Move(src, dest);
-                filesDone++;
-                Report(Path.GetFileName(dest), force: true);
-            }
+            try { if (isDir) Directory.Move(src, dest); else File.Move(src, dest); filesDone++; Report(Path.GetFileName(dest), true); }
             catch { errors++; }
         }
 
         // ---- Streamed copies ----
         if (!canceled)
         {
-            foreach (var dir in dirsToCreate)
-            {
-                try { Directory.CreateDirectory(dir); } catch { }
-            }
+            foreach (var dir in dirsToCreate) { try { Directory.CreateDirectory(dir); } catch { } }
 
             foreach (var op in copies)
             {
-                _gate.Wait(); // blocks while paused
+                _gate.Wait();
                 if (IsCanceled) { canceled = true; break; }
                 try
                 {
                     CopyFile(op, ref bytesDone, Report);
+                    if (move) { try { File.Delete(op.Src); } catch { } } // move = copy then remove source file
                     filesDone++;
-                    Report(Path.GetFileName(op.Dest), force: true);
+                    Report(Path.GetFileName(op.Dest), true);
                 }
                 catch (OperationCanceledException) { canceled = true; break; }
                 catch { errors++; }
             }
         }
 
-        // ---- Finish a move: delete sources we fully copied (only on a clean run) ----
+        // ---- Move cleanup: remove now-empty source folders we merged from ----
         if (move && !canceled)
-        {
-            foreach (var (path, isDir) in moveSourcesToDelete)
-            {
-                try { if (isDir) Directory.Delete(path, recursive: true); else File.Delete(path); }
-                catch { errors++; }
-            }
-        }
+            foreach (var dir in moveDirSources) RemoveEmptyDirs(dir);
 
-        return new TransferResult { FilesCompleted = filesDone, Canceled = canceled, Errors = errors };
+        return new TransferResult { FilesCompleted = filesDone, Skipped = skipped, Canceled = canceled, Errors = errors };
+    }
+
+    private static CopyOp NewOp(string src, string dest)
+    {
+        long size = 0; try { size = new FileInfo(src).Length; } catch { }
+        return new CopyOp { Src = src, Dest = dest, Size = size };
+    }
+
+    private static ConflictInfo BuildConflictInfo(CopyOp op, int remaining)
+    {
+        long ds = 0; DateTime dm = default, sm = default;
+        try { var fi = new FileInfo(op.Dest); ds = fi.Length; dm = fi.LastWriteTime; } catch { }
+        try { sm = new FileInfo(op.Src).LastWriteTime; } catch { }
+        return new ConflictInfo
+        {
+            Name = Path.GetFileName(op.Dest),
+            SourcePath = op.Src, DestPath = op.Dest,
+            SourceSize = op.Size, DestSize = ds,
+            SourceModified = sm, DestModified = dm,
+            Identical = FilesIdentical(op.Src, op.Dest),
+            RemainingConflicts = Math.Max(0, remaining),
+        };
+    }
+
+    /// <summary>Equal length + equal SHA-256 → identical contents. Only called on a real collision.</summary>
+    private static bool FilesIdentical(string a, string b)
+    {
+        try
+        {
+            if (new FileInfo(a).Length != new FileInfo(b).Length) return false;
+            using var sa = File.OpenRead(a);
+            using var sb = File.OpenRead(b);
+            return SHA256.HashData(sa).AsSpan().SequenceEqual(SHA256.HashData(sb));
+        }
+        catch { return false; }
     }
 
     private void CopyFile(CopyOp op, ref long bytesDone, Action<string, bool> report)
@@ -218,39 +294,35 @@ public sealed class FileTransfer
             }
             partial = false;
         }
-        catch (OperationCanceledException)
-        {
-            TryDeletePartial(op.Dest);
-            throw;
-        }
-        catch
-        {
-            if (partial) TryDeletePartial(op.Dest);
-            throw;
-        }
+        catch (OperationCanceledException) { TryDeletePartial(op.Dest); throw; }
+        catch { if (partial) TryDeletePartial(op.Dest); throw; }
         try { File.SetLastWriteTimeUtc(op.Dest, File.GetLastWriteTimeUtc(op.Src)); } catch { }
     }
 
-    private static void TryDeletePartial(string path)
-    {
-        try { if (File.Exists(path)) File.Delete(path); } catch { }
-    }
+    private static void TryDeletePartial(string path) { try { if (File.Exists(path)) File.Delete(path); } catch { } }
 
-    private static void PlanDirectory(string srcDir, string destDir, List<CopyOp> copies, List<string> dirsToCreate, ref long bytesTotal)
+    private static void PlanDirectory(string srcDir, string destDir, List<CopyOp> copies, List<string> dirsToCreate)
     {
         dirsToCreate.Add(destDir);
         try
         {
             foreach (var file in Directory.EnumerateFiles(srcDir))
-            {
-                long size = 0; try { size = new FileInfo(file).Length; } catch { }
-                copies.Add(new CopyOp(file, Path.Combine(destDir, Path.GetFileName(file)), size));
-                bytesTotal += size;
-            }
+                copies.Add(NewOp(file, Path.Combine(destDir, Path.GetFileName(file))));
             foreach (var sub in Directory.EnumerateDirectories(srcDir))
-                PlanDirectory(sub, Path.Combine(destDir, Path.GetFileName(sub)), copies, dirsToCreate, ref bytesTotal);
+                PlanDirectory(sub, Path.Combine(destDir, Path.GetFileName(sub)), copies, dirsToCreate);
         }
         catch { /* access denied etc. — copy what we can */ }
+    }
+
+    /// <summary>Removes empty directories bottom-up (after a merged move; skipped files leave dirs intact).</summary>
+    private static void RemoveEmptyDirs(string dir)
+    {
+        try
+        {
+            foreach (var sub in Directory.EnumerateDirectories(dir)) RemoveEmptyDirs(sub);
+            if (!Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir);
+        }
+        catch { }
     }
 
     private static bool SameVolume(string a, string b)
@@ -264,16 +336,16 @@ public sealed class FileTransfer
         catch { return false; }
     }
 
-    private static string UniquePath(string path, bool isDir)
+    private static string UniquePath(string path)
     {
-        if (isDir ? !Directory.Exists(path) : !File.Exists(path)) return path;
+        if (!File.Exists(path)) return path;
         var dir = Path.GetDirectoryName(path)!;
-        var stem = isDir ? Path.GetFileName(path) : Path.GetFileNameWithoutExtension(path);
-        var ext = isDir ? "" : Path.GetExtension(path);
+        var stem = Path.GetFileNameWithoutExtension(path);
+        var ext = Path.GetExtension(path);
         for (var i = 2; i < 10000; i++)
         {
             var candidate = Path.Combine(dir, $"{stem} ({i}){ext}");
-            if (isDir ? !Directory.Exists(candidate) : !File.Exists(candidate)) return candidate;
+            if (!File.Exists(candidate)) return candidate;
         }
         return path;
     }

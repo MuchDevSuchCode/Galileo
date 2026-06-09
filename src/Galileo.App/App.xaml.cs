@@ -148,7 +148,7 @@ public partial class App : Application
             {
                 if (string.IsNullOrWhiteSpace(arg)) continue;
                 if (Directory.Exists(arg)) return arg;
-                if (File.Exists(arg) && PhotoLibrary.IsSupported(arg)) return arg;
+                if (File.Exists(arg) && (PhotoLibrary.IsSupported(arg) || PhotoLibrary.IsMedia(arg))) return arg;
             }
         }
         catch

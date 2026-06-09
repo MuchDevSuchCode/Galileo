@@ -57,12 +57,20 @@ public sealed class AppState
     public bool ShowExtensions { get; set; } = true;          // show file extensions in the explorer
     public bool PeekEnabled { get; set; } = true;             // Spacebar Quick Look preview in the explorer
     public bool ShowAlbumArt { get; set; } = true;            // show embedded cover art when playing audio
+    public bool StartVideoMuted { get; set; }                 // new videos begin muted (off by default)
     public string SortBy { get; set; } = "Name";              // Name | Date | Type | Size
     public bool SortDescending { get; set; }
     public string GroupBy { get; set; } = "None";             // None | Name | Date | Type | Size
 
     /// <summary>Reuse a single window for files opened from the shell (off by default).</summary>
     public bool SingleInstance { get; set; }
+
+    /// <summary>Always open photos/videos in a separate window instead of the in-app viewer (off by default).</summary>
+    public bool AlwaysOpenMediaInNewWindow { get; set; }
+
+    /// <summary>While viewing a single photo/video, the window's close button goes back to the explorer
+    /// instead of quitting the app (off by default).</summary>
+    public bool CloseToViewerBack { get; set; }
 
     /// <summary>Require Windows Hello / PIN before revealing the Hidden album or app-hidden folders.</summary>
     public bool LockHiddenAlbum { get; set; }
@@ -197,7 +205,10 @@ public sealed class AppState
         ShowExtensions = o.ShowExtensions;
         PeekEnabled = o.PeekEnabled;
         ShowAlbumArt = o.ShowAlbumArt;
+        StartVideoMuted = o.StartVideoMuted;
         SingleInstance = o.SingleInstance;
+        AlwaysOpenMediaInNewWindow = o.AlwaysOpenMediaInNewWindow;
+        CloseToViewerBack = o.CloseToViewerBack;
         LockHiddenAlbum = o.LockHiddenAlbum;
         VaultIdleSeconds = o.VaultIdleSeconds;
         VaultDefaultUseHello = o.VaultDefaultUseHello;
