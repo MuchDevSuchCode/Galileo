@@ -1516,6 +1516,17 @@ public sealed partial class MainWindow : Window
         _explorerItems.Clear();
         foreach (var it in sorted) _explorerItems.Add(it);
 
+        // This PC: always group Drives (incl. devices) first, then Folders — regardless of sort/group.
+        if (_currentFolder is null && string.IsNullOrEmpty(_searchQuery))
+        {
+            var pcGroups = BuildThisPcGroups(sorted);
+            ExplorerIconsView.ItemsSource = new CollectionViewSource { IsSourceGrouped = true, Source = pcGroups }.View;
+            ExplorerDetailsList.ItemsSource = new CollectionViewSource { IsSourceGrouped = true, Source = pcGroups }.View;
+            UpdateSortHeaders();
+            UpdateExplorerEmptyState();
+            return;
+        }
+
         if (_state.GroupBy == "None")
         {
             ExplorerIconsView.ItemsSource = _explorerItems;
@@ -1596,6 +1607,27 @@ public sealed partial class MainWindow : Window
         if ((sender as FrameworkElement)?.DataContext is not ExplorerGroup g) return;
         g.Toggle();
         if (g.IsExpanded) _collapsedGroups.Remove(g.Key); else _collapsedGroups.Add(g.Key);
+    }
+
+    /// <summary>This PC sections: "Drives" (drives + portable devices) first, then "Folders".</summary>
+    private List<ExplorerGroup> BuildThisPcGroups(List<ExplorerItem> sorted)
+    {
+        ExplorerGroup Make(string key, double rank, IEnumerable<ExplorerItem> items)
+        {
+            var g = new ExplorerGroup { Key = key, Rank = rank };
+            foreach (var i in items) g.AddItem(i);
+            g.SetExpanded(!_collapsedGroups.Contains(key));
+            g.Finish();
+            return g;
+        }
+
+        var drives = sorted.Where(i => i.Kind == ExplorerItemKind.Drive || i.IsShellItem).ToList();
+        var folders = sorted.Where(i => i.Kind != ExplorerItemKind.Drive && !i.IsShellItem).ToList();
+
+        var groups = new List<ExplorerGroup>();
+        if (drives.Count > 0) groups.Add(Make("Drives", 0, drives));
+        if (folders.Count > 0) groups.Add(Make("Folders", 1, folders));
+        return groups;
     }
 
     private List<ExplorerGroup> BuildGroups(List<ExplorerItem> sorted)
