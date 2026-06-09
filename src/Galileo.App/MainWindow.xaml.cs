@@ -1621,7 +1621,10 @@ public sealed partial class MainWindow : Window
             return g;
         }
 
-        var drives = sorted.Where(i => i.Kind == ExplorerItemKind.Drive || i.IsShellItem).ToList();
+        // Drives by drive letter (root path), then portable devices by name.
+        var drives = sorted.Where(i => i.Kind == ExplorerItemKind.Drive).OrderBy(i => i.Path, StringComparer.OrdinalIgnoreCase)
+            .Concat(sorted.Where(i => i.IsShellItem).OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase))
+            .ToList();
         var folders = sorted.Where(i => i.Kind != ExplorerItemKind.Drive && !i.IsShellItem).ToList();
 
         var groups = new List<ExplorerGroup>();

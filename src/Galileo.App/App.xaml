@@ -51,7 +51,7 @@
                                    TextAlignment="Center" TextWrapping="Wrap" MaxLines="2"
                                    TextTrimming="CharacterEllipsis" />
                         <!-- Drive capacity bar + "X free of Y" (drives only) -->
-                        <ProgressBar Maximum="100" Value="{Binding UsedPercent}" Height="3" Margin="6,4,6,0"
+                        <ProgressBar Maximum="100" Value="{Binding UsedPercent}" Height="6" MinHeight="6" Margin="6,4,6,0"
                                      Visibility="{Binding CapacityVisibility}" />
                         <TextBlock Text="{Binding CapacityText}" FontSize="10" Opacity="0.7" Margin="0,2,0,0"
                                    TextAlignment="Center" TextTrimming="CharacterEllipsis"
