@@ -128,10 +128,12 @@ public partial class ExplorerItem : ObservableObject
             // a content preview (the first image inside), composited ourselves so it stays upright.
             if (Kind != ExplorerItemKind.File)
             {
+                var folderKind = Kind == ExplorerItemKind.Folder ? IconFactory.FolderKindFor(path) : FolderKind.Normal;
                 var pixels = Kind == ExplorerItemKind.Drive
                     ? await Task.Run(() => IconFactory.RenderDrive(px))
-                    : await Task.Run(() => IconFactory.RenderFolder(px));
-                if (Kind == ExplorerItemKind.Folder && ShowFolderPreviews)
+                    : await Task.Run(() => IconFactory.RenderFolder(px, folderKind));
+                // Themed media folders keep their glyph; only plain folders get a content preview overlay.
+                if (Kind == ExplorerItemKind.Folder && ShowFolderPreviews && folderKind == FolderKind.Normal)
                     await TryOverlayFirstImageAsync(path, pixels, px, px, px);
 
                 var wb = new WriteableBitmap(px, px);
