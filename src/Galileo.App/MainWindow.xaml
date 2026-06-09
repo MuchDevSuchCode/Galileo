@@ -1012,6 +1012,14 @@
                                                 <ComboBoxItem Content="Large" />
                                             </ComboBox>
                                         </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Folder content previews" />
+                                                <TextBlock Text="Paint a preview of the first image inside a folder onto its icon."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="FolderPreviewSwitch" Toggled="FolderPreviewSwitch_Toggled" />
+                                        </Grid>
                                     </StackPanel>
                                 </Border>
                             </StackPanel>
@@ -1028,10 +1036,6 @@
                                                 <ComboBoxItem Content="Double-click" />
                                                 <ComboBoxItem Content="Single-click" />
                                             </ComboBox>
-                                        </Grid>
-                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
-                                            <TextBlock Text="Folder content previews" VerticalAlignment="Center" />
-                                            <ToggleSwitch Grid.Column="1" x:Name="FolderPreviewSwitch" Toggled="FolderPreviewSwitch_Toggled" />
                                         </Grid>
                                         <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
                                             <TextBlock Text="Show file extensions" VerticalAlignment="Center" />
@@ -1054,6 +1058,97 @@
                                             <ToggleSwitch Grid.Column="1" x:Name="SingleInstanceSwitch" Toggled="SingleInstanceSwitch_Toggled" />
                                         </Grid>
                                     </StackPanel>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- Photos & videos -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="PHOTOS &amp; VIDEOS" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <StackPanel Spacing="16">
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Open in a new window" />
+                                                <TextBlock Text="Opening a photo or video launches a separate Galileo window instead of the in-app viewer."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="AlwaysNewWindowSwitch" Toggled="AlwaysNewWindowSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Close button returns to files" />
+                                                <TextBlock Text="While viewing a single photo or video, the window's X goes back to the explorer instead of quitting Galileo."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="CloseToBackSwitch" Toggled="CloseToBackSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Start videos muted" />
+                                                <TextBlock Text="New videos begin with their sound muted."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="StartMutedSwitch" Toggled="StartMutedSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Show album art for audio" />
+                                                <TextBlock Text="Display embedded cover art when playing audio files."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="AlbumArtSwitch" Toggled="AlbumArtSwitch_Toggled" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- Slideshow -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="SLIDESHOW" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <StackPanel Spacing="16">
+                                        <StackPanel Spacing="6">
+                                            <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                                <TextBlock Text="Seconds per photo" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="1" x:Name="SlideshowSecondsValue" Text="4s" VerticalAlignment="Center" Opacity="0.8" />
+                                            </Grid>
+                                            <Slider x:Name="SlideshowSecondsSlider" Minimum="2" Maximum="30" StepFrequency="1"
+                                                    ValueChanged="SlideshowSecondsSlider_ValueChanged" />
+                                        </StackPanel>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="Shuffle" VerticalAlignment="Center" />
+                                            <ToggleSwitch Grid.Column="1" x:Name="ShuffleSwitch" Toggled="ShuffleSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="Loop" VerticalAlignment="Center" />
+                                            <ToggleSwitch Grid.Column="1" x:Name="LoopSwitch" Toggled="LoopSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <TextBlock Text="Transition" VerticalAlignment="Center" />
+                                            <ComboBox Grid.Column="1" x:Name="TransitionCombo" Style="{StaticResource SettingControl}"
+                                                      SelectionChanged="TransitionCombo_SelectionChanged">
+                                                <ComboBoxItem Content="None" />
+                                                <ComboBoxItem Content="Crossfade" />
+                                                <ComboBoxItem Content="Ken Burns" />
+                                            </ComboBox>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- Collage -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="COLLAGE" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                        <TextBlock Text="Default layout" VerticalAlignment="Center" />
+                                        <ComboBox Grid.Column="1" x:Name="CollageLayoutCombo" Style="{StaticResource SettingControl}"
+                                                  SelectionChanged="CollageLayoutCombo_SelectionChanged">
+                                            <ComboBoxItem Content="Justified" />
+                                            <ComboBoxItem Content="Grid" />
+                                            <ComboBoxItem Content="Hero" />
+                                        </ComboBox>
+                                    </Grid>
                                 </Border>
                             </StackPanel>
 
@@ -1136,71 +1231,6 @@
                                         <TextBlock Text="Best-effort: on SSDs/NVMe and copy-on-write drives, wear-leveling and TRIM mean overwriting can't guarantee the original bytes are gone."
                                                    Style="{StaticResource SettingDesc}" />
                                     </StackPanel>
-                                </Border>
-                            </StackPanel>
-
-                            <!-- Slideshow -->
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="SLIDESHOW" Style="{StaticResource SettingSectionHeader}" />
-                                <Border Style="{StaticResource SettingCard}">
-                                    <StackPanel Spacing="16">
-                                        <StackPanel Spacing="6">
-                                            <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
-                                                <TextBlock Text="Seconds per photo" VerticalAlignment="Center" />
-                                                <TextBlock Grid.Column="1" x:Name="SlideshowSecondsValue" Text="4s" VerticalAlignment="Center" Opacity="0.8" />
-                                            </Grid>
-                                            <Slider x:Name="SlideshowSecondsSlider" Minimum="2" Maximum="30" StepFrequency="1"
-                                                    ValueChanged="SlideshowSecondsSlider_ValueChanged" />
-                                        </StackPanel>
-                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
-                                            <TextBlock Text="Shuffle" VerticalAlignment="Center" />
-                                            <ToggleSwitch Grid.Column="1" x:Name="ShuffleSwitch" Toggled="ShuffleSwitch_Toggled" />
-                                        </Grid>
-                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
-                                            <TextBlock Text="Loop" VerticalAlignment="Center" />
-                                            <ToggleSwitch Grid.Column="1" x:Name="LoopSwitch" Toggled="LoopSwitch_Toggled" />
-                                        </Grid>
-                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
-                                            <TextBlock Text="Transition" VerticalAlignment="Center" />
-                                            <ComboBox Grid.Column="1" x:Name="TransitionCombo" Style="{StaticResource SettingControl}"
-                                                      SelectionChanged="TransitionCombo_SelectionChanged">
-                                                <ComboBoxItem Content="None" />
-                                                <ComboBoxItem Content="Crossfade" />
-                                                <ComboBoxItem Content="Ken Burns" />
-                                            </ComboBox>
-                                        </Grid>
-                                    </StackPanel>
-                                </Border>
-                            </StackPanel>
-
-                            <!-- Media -->
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="MEDIA" Style="{StaticResource SettingSectionHeader}" />
-                                <Border Style="{StaticResource SettingCard}">
-                                    <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
-                                        <StackPanel VerticalAlignment="Center">
-                                            <TextBlock Text="Show album art for audio" />
-                                            <TextBlock Text="Display embedded cover art when playing audio files."
-                                                       Style="{StaticResource SettingDesc}" />
-                                        </StackPanel>
-                                        <ToggleSwitch Grid.Column="1" x:Name="AlbumArtSwitch" Toggled="AlbumArtSwitch_Toggled" />
-                                    </Grid>
-                                </Border>
-                            </StackPanel>
-
-                            <!-- Collage -->
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="COLLAGE" Style="{StaticResource SettingSectionHeader}" />
-                                <Border Style="{StaticResource SettingCard}">
-                                    <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
-                                        <TextBlock Text="Default layout" VerticalAlignment="Center" />
-                                        <ComboBox Grid.Column="1" x:Name="CollageLayoutCombo" Style="{StaticResource SettingControl}"
-                                                  SelectionChanged="CollageLayoutCombo_SelectionChanged">
-                                            <ComboBoxItem Content="Justified" />
-                                            <ComboBoxItem Content="Grid" />
-                                            <ComboBoxItem Content="Hero" />
-                                        </ComboBox>
-                                    </Grid>
                                 </Border>
                             </StackPanel>
 
@@ -1331,9 +1361,11 @@
                        TextTrimming="CharacterEllipsis" />
         </Grid>
 
-        <!-- Subtle status text -->
+        <!-- Subtle status text — left-aligned but width-bounded + ellipsized so long messages
+             (e.g. a wipe/transfer with a long filename) never spill across the window or sidebar. -->
         <TextBlock x:Name="StatusText" Text="Ready" FontSize="12" Opacity="0.55"
-                   HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="16,0,0,8"
+                   HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="16,0,16,8"
+                   MaxWidth="460" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
                    IsHitTestVisible="False" />
 
         <!-- ===================== File-transfer progress (Apple-style floating card) ===================== -->

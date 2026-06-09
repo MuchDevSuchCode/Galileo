@@ -46,6 +46,7 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 - **Archives** — double-click a **.zip** to browse it like a folder (extracted to a temp area and opened read-only; the temp copy is wiped on next launch). Right-click a `.zip` for **Extract Here** or **Extract All…**. Password-protected archives aren't supported. **Slideshow** and **Collage** buttons act on the current folder's images. Single- or double-click to open (configurable).
 - **File operations** — New folder (with immediate rename), **Cut / Copy / Paste** (move-aware), Copy path, Rename, Delete (Galileo's own Recycle Bin), **Shift+Delete** (secure erase), **drag files between folders** (drop onto a folder to copy, hold **Shift** to move) or out to other apps, and the native **Properties** dialog (right-click items or empty space).
 - **Copy/move progress** — large copies and moves (paste or drag-drop) show a clean, **Apple-style floating progress card** with the current file, a slim progress bar, amount transferred, and a live **time-remaining** estimate. **Pause / Resume** and **Cancel** any transfer mid-flight (cancelling removes the partially-copied file; a cancelled move leaves the originals untouched). Same-drive moves are instant (a rename), so the card only appears for transfers that actually take a moment.
+- **Conflict resolution** — when a copy/move would overwrite an existing file, Galileo asks what to do: **Replace**, **Keep both** (auto-renamed), **Skip**, or **Cancel** — with a **"do this for all remaining conflicts"** option. The prompt shows **both files' size and date**, and **hashes them (SHA-256)** to tell you when the contents are **identical** so you can decide with confidence. Existing folders are **merged** (each inner file conflict is resolved the same way).
 - **Keyboard shortcuts** — standard Windows file-management keys: **Ctrl+C / Ctrl+X / Ctrl+V** (copy / cut / paste, move-aware and interoperable with Windows Explorer's clipboard), **Ctrl+A** (select all), **F2** (rename), **Enter** (open), **Del / Shift+Del** (recycle / secure erase).
 - **Selection count** — selecting items shows **how many are selected** (and their total size) in the status bar; with nothing selected it shows the folder's item count. Marquee-drag, Ctrl/Shift-click, and Ctrl+A all update it live.
 - **Bulk rename** — select multiple items and Rename (F2 or right-click): pick a base name and they become **`name`, `name-1`, `name-2`, …** (dash numbering), each keeping its own extension. Done collision-safe via a temp-rename pass.
@@ -86,21 +87,17 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 
 **Video & audio** — an **embedded media player** complements the image viewer. Open a file from the explorer to play **video** (MP4/M4V/MOV/MKV/AVI/WMV/WEBM and more) or **audio** (MP3, WAV, FLAC, M4A, AAC, OGG, OPUS, WMA, AIFF…) natively, with transport controls plus **mute/unmute** and a **repeat** toggle. **Spacebar** plays/pauses video, **←/→ step one frame** at a time, and **Ctrl+C copies the current frame** to the clipboard. Audio shows a "now playing" panel with the track name and, when present, **embedded album art** (toggle in **Settings → Media**); a back bar returns to the explorer. Spacebar **Peek** previews media too. Audio/video play in **full multichannel** (5.1/7.1/Atmos) with no forced stereo downmix — enable **Dolby Atmos / DTS:X / Windows Sonic** on your output device and Windows renders the surround/height channels.
 
-**Settings** — a Settings panel (gear in the title bar / command strip) with:
-- **Appearance → Theme** — System, Light, Dark, **Terminal (green)**, or **Gray**.
-- **Appearance → Default icon size** — Small / Medium / Large; **Folder content previews** on/off.
-- **Explorer → Open items with** — double-click (default) or single-click.
-- **Explorer → Show file extensions** — on/off (on by default).
-- **Explorer → Spacebar Peek (Quick Look)** — on/off (on by default).
-- **Explorer → Reuse one window** — single-instance mode: open shell-launched files in the running window instead of a new one (off by default).
-- **Privacy → Lock Hidden album** — require **Windows Hello / PIN** before revealing the Hidden album or app-hidden folders (falls back to a confirmation when Hello isn't set up).
-- **Secure vault** — idle auto-lock timeout (0 = never), enroll Windows Hello by default, and **wipe-on-failed-unlocks** (enable + attempt count).
-- **Media** — show embedded **album art** when playing audio (on/off).
-- **Collage → Default layout** — Justified / Grid / Hero.
+**Settings** — a Settings panel (gear in the title bar / command strip), organized into clean, logically-grouped sections:
+- **Appearance** — Theme (System, Light, Dark, **Terminal (green)**, Gray), Default icon size (Small / Medium / Large), and **Folder content previews** on/off.
+- **Explorer** — Open items with (double-click default or single-click), Show file extensions, Spacebar Peek (Quick Look), and **Reuse one window** (single-instance: open shell-launched files in the running window).
+- **Photos & Videos** — **Open in a new window** (always open photos/videos in a separate window), **Close button returns to files** (the window's X goes back to the explorer while viewing a single item instead of quitting), **Start videos muted**, and **Show album art for audio**.
 - **Slideshow** — seconds per photo (2–30 s), shuffle, loop, transition.
+- **Collage** — Default layout (Justified / Grid / Hero).
+- **Privacy** — **Lock Hidden album** (require Windows Hello / PIN before revealing the Hidden album or app-hidden folders).
+- **Secure Vault** — idle auto-lock timeout (0 = never), enroll Windows Hello by default, and **wipe-on-failed-unlocks** (enable + attempt count).
+- **Secure Delete** — Overwrite method (None / Zero (1) / Random (1) / DoD 5220.22-M (3) / DoD ECE (7) / Gutmann (35)); used when emptying the Recycle Bin, shredding, or Shift+Delete.
 - **Backup** — **Sign in with Google** for encrypted Google Drive vault backup (shows the connected account).
-- **Secure Delete → Overwrite method** — None / Zero (1) / Random (1) / DoD 5220.22-M (3) / DoD ECE (7) / Gutmann (35); used when emptying the Recycle Bin, shredding, or Shift+Delete.
-- **Developer → Developer Mode** — show the embedded terminal pane (cmd / PowerShell / WSL) beside the explorer.
+- **Developer** — **Developer Mode**: show the embedded terminal pane (cmd / PowerShell / WSL) beside the explorer.
 
 The panel has **Save / Cancel** buttons, so live edits only persist when you click **Save** (Cancel reverts). All settings persist across sessions (`%LocalAppData%\Galileo\state.json`). The panel opens with a fade/scale animation; its header stays pinned and the body scrolls, so it never clips on small windows.
 
