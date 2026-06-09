@@ -3614,6 +3614,8 @@ public sealed partial class MainWindow : Window
     // ===================== File-transfer progress (Apple-style panel) =====================
 
     private bool _transferPanelShown;
+    private bool _progressHidden;              // user dismissed the card; the op keeps running in the background
+    private bool _progressHideable;            // show the Hide button (wipes)
     private double _transferFrac;
     private object? _activeOp;                 // token identifying the operation that owns the card
     private Action? _progressCancel;           // cancels the active operation
@@ -3629,9 +3631,9 @@ public sealed partial class MainWindow : Window
         var token = new object();
         BeginProgressOp(token,
             title: (move ? "Moving " : "Copying ") + (paths.Count == 1 ? "1 item" : $"{paths.Count} items"),
-            cancel: transfer.Cancel, pauseToggle: transfer.TogglePause, isPaused: () => transfer.IsPaused);
+            cancel: transfer.Cancel, pauseToggle: transfer.TogglePause, isPaused: () => transfer.IsPaused, hideable: false);
 
-        var revealCts = ScheduleReveal(token);
+        var revealCts = ScheduleReveal(token); // copies/moves only flash the card if they take a moment
         var progress = new Progress<TransferProgress>(UpdateTransferUi);
         TransferResult result;
         try { result = await transfer.RunAsync(destDir, paths, move, progress, ResolveConflictAsync); }
@@ -3641,27 +3643,30 @@ public sealed partial class MainWindow : Window
         return result.FilesCompleted;
     }
 
-    /// <summary>Runs a secure wipe of the given paths behind the same floating progress card (with Cancel;
-    /// wiping can't pause). Used by Empty Recycle Bin, right-click shred, and Shift+Delete.</summary>
+    /// <summary>Runs a secure wipe of the given paths behind the floating progress card. The card is shown
+    /// immediately (wipes can be long) with Cancel and a Hide button (keeps running in the background);
+    /// wiping can't pause. Used by Empty Recycle Bin, right-click shred, and Shift+Delete.</summary>
     private async System.Threading.Tasks.Task RunWipeWithUiAsync(IReadOnlyList<string> paths, WipeMethod method, string title)
     {
         _progressCancel?.Invoke();
         var cts = new System.Threading.CancellationTokenSource();
         var token = new object();
-        BeginProgressOp(token, title, cancel: cts.Cancel, pauseToggle: null, isPaused: null);
+        BeginProgressOp(token, title, cancel: cts.Cancel, pauseToggle: null, isPaused: null, hideable: true);
+        ShowTransferPanel(); // always show for wipes
 
-        var revealCts = ScheduleReveal(token);
         var progress = new Progress<TransferProgress>(UpdateTransferUi);
         try { await SecureWipe.WipePathsAsync(paths, method, progress, cts.Token); }
-        finally { EndProgressOp(token, revealCts); }
+        finally { EndProgressOp(token, null); }
     }
 
-    private void BeginProgressOp(object token, string title, Action cancel, Action? pauseToggle, Func<bool>? isPaused)
+    private void BeginProgressOp(object token, string title, Action cancel, Action? pauseToggle, Func<bool>? isPaused, bool hideable)
     {
         _activeOp = token;
         _progressCancel = cancel;
         _progressPauseToggle = pauseToggle;
         _progressIsPaused = isPaused;
+        _progressHideable = hideable;
+        _progressHidden = false;
         _transferPanelShown = false;
         _transferFrac = 0;
         TransferTitle.Text = title;
@@ -3684,14 +3689,15 @@ public sealed partial class MainWindow : Window
         return revealCts;
     }
 
-    private void EndProgressOp(object token, System.Threading.CancellationTokenSource revealCts)
+    private void EndProgressOp(object token, System.Threading.CancellationTokenSource? revealCts)
     {
-        revealCts.Cancel();
+        revealCts?.Cancel();
         if (!ReferenceEquals(_activeOp, token)) return;
         _activeOp = null;
         _progressCancel = null;
         _progressPauseToggle = null;
         _progressIsPaused = null;
+        _progressHideable = false;
         HideTransferPanel();
     }
 
@@ -3809,9 +3815,10 @@ public sealed partial class MainWindow : Window
 
     private void ShowTransferPanel()
     {
-        if (_transferPanelShown) return;
+        if (_transferPanelShown || _progressHidden) return; // don't re-show once the user dismissed it
         _transferPanelShown = true;
         TransferPauseBtn.Visibility = _progressPauseToggle is null ? Visibility.Collapsed : Visibility.Visible;
+        TransferHideBtn.Visibility = _progressHideable ? Visibility.Visible : Visibility.Collapsed;
         TransferPanel.Visibility = Visibility.Visible;
         try
         {
@@ -3873,6 +3880,14 @@ public sealed partial class MainWindow : Window
     {
         _progressCancel?.Invoke();
         TransferFile.Text = "Cancelling…";
+    }
+
+    /// <summary>Dismisses the card but lets the operation finish in the background.</summary>
+    private void TransferHide_Click(object sender, RoutedEventArgs e)
+    {
+        _progressHidden = true;
+        HideTransferPanel();
+        StatusText.Text = "Working in the background…";
     }
 
     private static string FormatEta(TransferProgress p)
