@@ -504,6 +504,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Returns to the file-explorer home (the photo viewer / collage live on top of it).</summary>
     private void ShowExplorer()
     {
+        if (VideoEditorPanel.Visibility == Visibility.Visible || EditTimeline.Visibility == Visibility.Visible) CloseVideoEditor();
         StopVideo();
         ViewerView.Visibility = Visibility.Collapsed;
         GalleryView.Visibility = Visibility.Collapsed;
@@ -2243,10 +2244,10 @@ public sealed partial class MainWindow : Window
             if (isAudio) _ = LoadAlbumArtAsync(file);
 
             // Track the real file for the FFmpeg editor; offer Edit for real video files only.
+            CloseVideoEditor(); // tear down any prior editor/preview (re-enables normal playback)
             _currentVideoPath = item.IsShellItem ? null : item.Path;
             VideoEditBtn.Visibility = (!isAudio && !item.IsShellItem && FfmpegVideo.Available)
                 ? Visibility.Visible : Visibility.Collapsed;
-            VideoEditorPanel.Visibility = Visibility.Collapsed;
             VideoPlayer.Source = MediaSource.CreateFromStorageFile(file);
             var mp = VideoPlayer.MediaPlayer;
             if (mp is not null)
