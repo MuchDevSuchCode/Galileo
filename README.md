@@ -12,7 +12,7 @@ Highlights over the stock apps:
 4. **💻 Developer Mode** — dock a real **cmd / PowerShell / WSL** terminal (ConPTY) beside the explorer, in the current folder.
 5. **🔄 Live, local-first** — folders update in place as files change on disk (no manual refresh), with network-share / WSL pinning and a resizable layout.
 
-> **Status:** working application. The tabbed file explorer (search, sort/group with collapsible sections, cut-move, drag-drop, bulk rename, live updates, drive auto-detect, pinned network/WSL locations, Windows Hello gate), photo viewer, gallery, collage, embedded **video + audio player** (album art, multichannel/Atmos), **Spacebar Peek**, **`.zip` archives**, **secure vault** with **Google Drive backup**, an embedded **terminal (Developer Mode)**, an **image editor** (crop, rotate, adjustments, filters, markup), a full **Settings** panel (5 themes and more), and default-photo-app registration are all implemented and building. See **[tasks.md](./tasks.md)** for the roadmap.
+> **Status:** working application. The tabbed file explorer (search, sort/group with collapsible sections and **per-folder memory**, cut-move, drag-drop, bulk rename, live updates, drive auto-detect with **capacity bars**, **This PC** grouped into Drives + Folders, **custom Galileo icons** with themed Pictures/Music/Videos folders, pinned network/WSL locations, Windows Hello gate), a **self-contained Recycle Bin** with **secure overwrite delete** (Zero/Random/DoD/Gutmann), an in-app **MTP phone/camera browser** (read + write), photo viewer, gallery, collage, embedded **video + audio player** (album art, multichannel/Atmos), **Spacebar Peek**, **`.zip` archives**, **secure vault** with **Google Drive backup**, an embedded **terminal (Developer Mode)**, an **image editor** (crop, rotate, adjustments, filters, markup), a full **Settings** panel (5 themes and more), and default-photo-app registration are all implemented and building. See **[tasks.md](./tasks.md)** for the roadmap.
 
 ---
 
@@ -98,6 +98,7 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 - **Collage → Default layout** — Justified / Grid / Hero.
 - **Slideshow** — seconds per photo (2–30 s), shuffle, loop, transition.
 - **Backup** — **Sign in with Google** for encrypted Google Drive vault backup (shows the connected account).
+- **Secure Delete → Overwrite method** — None / Zero (1) / Random (1) / DoD 5220.22-M (3) / DoD ECE (7) / Gutmann (35); used when emptying the Recycle Bin, shredding, or Shift+Delete.
 - **Developer → Developer Mode** — show the embedded terminal pane (cmd / PowerShell / WSL) beside the explorer.
 
 The panel has **Save / Cancel** buttons, so live edits only persist when you click **Save** (Cancel reverts). All settings persist across sessions (`%LocalAppData%\Galileo\state.json`). The panel opens with a fade/scale animation; its header stays pinned and the body scrolls, so it never clips on small windows.
@@ -134,7 +135,7 @@ The panel has **Save / Cancel** buttons, so live edits only persist when you cli
 
 - **UI:** WinUI 3 (Windows App SDK **1.6**), Fluent Design, Mica backdrop. Unpackaged, self-contained desktop app.
 - **Runtime:** .NET 8, C# 12.
-- **Imaging:** `Windows.Storage` thumbnails + `BitmapImage`; GPU-composited transform-based viewer (zoom/pan/rotate via `CompositeTransform`).
+- **Imaging:** `Windows.Storage` thumbnails + `BitmapImage`; GPU-composited transform-based viewer (zoom/pan/rotate via `CompositeTransform`); **Win2D** for the image editor and Galileo's own folder/drive/file icons.
 - **MVVM:** CommunityToolkit.Mvvm (observable `PhotoItem`).
 - **Storage:** JSON app-state (`%LocalAppData%\Galileo\state.json`) for hidden/favorite flags and slideshow settings.
 
@@ -152,7 +153,11 @@ Galileo/
 │     ├─ Models/               # PhotoItem, ExplorerItem, ExplorerGroup (collapsible), VaultInfo
 │     ├─ Services/             # AppState, PhotoLibrary, FileSystemService,
 │     │                        #   ShellImaging (icons via IShellItemImageFactory + GetDIBits),
+│     │                        #   IconFactory (Win2D folder/drive/file + themed media-folder icons),
+│     │                        #   ShellBrowser (MTP / portable devices via the shell namespace + IFileOperation),
+│     │                        #   RecycleBin (self-contained bin) + SecureWipe (overwrite shred: Zero/Random/DoD/Gutmann),
 │     │                        #   ShellOps (clipboard / properties / wallpaper / lock screen), ImageCompositor, CollageLayout,
+│     │                        #   ImageEditor (Win2D crop/rotate/adjust/filter/markup), ScreenCapture (screenshots / video-frame copy),
 │     │                        #   HelloAuth + HelloKey (Windows Hello), DecodeThrottle (scroll-safe thumbnail decoding),
 │     │                        #   Vault / VaultManager / VaultCrypto (AES-256-GCM + Argon2id secure vault),
 │     │                        #   GoogleDriveBackup (encrypted cloud backup), ArchiveService (.zip),

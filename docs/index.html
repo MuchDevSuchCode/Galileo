@@ -210,7 +210,7 @@
     <img class="logo" src="galileo.png" alt="Galileo app icon" />
     <h1>Windows Explorer<br /><span class="grad">reimagined.</span></h1>
     <p class="tag">Galileo is a fast, local-first file manager for Windows 11.</p>
-    <p class="sub">No account. No cloud sync. Your library stays on your disk — with a tabbed explorer, a buttery photo viewer, an embedded <strong>media player</strong> (video + audio, Atmos), collage &amp; slideshow, <code>.zip</code> browsing, pinned network/WSL locations, an embedded <strong>terminal</strong>, a private Hidden album, and an <strong>encrypted vault</strong>.</p>
+    <p class="sub">No account. No cloud sync. Your library stays on your disk — with a tabbed explorer, a buttery photo viewer &amp; image editor, an embedded <strong>media player</strong> (video + audio, Atmos), collage &amp; slideshow, <code>.zip</code> browsing, an in-app <strong>phone/camera (MTP)</strong> browser, a self-contained <strong>Recycle Bin</strong> with secure delete, pinned network/WSL locations, an embedded <strong>terminal</strong>, a private Hidden album, and an <strong>encrypted vault</strong>.</p>
 
     <div class="cta">
       <a class="btn primary" href="https://github.com/MuchDevSuchCode/Galileo">★ View on GitHub</a>
@@ -298,7 +298,7 @@
       <div class="features">
         <div class="feature"><div class="fi">🗂️</div><h3>Tabbed explorer</h3><p>Win11-style folder tabs, each with its own back/forward history. Sidebar for Quick access &amp; drives.</p></div>
         <div class="feature"><div class="fi">🔍</div><h3>Search</h3><p>Filter the current folder by name, or flip on recursive search to sweep every subfolder.</p></div>
-        <div class="feature"><div class="fi">↕️</div><h3>Sort &amp; group</h3><p>Sort/group by name, date, type, or size — or click a Details column header. Grouped sections get collapsible headers. Choices persist.</p></div>
+        <div class="feature"><div class="fi">↕️</div><h3>Sort &amp; group</h3><p>Sort/group by name, date, type, or size — or click a Details column header. Grouped sections get collapsible headers. <strong>Each folder remembers its own</strong> sort &amp; grouping.</p></div>
         <div class="feature"><div class="fi">✂️</div><h3>Cut, copy &amp; move</h3><p>Move-aware paste, plus drag files between folders (Shift to move) or out to any app.</p></div>
         <div class="feature"><div class="fi">🖼️</div><h3>Photo viewer</h3><p>Fit-to-window, cursor-anchored wheel zoom, drag-pan, rotate with auto-refit, and a metadata panel.</p></div>
         <div class="feature"><div class="fi">✂️</div><h3>Image editor</h3><p>Crop, rotate, flip, straighten, color adjustments, one-tap filters, and markup (ink/text/shapes) with a live Win2D preview. Saves a copy — originals stay untouched.</p></div>
@@ -308,7 +308,9 @@
         <div class="feature"><div class="fi">💻</div><h3>Developer Mode</h3><p>Dock a real cmd / PowerShell / WSL terminal (ConPTY + xterm.js) right beside the explorer, in the current folder.</p></div>
         <div class="feature"><div class="fi">🧩</div><h3>Collage</h3><p>Auto-arranged Justified, Grid, or Hero layouts that fill the screen. Shuffle, resize, export to PNG.</p></div>
         <div class="feature"><div class="fi">🎨</div><h3>5 themes</h3><p>System, Light, Dark, Terminal (green), and Gray — applied live, no restart.</p></div>
-        <div class="feature"><div class="fi">💾</div><h3>Drives, live</h3><p>Mount or remove a drive and it appears (or disappears) in the sidebar automatically.</p></div>
+        <div class="feature"><div class="fi">💾</div><h3>Drives &amp; capacity</h3><p>Mount or remove a drive and it appears (or disappears) automatically. <strong>This PC</strong> groups Drives then Folders, each drive showing a <strong>capacity bar</strong> with “X free of Y”.</p></div>
+        <div class="feature"><div class="fi">🎨</div><h3>Custom icons</h3><p>Galileo draws its own flat folder/drive/file icons (Win2D) — with <strong>themed Pictures, Music &amp; Videos</strong> folders so media stands out from ordinary folders.</p></div>
+        <div class="feature"><div class="fi">🪟</div><h3>Open in new window</h3><p><kbd>Alt</kbd>+click, middle-click, or right-click → <strong>Open in new window</strong> to view an image in its own Galileo window — even with “reuse one window” on.</p></div>
         <div class="feature"><div class="fi">🔒</div><h3>Hide folders</h3><p>Make a folder appear empty in-app — reversible and disk-safe — optionally behind Windows Hello.</p></div>
         <div class="feature"><div class="fi">📱</div><h3>Phones &amp; devices</h3><p>Browse MTP phones/cameras in-app with thumbnails, view photos/videos, and copy files both ways — plus rename/delete/new-folder on the device.</p></div>
         <div class="feature"><div class="fi">📌</div><h3>Pinned locations</h3><p>Pin local folders, <strong>network shares</strong> (<code>\\server\share</code>), or <strong>WSL</strong> paths to the sidebar for one-click access.</p></div>
@@ -335,6 +337,8 @@
           <tr><td class="k"><kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd></td><td>Zoom in / out / fit</td></tr>
           <tr><td class="k"><kbd>R</kbd></td><td>Rotate 90° (auto-fit)</td></tr>
           <tr><td class="k"><kbd>H</kbd></td><td>Black out / reveal (eye toggle)</td></tr>
+          <tr><td class="k"><kbd>Shift</kbd>+<kbd>S</kbd></td><td>Save a screenshot to <kbd>Pictures\Galileo</kbd></td></tr>
+          <tr><td class="k"><kbd>Space</kbd> · <kbd>←</kbd>/<kbd>→</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>Video: play/pause · step a frame · copy the current frame</td></tr>
           <tr><td class="k"><kbd>F</kbd> / <kbd>F11</kbd></td><td>Full screen</td></tr>
           <tr><td class="k"><kbd>F5</kbd></td><td>Refresh (explorer) · slideshow (viewer)</td></tr>
           <tr><td class="k"><kbd>Space</kbd></td><td>Peek (Quick Look) the selected file · slideshow play/pause</td></tr>
