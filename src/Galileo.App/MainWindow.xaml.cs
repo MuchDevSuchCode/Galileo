@@ -2622,7 +2622,7 @@ public sealed partial class MainWindow : Window
             var items = await content.GetStorageItemsAsync();
             var paths = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
             var dest = _currentFolder;
-            var count = await Task.Run(() => TransferInto(dest, paths, move));
+            var count = await RunTransferWithUiAsync(dest, paths, move);
             LoadCurrentFolder();
             StatusText.Text = $"{(move ? "Moved" : "Pasted")} {count} item(s)";
         }
@@ -3577,57 +3577,162 @@ public sealed partial class MainWindow : Window
         e.Handled = true;
 
         var deferral = e.GetDeferral();
+        List<string> paths;
         try
         {
             var items = await e.DataView.GetStorageItemsAsync();
-            var paths = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
-            if (paths.Count == 0) return;
-            var count = await Task.Run(() => TransferInto(target, paths, move));
+            paths = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
+        }
+        catch (Exception ex) { StatusText.Text = $"Drop failed: {ex.Message}"; App.Log("Drop", ex); return; }
+        finally { deferral.Complete(); } // release the source app once we've read the dropped paths
+
+        if (paths.Count == 0) return;
+        try
+        {
+            var count = await RunTransferWithUiAsync(target, paths, move);
             LoadCurrentFolder();
             StatusText.Text = $"{(move ? "Moved" : "Copied")} {count} item(s) to {TabHeaderFor(target)}";
         }
         catch (Exception ex) { StatusText.Text = $"Drop failed: {ex.Message}"; App.Log("Drop", ex); }
-        finally { deferral.Complete(); }
     }
 
-    /// <summary>Copies or moves files/folders into a destination directory. Runs off the UI thread.</summary>
-    private static int TransferInto(string destDir, List<string> paths, bool move)
-    {
-        var n = 0;
-        foreach (var src in paths)
-        {
-            try
-            {
-                var name = System.IO.Path.GetFileName(src.TrimEnd('\\', '/'));
-                if (string.IsNullOrEmpty(name)) continue;
+    // ===================== File-transfer progress (Apple-style panel) =====================
 
-                if (Directory.Exists(src))
-                {
-                    var srcParent = System.IO.Path.GetDirectoryName(src.TrimEnd('\\', '/'));
-                    if (string.Equals(srcParent, destDir, StringComparison.OrdinalIgnoreCase) && move) continue; // no-op
-                    var dest = UniquePath(System.IO.Path.Combine(destDir, name), isDir: true);
-                    if (IsSubPath(src, dest)) continue; // don't move a folder into itself
-                    if (move)
-                    {
-                        try { Directory.Move(src, dest); }
-                        catch { CopyDir(src, dest); Directory.Delete(src, true); } // cross-volume fallback
-                    }
-                    else CopyDir(src, dest);
-                    n++;
-                }
-                else if (File.Exists(src))
-                {
-                    var srcParent = System.IO.Path.GetDirectoryName(src);
-                    if (string.Equals(srcParent, destDir, StringComparison.OrdinalIgnoreCase) && move) continue; // no-op
-                    var dest = UniquePath(System.IO.Path.Combine(destDir, name), isDir: false);
-                    if (move) File.Move(src, dest);
-                    else File.Copy(src, dest);
-                    n++;
-                }
-            }
-            catch { /* skip the offending item, keep going */ }
+    private FileTransfer? _activeTransfer;
+    private bool _transferPanelShown;
+    private double _transferFrac;
+
+    /// <summary>Runs a copy/move through the cancellable/pausable engine, showing the floating progress
+    /// card (after a short delay so instant operations don't flash it). Returns files completed.</summary>
+    private async System.Threading.Tasks.Task<int> RunTransferWithUiAsync(string destDir, List<string> paths, bool move)
+    {
+        _activeTransfer?.Cancel(); // only one panel at a time
+        var transfer = new FileTransfer();
+        _activeTransfer = transfer;
+        _transferPanelShown = false;
+        _transferFrac = 0;
+
+        TransferTitle.Text = (move ? "Moving " : "Copying ") + (paths.Count == 1 ? "1 item" : $"{paths.Count} items");
+        TransferFile.Text = "Preparing…";
+        TransferStats.Text = "";
+        TransferEta.Text = "";
+        TransferBarFill.Width = 0;
+        SetTransferPaused(false);
+
+        // Delayed reveal: skip the panel entirely for operations that finish in <350ms (e.g. same-volume moves).
+        var revealCts = new System.Threading.CancellationTokenSource();
+        _ = System.Threading.Tasks.Task.Delay(350, revealCts.Token).ContinueWith(t =>
+        {
+            if (t.IsCanceled) return;
+            DispatcherQueue.TryEnqueue(() => { if (ReferenceEquals(_activeTransfer, transfer)) ShowTransferPanel(); });
+        }, System.Threading.Tasks.TaskScheduler.Default);
+
+        var progress = new Progress<TransferProgress>(UpdateTransferUi);
+        TransferResult result;
+        try { result = await transfer.RunAsync(destDir, paths, move, progress); }
+        finally
+        {
+            revealCts.Cancel();
+            if (ReferenceEquals(_activeTransfer, transfer)) { _activeTransfer = null; HideTransferPanel(); }
         }
-        return n;
+        return result.FilesCompleted;
+    }
+
+    private void UpdateTransferUi(TransferProgress p)
+    {
+        if (!_transferPanelShown && p.BytesTotal > 8L * 1024 * 1024) ShowTransferPanel(); // big op → show now
+        if (!string.IsNullOrEmpty(p.CurrentFile)) TransferFile.Text = p.CurrentFile;
+
+        _transferFrac = Math.Clamp(p.Fraction, 0, 1);
+        if (TransferBarTrack.ActualWidth > 0) TransferBarFill.Width = TransferBarTrack.ActualWidth * _transferFrac;
+
+        var pct = (int)Math.Round(_transferFrac * 100);
+        TransferStats.Text = p.BytesTotal > 0
+            ? $"{FormatBytes(p.BytesDone)} of {FormatBytes(p.BytesTotal)}  ·  {pct}%"
+            : $"{p.FilesDone} of {p.FilesTotal}";
+        TransferEta.Text = p.Paused ? "Paused" : FormatEta(p);
+        SetTransferPaused(p.Paused);
+    }
+
+    private void TransferBarTrack_SizeChanged(object sender, SizeChangedEventArgs e)
+        => TransferBarFill.Width = e.NewSize.Width * _transferFrac;
+
+    private void ShowTransferPanel()
+    {
+        if (_transferPanelShown) return;
+        _transferPanelShown = true;
+        TransferPanel.Visibility = Visibility.Visible;
+        try
+        {
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var sb = new Storyboard();
+            void Add(string path, double from, double to)
+            {
+                var a = new DoubleAnimation { From = from, To = to, Duration = TimeSpan.FromMilliseconds(280), EasingFunction = ease };
+                Storyboard.SetTarget(a, TransferPanel);
+                Storyboard.SetTargetProperty(a, path);
+                sb.Children.Add(a);
+            }
+            Add("Opacity", 0, 1);
+            Add("(UIElement.RenderTransform).(TranslateTransform.Y)", 24, 0);
+            sb.Begin();
+        }
+        catch { TransferPanel.Opacity = 1; TransferPanelShift.Y = 0; }
+    }
+
+    private void HideTransferPanel()
+    {
+        if (!_transferPanelShown) { TransferPanel.Visibility = Visibility.Collapsed; return; }
+        _transferPanelShown = false;
+        try
+        {
+            var ease = new CubicEase { EasingMode = EasingMode.EaseIn };
+            var sb = new Storyboard();
+            void Add(string path, double from, double to)
+            {
+                var a = new DoubleAnimation { From = from, To = to, Duration = TimeSpan.FromMilliseconds(200), EasingFunction = ease };
+                Storyboard.SetTarget(a, TransferPanel);
+                Storyboard.SetTargetProperty(a, path);
+                sb.Children.Add(a);
+            }
+            Add("Opacity", TransferPanel.Opacity, 0);
+            Add("(UIElement.RenderTransform).(TranslateTransform.Y)", 0, 16);
+            sb.Completed += (_, _) => { TransferPanel.Visibility = Visibility.Collapsed; TransferPanelShift.Y = 24; };
+            sb.Begin();
+        }
+        catch { TransferPanel.Visibility = Visibility.Collapsed; }
+    }
+
+    private void SetTransferPaused(bool paused)
+    {
+        TransferPauseIcon.Glyph = ((char)(paused ? 0xE768 : 0xE769)).ToString(); // Play : Pause
+        ToolTipService.SetToolTip(TransferPauseBtn, paused ? "Resume" : "Pause");
+    }
+
+    private void TransferPause_Click(object sender, RoutedEventArgs e)
+    {
+        if (_activeTransfer is null) return;
+        _activeTransfer.TogglePause();
+        SetTransferPaused(_activeTransfer.IsPaused);
+        if (_activeTransfer.IsPaused) TransferEta.Text = "Paused";
+    }
+
+    private void TransferCancel_Click(object sender, RoutedEventArgs e)
+    {
+        _activeTransfer?.Cancel();
+        TransferFile.Text = "Cancelling…";
+    }
+
+    private static string FormatEta(TransferProgress p)
+    {
+        if (p.BytesPerSecond < 1 || p.BytesTotal <= 0) return "";
+        var remain = p.BytesTotal - p.BytesDone;
+        if (remain <= 0) return "Finishing…";
+        var secs = remain / p.BytesPerSecond;
+        if (secs < 1) return "Less than a second left";
+        if (secs < 60) return $"About {Math.Round(secs)} seconds left";
+        if (secs < 3600) return $"About {Math.Round(secs / 60)} min left";
+        return $"About {Math.Round(secs / 3600, 1)} hr left";
     }
 
     private static string UniquePath(string path, bool isDir)
