@@ -139,9 +139,48 @@ public sealed partial class MainWindow
     private void EditClearSegments_Click(object sender, RoutedEventArgs e) { _editSegments.Clear(); UpdateSegmentsText(); }
 
     private void UpdateTrimText()
-        => EditTrimText.Text = _editTrimStart <= 0 && _editTrimEnd is null
+    {
+        EditTrimText.Text = _editTrimStart <= 0 && _editTrimEnd is null
             ? "Whole clip"
             : $"{FormatClock(_editTrimStart)} → {(_editTrimEnd is { } e ? FormatClock(e) : "end")}";
+        UpdateTrimMarks();
+    }
+
+    /// <summary>Positions the trim start/end marks (and the kept-region highlight) on the timeline.</summary>
+    private void UpdateTrimMarks()
+    {
+        var dur = _editVideoInfo?.Duration ?? 0;
+        var w = EditTimeline.ActualWidth;
+        if (dur <= 0 || w <= 0 || EditTimeline.Visibility != Visibility.Visible)
+        {
+            EditStartMark.Visibility = EditEndMark.Visibility = EditKeptRegion.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var startFrac = Math.Clamp(_editTrimStart / dur, 0, 1);
+        var endFrac = Math.Clamp((_editTrimEnd ?? dur) / dur, 0, 1);
+
+        EditStartMark.Visibility = _editTrimStart > 0 ? Visibility.Visible : Visibility.Collapsed;
+        EditStartShift.X = startFrac * w;
+        EditEndMark.Visibility = _editTrimEnd is not null ? Visibility.Visible : Visibility.Collapsed;
+        EditEndShift.X = Math.Max(0, endFrac * w - EditEndMark.Width);
+
+        if ((_editTrimStart > 0 || _editTrimEnd is not null) && endFrac > startFrac)
+        {
+            EditKeptShift.X = startFrac * w;
+            EditKeptRegion.Width = (endFrac - startFrac) * w;
+            EditKeptRegion.Visibility = Visibility.Visible;
+        }
+        else EditKeptRegion.Visibility = Visibility.Collapsed;
+    }
+
+    private void EditTimeline_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateTrimMarks();
+        var dur = _editVideoInfo?.Duration ?? 0;
+        var mp = VideoPlayer.MediaPlayer;
+        if (dur > 0 && mp?.PlaybackSession is { } ps)
+            EditPlayheadShift.X = Math.Clamp(ps.Position.TotalSeconds / dur, 0, 1) * EditTimeline.ActualWidth;
+    }
 
     private void UpdateSegmentsText()
         => EditSegmentsText.Text = _editSegments.Count == 0

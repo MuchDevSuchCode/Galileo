@@ -301,7 +301,7 @@ Rendering uses **Win2D** (GPU effect graph) for the preview and a full-resolutio
 Open a video and click **Edit** (the pencil in the player's controls) for a full **FFmpeg-powered video editor**, docked beside the player. Editing is **non-destructive** — your settings are turned into an FFmpeg filter graph that runs against the **original** file at export time, so quality is never compromised.
 
 - **Live preview** — the player shows your edits **as you make them** (rotate, flip, crop, brightness/contrast/saturation, sharpen) via a Win2D frame-server pipeline; rendering stays non-destructive.
-- **Filmstrip timeline** — a thumbnail strip under the player; **click or drag to scrub**, and the playhead follows playback.
+- **Filmstrip timeline** — a thumbnail strip under the player; **click or drag to scrub**, the playhead follows playback, and **trim start/end marks** (with the kept region highlighted) show your in/out points.
 - **Trim** — Set start / Set end from the current playback position; or build a **multi-segment** cut (add several ranges and they're stitched into one export — great for removing ads or mistakes).
 - **Transform** — rotate (90° steps), flip horizontal/vertical, **crop** (pixel margins), and **resize** (Lanczos).
 - **Filters** — deinterlace, denoise, sharpen, **stabilize** shaky footage (two-pass vidstab), and **brightness / contrast / saturation**.

@@ -74,6 +74,11 @@ public sealed partial class MainWindow : Window
     // One-shot: suppress "always open in new window" for the next programmatic open (startup / shell hand-off).
     private bool _bypassAlwaysNewWindow;
 
+    // In-app file clipboard — a reliable fallback for cut/copy/paste. The system clipboard's StorageItems
+    // round-trip and its RequestedOperation (cut vs copy) flag are unreliable in unpackaged apps, so we
+    // also remember the paths + move intent here and prefer them when they match.
+    private (List<string> Paths, bool Move)? _fileClip;
+
     /// <summary>The secure-wipe method chosen in Settings (used for Empty / shred / Shift+Delete).</summary>
     private WipeMethod CurrentWipeMethod => SecureWipe.Parse(_state.WipeMethod);
 
@@ -194,6 +199,9 @@ public sealed partial class MainWindow : Window
         RefreshVaults();
         _vaultIdleTimer.Tick += VaultIdle_Tick;
         _appWindow.Closing += AppWindow_Closing;
+
+        // Catch Ctrl+C/X/V/A even if the explorer list marks them handled first (handledEventsToo).
+        RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(ExplorerClipboard_KeyDown), handledEventsToo: true);
 
         // Stay signed in to Google Drive across launches (silent token refresh; no browser).
         if (GoogleDriveBackup.IsConfigured) _ = SilentReconnectDriveAsync();
@@ -2645,6 +2653,7 @@ public sealed partial class MainWindow : Window
             var data = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
             data.SetStorageItems(new[] { item });
             Clipboard.SetContent(data);
+            _fileClip = (new List<string> { path }, false);
             StatusText.Text = "Copied to clipboard";
         }
         catch (Exception ex) { StatusText.Text = $"Copy failed: {ex.Message}"; }
@@ -2661,19 +2670,44 @@ public sealed partial class MainWindow : Window
     private async System.Threading.Tasks.Task PasteIntoCurrentAsync()
     {
         if (_currentFolder is null) { StatusText.Text = "Pick a folder first."; return; }
+        if (_currentFolder == RecycleBin.Location || ShellLoc.IsShell(_currentFolder)) { StatusText.Text = "Can't paste here."; return; }
         try
         {
+            var paths = new List<string>();
+            var move = false;
+
+            // Prefer the system clipboard (so files copied in Explorer paste too); fall back to the in-app clip.
             var content = Clipboard.GetContent();
-            if (!content.Contains(StandardDataFormats.StorageItems)) { StatusText.Text = "Nothing to paste."; return; }
-            var move = content.RequestedOperation.HasFlag(DataPackageOperation.Move); // set by Cut
-            var items = await content.GetStorageItemsAsync();
-            var paths = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
-            var dest = _currentFolder;
-            var count = await RunTransferWithUiAsync(dest, paths, move);
+            if (content.Contains(StandardDataFormats.StorageItems))
+            {
+                try
+                {
+                    var items = await content.GetStorageItemsAsync();
+                    paths = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
+                }
+                catch { /* fall back to the in-app clip below */ }
+                move = content.RequestedOperation.HasFlag(DataPackageOperation.Move);
+            }
+            if (_fileClip is { } fc)
+            {
+                if (paths.Count == 0) { paths = fc.Paths.ToList(); move = fc.Move; }
+                else if (SamePaths(paths, fc.Paths)) move = fc.Move; // our move/copy intent is the reliable one
+            }
+            if (paths.Count == 0) { StatusText.Text = "Nothing to paste."; return; }
+
+            var count = await RunTransferWithUiAsync(_currentFolder, paths, move);
+            if (move) _fileClip = null; // a cut is consumed by the first paste
             LoadCurrentFolder();
             StatusText.Text = $"{(move ? "Moved" : "Pasted")} {count} item(s)";
         }
         catch (Exception ex) { StatusText.Text = $"Paste failed: {ex.Message}"; }
+    }
+
+    private static bool SamePaths(List<string> a, IReadOnlyList<string> b)
+    {
+        if (a.Count != b.Count) return false;
+        var set = new HashSet<string>(b, StringComparer.OrdinalIgnoreCase);
+        return a.All(set.Contains);
     }
 
     private async System.Threading.Tasks.Task RenameExplorerAsync(ExplorerItem item)
@@ -2882,6 +2916,7 @@ public sealed partial class MainWindow : Window
             var data = new DataPackage { RequestedOperation = cut ? DataPackageOperation.Move : DataPackageOperation.Copy };
             data.SetStorageItems(items);
             Clipboard.SetContent(data);
+            _fileClip = (selection.Select(s => s.Path).ToList(), cut);
             StatusText.Text = $"{(cut ? "Cut" : "Copied")} {items.Count} item(s)";
         }
         catch (Exception ex) { StatusText.Text = $"{(cut ? "Cut" : "Copy")} failed: {ex.Message}"; }
@@ -3467,6 +3502,7 @@ public sealed partial class MainWindow : Window
             var data = new DataPackage { RequestedOperation = DataPackageOperation.Move };
             data.SetStorageItems(new[] { si });
             Clipboard.SetContent(data);
+            _fileClip = (new List<string> { path }, true);
             StatusText.Text = "Cut to clipboard";
         }
         catch (Exception ex) { StatusText.Text = $"Cut failed: {ex.Message}"; }
@@ -4960,6 +4996,22 @@ public sealed partial class MainWindow : Window
         return tcs.Task;
     }
 
+    /// <summary>Explorer Ctrl+C/X/V/A. Registered with handledEventsToo=true so the GridView/ListView
+    /// can't swallow these keys before our main KeyDown handler (which only sees unhandled events) runs.</summary>
+    private void ExplorerClipboard_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (PeekOverlay.Visibility == Visibility.Visible) return;
+        if (ExplorerView.Visibility != Visibility.Visible) return;
+        if (!IsCtrlDown() || IsTextInputFocused()) return;
+        switch (e.Key)
+        {
+            case VirtualKey.C: _ = CopySelectedExplorerAsync(cut: false); e.Handled = true; break;
+            case VirtualKey.X: _ = CopySelectedExplorerAsync(cut: true); e.Handled = true; break;
+            case VirtualKey.V: _ = PasteIntoCurrentAsync(); e.Handled = true; break;
+            case VirtualKey.A: ActiveExplorerList().SelectAll(); e.Handled = true; break;
+        }
+    }
+
     private void RootGrid_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         // While the Peek overlay is open it owns the keyboard (handled in Peek_KeyDown) — don't let
@@ -4989,15 +5041,8 @@ public sealed partial class MainWindow : Window
             case VirtualKey.Delete when ExplorerView.Visibility == Visibility.Visible:
                 _ = DeleteSelectedExplorerAsync(); e.Handled = true; break;
 
-            // ---- Explorer clipboard / selection shortcuts (skip while typing in a text field) ----
-            case VirtualKey.C when ExplorerView.Visibility == Visibility.Visible && IsCtrlDown() && !IsTextInputFocused():
-                _ = CopySelectedExplorerAsync(cut: false); e.Handled = true; break;
-            case VirtualKey.X when ExplorerView.Visibility == Visibility.Visible && IsCtrlDown() && !IsTextInputFocused():
-                _ = CopySelectedExplorerAsync(cut: true); e.Handled = true; break;
-            case VirtualKey.V when ExplorerView.Visibility == Visibility.Visible && IsCtrlDown() && !IsTextInputFocused():
-                _ = PasteIntoCurrentAsync(); e.Handled = true; break;
-            case VirtualKey.A when ExplorerView.Visibility == Visibility.Visible && IsCtrlDown() && !IsTextInputFocused():
-                ActiveExplorerList().SelectAll(); e.Handled = true; break;
+            // Explorer clipboard / select-all (Ctrl+C/X/V/A) are handled by ExplorerClipboard_KeyDown,
+            // which is registered with handledEventsToo so the list control can't swallow them first.
             case VirtualKey.F2 when ExplorerView.Visibility == Visibility.Visible && !IsTextInputFocused():
             {
                 var sel = SelectedExplorerItems();

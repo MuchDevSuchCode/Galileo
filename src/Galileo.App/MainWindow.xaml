@@ -641,11 +641,31 @@
                     HorizontalAlignment="Stretch" VerticalAlignment="Bottom" Margin="12,0,372,14"
                     CornerRadius="8" Background="#E6101013"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1"
+                    SizeChanged="EditTimeline_SizeChanged"
                     PointerPressed="EditTimeline_PointerPressed"
                     PointerMoved="EditTimeline_PointerMoved"
                     PointerReleased="EditTimeline_PointerReleased">
                 <Grid>
                     <Grid x:Name="EditFilmstrip" />
+                    <!-- Kept region (between trim start and end) + start/end marks -->
+                    <Border x:Name="EditKeptRegion" Background="#335AD19A" HorizontalAlignment="Left"
+                            IsHitTestVisible="False" Visibility="Collapsed">
+                        <Border.RenderTransform>
+                            <TranslateTransform x:Name="EditKeptShift" />
+                        </Border.RenderTransform>
+                    </Border>
+                    <Border x:Name="EditStartMark" Width="3" Background="#FF5AD19A" HorizontalAlignment="Left"
+                            IsHitTestVisible="False" Visibility="Collapsed">
+                        <Border.RenderTransform>
+                            <TranslateTransform x:Name="EditStartShift" />
+                        </Border.RenderTransform>
+                    </Border>
+                    <Border x:Name="EditEndMark" Width="3" Background="#FFF0934E" HorizontalAlignment="Left"
+                            IsHitTestVisible="False" Visibility="Collapsed">
+                        <Border.RenderTransform>
+                            <TranslateTransform x:Name="EditEndShift" />
+                        </Border.RenderTransform>
+                    </Border>
                     <Border x:Name="EditPlayhead" Width="2.5" Background="#FF6EA8FF"
                             HorizontalAlignment="Left" IsHitTestVisible="False">
                         <Border.RenderTransform>
