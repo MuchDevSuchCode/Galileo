@@ -52,6 +52,7 @@ public sealed class AppState
     public bool SingleClickToOpen { get; set; }       // false = double-click (default)
     public string CollagePreset { get; set; } = "Justified"; // Justified | Grid | Hero
     public double IconSize { get; set; } = 110;               // explorer icon size (Medium)
+    public string ExplorerViewMode { get; set; } = "Medium";  // Large | Medium | Small | Details
     public double SidebarWidth { get; set; } = 240;           // resizable sidebar (nav) width
     public bool FolderPreviews { get; set; } = true;          // paint content previews on folders
     public bool ShowExtensions { get; set; } = true;          // show file extensions in the explorer
@@ -209,6 +210,7 @@ public sealed class AppState
         SingleClickToOpen = o.SingleClickToOpen;
         CollagePreset = o.CollagePreset;
         IconSize = o.IconSize;
+        ExplorerViewMode = o.ExplorerViewMode;
         FolderPreviews = o.FolderPreviews;
         ShowExtensions = o.ShowExtensions;
         PeekEnabled = o.PeekEnabled;

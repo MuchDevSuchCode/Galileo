@@ -304,10 +304,10 @@
                             <FontIcon Glyph="&#xE8A9;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                             <Button.Flyout>
                                 <MenuFlyout>
-                                    <RadioMenuFlyoutItem Text="Large icons" GroupName="view" IsChecked="True" Click="ViewMode_Click" Tag="Large" />
-                                    <RadioMenuFlyoutItem Text="Medium icons" GroupName="view" Click="ViewMode_Click" Tag="Medium" />
-                                    <RadioMenuFlyoutItem Text="Small icons" GroupName="view" Click="ViewMode_Click" Tag="Small" />
-                                    <RadioMenuFlyoutItem Text="Details" GroupName="view" Click="ViewMode_Click" Tag="Details" />
+                                    <RadioMenuFlyoutItem x:Name="ViewLarge" Text="Large icons" GroupName="view" Click="ViewMode_Click" Tag="Large" />
+                                    <RadioMenuFlyoutItem x:Name="ViewMedium" Text="Medium icons" GroupName="view" Click="ViewMode_Click" Tag="Medium" />
+                                    <RadioMenuFlyoutItem x:Name="ViewSmall" Text="Small icons" GroupName="view" Click="ViewMode_Click" Tag="Small" />
+                                    <RadioMenuFlyoutItem x:Name="ViewDetails" Text="Details" GroupName="view" Click="ViewMode_Click" Tag="Details" />
                                 </MenuFlyout>
                             </Button.Flyout>
                         </Button>
