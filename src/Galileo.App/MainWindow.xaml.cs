@@ -1267,19 +1267,47 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Connected portable devices (phones/cameras) as navigable shell-location items.</summary>
-    private List<ExplorerItem> DeviceItems() =>
-        _shell.GetPortableDevices()
-            .Select(d => new ExplorerItem(ShellLoc.Wrap(d.ParsingName), ExplorerItemKind.Folder, 0, default,
-                                          "Portable device", displayName: d.Name, shellId: d.ParsingName))
-            .ToList();
+    private static List<ExplorerItem> MapDevices(List<(string Name, string ParsingName)> devices) =>
+        devices.Select(d => new ExplorerItem(ShellLoc.Wrap(d.ParsingName), ExplorerItemKind.Folder, 0, default,
+                                             "Portable device", displayName: d.Name, shellId: d.ParsingName)).ToList();
 
-    /// <summary>Refreshes the sidebar's Devices section (hidden when nothing is connected).</summary>
-    private void PopulateDevices()
+    /// <summary>Enumerates portable devices off the UI thread (STA worker for COM) and refreshes the
+    /// sidebar's Devices section + the This PC list when it returns.</summary>
+    private async Task LoadDevicesAsync()
     {
-        var items = DeviceItems();
+        List<(string Name, string ParsingName)> devices;
+        try { devices = await StaTask.RunAsync(() => _shell.GetPortableDevices()); }
+        catch (Exception ex) { App.Log("Devices", ex); devices = new(); }
+
+        var items = MapDevices(devices);
         DevicesSection.Visibility = items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         DevicesList.ItemsSource = items;
         foreach (var i in items) _ = i.LoadIconAsync(32);
+
+        // If still on This PC, append the devices into the listing (drives/folders were shown immediately).
+        if (_currentFolder is null && items.Count > 0)
+        {
+            _explorerRaw = _explorerRaw.Concat(MapDevices(devices)).ToList();
+            ApplySortAndGroup();
+            ApplyViewMode();
+        }
+    }
+
+    /// <summary>Refreshes the sidebar's Devices section (async; hidden when nothing is connected).</summary>
+    private void PopulateDevices() => _ = LoadDevicesAsync();
+
+    private async Task LoadShellFolderAsync(string shellFolder)
+    {
+        List<ExplorerItem> items;
+        try { items = await StaTask.RunAsync(() => _shell.List(ShellLoc.Unwrap(shellFolder))); }
+        catch (Exception ex) { App.Log("ShellList", ex); items = new(); }
+        if (_currentFolder != shellFolder) return; // user navigated away while loading
+
+        _explorerRaw = items;
+        ApplySortAndGroup();
+        ApplyViewMode();
+        UpdateHideFolderButton();
+        StatusText.Text = $"{_explorerRaw.Count} item(s)";
     }
 
     private static string FriendlyPinName(string path)
@@ -1393,22 +1421,26 @@ public sealed partial class MainWindow : Window
         // Shell-namespace location (MTP / portable device) — enumerate via the shell, no filesystem.
         if (ShellLoc.IsShell(_currentFolder))
         {
-            _explorerRaw = _shell.List(ShellLoc.Unwrap(_currentFolder!));
+            // MTP/portable-device enumeration can stall over USB — do it off the UI thread (on an STA
+            // worker for COM) so the window stays responsive; fill the list in when it returns.
+            _explorerRaw = new List<ExplorerItem>();
             ApplySortAndGroup();
             ApplyViewMode();
             UpdateHideFolderButton();
-            StatusText.Text = $"{_explorerRaw.Count} item(s)";
+            StatusText.Text = "Loading device…";
+            _ = LoadShellFolderAsync(_currentFolder!);
             return;
         }
 
         if (_currentFolder is null)
         {
-            _explorerRaw = _fs.GetQuickAccess().Concat(_fs.GetDrives()).Concat(DeviceItems()).ToList();
+            // Show drives/folders immediately; portable devices enumerate async (they can stall over USB).
+            _explorerRaw = _fs.GetQuickAccess().Concat(_fs.GetDrives()).ToList();
             ApplySortAndGroup();
             ApplyViewMode();
             UpdateHideFolderButton();
-            PopulateDevices(); // refresh the sidebar's device list whenever This PC is shown
             StatusText.Text = "This PC";
+            _ = LoadDevicesAsync(); // appends devices to the list + refreshes the sidebar when ready
             return;
         }
 
