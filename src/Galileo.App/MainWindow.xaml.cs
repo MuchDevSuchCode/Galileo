@@ -2235,7 +2235,7 @@ public sealed partial class MainWindow : Window
         {
             Title = sel.Count == 1 ? $"Delete “{sel[0].Name}”?" : $"Delete {sel.Count} items?",
             Content = "This permanently deletes from the device — there is no Recycle Bin.",
-            PrimaryButtonText = "Delete", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, XamlRoot = RootGrid.XamlRoot,
+            PrimaryButtonText = "Delete", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = RootGrid.XamlRoot,
         };
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         try { _shell.Delete(sel.Select(s => s.ShellId!), WinRT.Interop.WindowNative.GetWindowHandle(this)); LoadCurrentFolder(); StatusText.Text = "Deleted."; }
@@ -3010,7 +3010,7 @@ public sealed partial class MainWindow : Window
                 : $"Move \"{item.Name}\" to the Recycle Bin?",
             PrimaryButtonText = permanent ? "Erase" : "Delete",
             CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
+            DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootGrid.XamlRoot
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
@@ -3046,7 +3046,7 @@ public sealed partial class MainWindow : Window
                 : $"Move {selection.Count} item(s) to the Recycle Bin?",
             PrimaryButtonText = permanent ? "Erase" : "Delete",
             CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
+            DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootGrid.XamlRoot
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
@@ -3079,7 +3079,7 @@ public sealed partial class MainWindow : Window
             Content = $"Permanently erase {selection.Count} item(s) from the Recycle Bin with overwrites? This can't be undone.",
             PrimaryButtonText = "Erase",
             CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
+            DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootGrid.XamlRoot
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
@@ -3104,7 +3104,7 @@ public sealed partial class MainWindow : Window
             Content = $"Securely erase {what} with overwrites ({WipeMethodLabel(effective)})? This bypasses the Recycle Bin and can't be undone.",
             PrimaryButtonText = "Shred",
             CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
+            DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootGrid.XamlRoot
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
@@ -3327,7 +3327,7 @@ public sealed partial class MainWindow : Window
                 : $"Move \"{item.FileName}\" to the Recycle Bin?",
             PrimaryButtonText = permanent ? "Erase" : "Delete",
             CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
+            DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootGrid.XamlRoot
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
@@ -4600,7 +4600,7 @@ public sealed partial class MainWindow : Window
                 : $"Securely erase all {count} item(s) in the Recycle Bin with overwrites ({WipeMethodLabel(method)})? This can't be undone.",
             PrimaryButtonText = "Empty",
             CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
+            DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootGrid.XamlRoot,
         };
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
