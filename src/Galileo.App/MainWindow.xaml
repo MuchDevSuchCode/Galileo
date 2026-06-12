@@ -1648,5 +1648,9 @@
                 </Grid>
             </StackPanel>
         </Border>
+
+        <!-- Camera-style edge flash to confirm a screenshot was captured (animated in code). -->
+        <Border x:Name="ScreenshotFlash" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"
+                BorderBrush="White" BorderThickness="14" />
     </Grid>
 </Window>

@@ -5079,6 +5079,7 @@ public sealed partial class MainWindow : Window
                 {
                     await FfmpegVideo.SnapshotAsync(_currentVideoPath, CurrentVideoSeconds(), path);
                     StatusText.Text = "Frame saved: " + path;
+                    FlashScreenshot();
                     return;
                 }
                 catch (Exception ex) { App.Log("Screenshot", ex); /* fall through to a region/window grab */ }
@@ -5090,8 +5091,29 @@ public sealed partial class MainWindow : Window
                 ? await CaptureMediaOnlyAsync(hwnd, media, path)
                 : await ScreenCapture.CaptureWindowAsync(hwnd, path);
             StatusText.Text = "Screenshot saved: " + saved;
+            FlashScreenshot();
         }
         catch (Exception ex) { StatusText.Text = "Screenshot failed: " + ex.Message; App.Log("Screenshot", ex); }
+    }
+
+    /// <summary>A quick white edge flash confirming a screenshot was captured (like a camera).</summary>
+    private void FlashScreenshot()
+    {
+        try
+        {
+            ScreenshotFlash.Visibility = Visibility.Visible;
+            var anim = new DoubleAnimationUsingKeyFrames();
+            anim.KeyFrames.Add(new DiscreteDoubleKeyFrame { KeyTime = TimeSpan.Zero, Value = 0 });
+            anim.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = TimeSpan.FromMilliseconds(70), Value = 1 });
+            anim.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = TimeSpan.FromMilliseconds(450), Value = 0 });
+            Storyboard.SetTarget(anim, ScreenshotFlash);
+            Storyboard.SetTargetProperty(anim, "Opacity");
+            var sb = new Storyboard();
+            sb.Children.Add(anim);
+            sb.Completed += (_, _) => ScreenshotFlash.Visibility = Visibility.Collapsed;
+            sb.Begin();
+        }
+        catch { ScreenshotFlash.Visibility = Visibility.Collapsed; }
     }
 
     /// <summary>Grabs only the media element's region, with the floating chrome and the player's transport
