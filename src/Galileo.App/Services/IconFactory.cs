@@ -179,17 +179,27 @@ public static class IconFactory
         }
     });
 
+    // Icons render on background threads (DecodeThrottle). Win2D drawing sessions on one device are NOT
+    // concurrency-safe — two at once raise "the last drawing session must be disposed…" and can hard-crash
+    // the render thread (0xc000027b). Use a dedicated device (isolated from the editor / live preview / the
+    // shared device) and serialize every draw with a lock.
+    private static readonly object _renderLock = new();
+    private static CanvasDevice? _device;
+
     private static byte[] Render(int px, Action<CanvasDrawingSession, float> draw)
     {
-        var device = CanvasDevice.GetSharedDevice();
-        using var rt = new CanvasRenderTarget(device, px, px, 96);
-        using (var ds = rt.CreateDrawingSession())
+        lock (_renderLock)
         {
-            ds.Clear(Microsoft.UI.Colors.Transparent);
-            ds.Antialiasing = CanvasAntialiasing.Antialiased;
-            ds.TextAntialiasing = CanvasTextAntialiasing.Grayscale;
-            draw(ds, px);
+            _device ??= new CanvasDevice();
+            using var rt = new CanvasRenderTarget(_device, px, px, 96);
+            using (var ds = rt.CreateDrawingSession())
+            {
+                ds.Clear(Microsoft.UI.Colors.Transparent);
+                ds.Antialiasing = CanvasAntialiasing.Antialiased;
+                ds.TextAntialiasing = CanvasTextAntialiasing.Grayscale;
+                draw(ds, px);
+            }
+            return rt.GetPixelBytes();
         }
-        return rt.GetPixelBytes();
     }
 }
