@@ -85,6 +85,10 @@ public sealed partial class MainWindow : Window
     // Live folder refresh: auto-show files added/removed/renamed outside the app.
     private FileSystemWatcher? _folderWatcher;
     private string? _watchedPath;
+    private int _watchErrorCount;
+    // Locations whose watcher fired Error repeatedly (network / WSL / 9P shares) — never re-arm a watcher
+    // there, or it floods the UI thread with rebuild→error loops. Live refresh is off there; F5 still works.
+    private readonly HashSet<string> _watchUnsupported = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _watchDebounce = new() { Interval = TimeSpan.FromMilliseconds(400) };
 
     // Developer-mode embedded terminal.
@@ -1475,11 +1479,20 @@ public sealed partial class MainWindow : Window
             ? _currentFolder
             : null;
 
+        // Never arm a watcher on a location already known to be unwatchable (avoids the error storm).
+        if (path is not null && _watchUnsupported.Contains(path))
+        {
+            StopFolderWatch();
+            _watchedPath = path;
+            return;
+        }
+
         if (string.Equals(path, _watchedPath, StringComparison.OrdinalIgnoreCase) && _folderWatcher is not null)
             return; // already watching it
 
         StopFolderWatch();
         _watchedPath = path;
+        _watchErrorCount = 0;
         if (path is null) return;
 
         try
@@ -1494,23 +1507,34 @@ public sealed partial class MainWindow : Window
             _folderWatcher.Deleted += Bump;
             _folderWatcher.Changed += Bump;
             _folderWatcher.Renamed += (_, _) => DispatcherQueue.TryEnqueue(RestartWatchDebounce);
-            // On Error (buffer overflow) the watcher often stops permanently — tear it down and rebuild
-            // so live refresh keeps working, then reload to catch anything missed.
-            _folderWatcher.Error += (_, _) => DispatcherQueue.TryEnqueue(() =>
-            {
-                StopFolderWatch();
-                _watchedPath = null;
-                UpdateFolderWatch();
-                RestartWatchDebounce();
-            });
+            _folderWatcher.Error += (_, _) => DispatcherQueue.TryEnqueue(() => OnWatchError(path));
             _folderWatcher.EnableRaisingEvents = true;
         }
         catch (Exception ex)
         {
-            App.Log("FolderWatch", ex); // some network/WSL shares don't support change notifications
-            _folderWatcher = null;
-            _watchedPath = null;
+            // EnableRaisingEvents throws on shares that can't be watched → mark unsupported, don't retry.
+            App.Log("FolderWatch", ex);
+            StopFolderWatch();
+            _watchUnsupported.Add(path);
         }
+    }
+
+    /// <summary>Handles a watcher Error. A real buffer overflow on a local folder is recovered by rebuilding
+    /// once; a location that keeps erroring (network/WSL/9P share) is given up on so it can't loop and
+    /// freeze the UI — F5 still refreshes it manually.</summary>
+    private void OnWatchError(string path)
+    {
+        if (!string.Equals(path, _watchedPath, StringComparison.OrdinalIgnoreCase)) return; // navigated away
+        StopFolderWatch();
+        if (++_watchErrorCount > 2)
+        {
+            _watchUnsupported.Add(path);
+            App.Log("FolderWatch", new InvalidOperationException($"Live refresh disabled for '{path}' (repeated watcher errors)."));
+            return; // keep _watchedPath = path, leave _folderWatcher null → won't re-arm
+        }
+        _watchedPath = null;
+        UpdateFolderWatch();      // one rebuild attempt for a genuine overflow
+        RestartWatchDebounce();
     }
 
     private void RestartWatchDebounce() { _watchDebounce.Stop(); _watchDebounce.Start(); }
