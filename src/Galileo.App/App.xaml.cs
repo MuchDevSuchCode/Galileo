@@ -49,7 +49,7 @@ public partial class App : Application
             try
             {
                 var ex = e.Exception;
-                var line = $"[{DateTimeOffset.Now:HH:mm:ss.fff}] {ex.GetType().FullName}: {ex.Message}{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}{Environment.NewLine}";
+                var line = $"[{DateTimeOffset.Now:HH:mm:ss.fff}] {ex.GetType().FullName} (0x{ex.HResult:X8}): {ex.Message}{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}{Environment.NewLine}";
                 lock (_fcLock)
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(FirstChancePath)!);
