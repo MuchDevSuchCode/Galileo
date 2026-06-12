@@ -295,7 +295,7 @@ public sealed class Vault
         var fi = new FileInfo(srcFile);
         using (var inp = File.OpenRead(srcFile))
         using (var outp = File.Create(Path.Combine(BlobsDir, blobId + ".blob")))
-            await VaultCrypto.EncryptStreamAsync(_dek!, inp, outp);
+            await VaultCrypto.EncryptStreamAsync(_dek!, inp, outp, VaultCrypto.BlobContext(blobId));
 
         _index.Entries.Add(new VaultEntry
         {
@@ -365,7 +365,7 @@ public sealed class Vault
         var blobId = Guid.NewGuid().ToString("N");
         using (var inp = File.OpenRead(dest))
         using (var outp = File.Create(Path.Combine(BlobsDir, blobId + ".blob")))
-            await VaultCrypto.EncryptStreamAsync(_dek!, inp, outp);
+            await VaultCrypto.EncryptStreamAsync(_dek!, inp, outp, VaultCrypto.BlobContext(blobId));
 
         _index.Entries.Add(new VaultEntry
         {
@@ -393,7 +393,7 @@ public sealed class Vault
             if (!File.Exists(blob)) continue;
             using (var inp = File.OpenRead(blob))
             using (var outp = File.Create(dest))
-                await VaultCrypto.DecryptStreamAsync(_dek!, inp, outp);
+                await VaultCrypto.DecryptStreamAsync(_dek!, inp, outp, VaultCrypto.BlobContext(e.BlobId));
             try { File.SetLastWriteTimeUtc(dest, new DateTime(e.ModifiedUtcTicks, DateTimeKind.Utc)); } catch { }
         }
         WorkingDir = work;
@@ -423,7 +423,7 @@ public sealed class Vault
             var blobId = Guid.NewGuid().ToString("N");  // new or changed → fresh blob
             using (var inp = File.OpenRead(file))
             using (var outp = File.Create(Path.Combine(BlobsDir, blobId + ".blob")))
-                await VaultCrypto.EncryptStreamAsync(_dek!, inp, outp);
+                await VaultCrypto.EncryptStreamAsync(_dek!, inp, outp, VaultCrypto.BlobContext(blobId));
             newIndex.Entries.Add(new VaultEntry { RelPath = rel, BlobId = blobId, Size = fi.Length, ModifiedUtcTicks = ticks });
             keptBlobs.Add(blobId);
         }

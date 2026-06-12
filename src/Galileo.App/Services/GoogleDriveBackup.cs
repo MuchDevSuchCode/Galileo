@@ -82,7 +82,7 @@ public sealed class GoogleDriveBackup
             new[] { DriveService.Scope.DriveFile },
             "user",
             linked.Token,
-            new FileDataStore(TokenDir, fullPath: true));
+            new DpapiDataStore(TokenDir));
 
         _service = new DriveService(new BaseClientService.Initializer
         {

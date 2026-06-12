@@ -112,11 +112,12 @@ public static class VaultCrypto
 
     // ---------- Chunked AEAD stream (file contents, including multi-GB videos) ----------
     // Format: FileMagic(4) || baseNonce(12) || repeated [ len:int32-BE | tag(16) | ciphertext(len) ].
-    // Per chunk: nonce = baseNonce XOR counter, AAD = counter(8-BE) || isFinal(1). The final flag in
-    // the AAD makes truncating or dropping trailing chunks fail verification; the counter prevents
-    // reordering. Each chunk's plaintext is <= ChunkSize.
+    // Per chunk: nonce = baseNonce XOR counter, AAD = counter(8-BE) || isFinal(1) || context. The final
+    // flag makes truncating/dropping trailing chunks fail; the counter prevents reordering; the context
+    // (the blob's identity, e.g. its BlobId) binds the bytes to that blob so two blobs can't be swapped
+    // — a blob encrypted as A won't verify when the index says it should be B. Plaintext <= ChunkSize.
 
-    public static async Task EncryptStreamAsync(byte[] key, Stream input, Stream output)
+    public static async Task EncryptStreamAsync(byte[] key, Stream input, Stream output, byte[]? context = null)
     {
         var baseNonce = RandomBytes(NonceSize);
         await output.WriteAsync(FileMagic);
@@ -134,7 +135,7 @@ public static class VaultCrypto
             bool isFinal = read < ChunkSize || input.Position >= input.Length;
 
             var nonce = ChunkNonce(baseNonce, counter);
-            var aad = ChunkAad(counter, isFinal);
+            var aad = ChunkAad(counter, isFinal, context);
             var cipher = new byte[read];
             gcm.Encrypt(nonce, plain.AsSpan(0, read), cipher, tag, aad);
 
@@ -148,7 +149,7 @@ public static class VaultCrypto
         }
     }
 
-    public static async Task DecryptStreamAsync(byte[] key, Stream input, Stream output)
+    public static async Task DecryptStreamAsync(byte[] key, Stream input, Stream output, byte[]? context = null)
     {
         var magic = new byte[FileMagic.Length];
         if (await ReadFullAsync(input, magic, magic.Length) != magic.Length
@@ -179,15 +180,18 @@ public static class VaultCrypto
 
             bool isFinal = input.Position >= input.Length;
             var nonce = ChunkNonce(baseNonce, counter);
-            var aad = ChunkAad(counter, isFinal);
+            var aad = ChunkAad(counter, isFinal, context);
             var plain = new byte[len];
-            gcm.Decrypt(nonce, cipher, tag, plain, aad); // throws on mismatch / truncation / reorder
+            gcm.Decrypt(nonce, cipher, tag, plain, aad); // throws on mismatch / truncation / reorder / swap
             await output.WriteAsync(plain.AsMemory(0, len));
 
             counter++;
             if (isFinal) break;
         }
     }
+
+    /// <summary>The per-blob AAD context that binds ciphertext to its identity (defeats blob swapping).</summary>
+    public static byte[] BlobContext(string blobId) => System.Text.Encoding.UTF8.GetBytes("blob:" + blobId);
 
     private static byte[] ChunkNonce(byte[] baseNonce, long counter)
     {
@@ -197,11 +201,13 @@ public static class VaultCrypto
         return n;
     }
 
-    private static byte[] ChunkAad(long counter, bool isFinal)
+    private static byte[] ChunkAad(long counter, bool isFinal, byte[]? context)
     {
-        var aad = new byte[9];
+        var ctxLen = context?.Length ?? 0;
+        var aad = new byte[9 + ctxLen];
         BinaryPrimitives.WriteInt64BigEndian(aad, counter);
         aad[8] = (byte)(isFinal ? 1 : 0);
+        if (ctxLen > 0) Buffer.BlockCopy(context!, 0, aad, 9, ctxLen);
         return aad;
     }
 
