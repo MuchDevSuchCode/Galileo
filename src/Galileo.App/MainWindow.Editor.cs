@@ -586,13 +586,52 @@ public sealed partial class MainWindow
         };
         if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
 
-        // The source bitmap holds pixels in memory (the load stream was already closed), so the
-        // file isn't locked and we can overwrite it directly.
+        // The photo viewer's BitmapImage keeps the original file memory-mapped, so writing over it
+        // directly fails with ERROR_USER_MAPPED_FILE. Release that hold, render to a sibling temp file,
+        // then atomically replace the original (with a short retry while the mapping is released).
         var path = _editPath;
-        if (await ExportToAsync(path))
+        ViewerImage.Source = null;
+
+        var dir = System.IO.Path.GetDirectoryName(path)!;
+        var ext = System.IO.Path.GetExtension(path);
+        var tmp = System.IO.Path.Combine(dir, System.IO.Path.GetFileNameWithoutExtension(path) + ".galileo-tmp" + ext);
+        if (!await ExportToAsync(tmp)) return;
+
+        if (await ReplaceWithRetryAsync(tmp, path))
         {
             StatusText.Text = "Saved " + System.IO.Path.GetFileName(path);
             ExitEditMode(reloadViewer: true);
         }
+        else
+        {
+            try { if (System.IO.File.Exists(tmp)) System.IO.File.Delete(tmp); } catch { }
+            ExitEditMode(reloadViewer: true);
+        }
+    }
+
+    /// <summary>Replaces <paramref name="dest"/> with <paramref name="tmp"/>, retrying briefly while the
+    /// file is still mapped/locked (the viewer's bitmap releases shortly after its source is cleared).</summary>
+    private async Task<bool> ReplaceWithRetryAsync(string tmp, string dest)
+    {
+        for (var i = 0; i < 15; i++)
+        {
+            try
+            {
+                if (System.IO.File.Exists(dest)) System.IO.File.Replace(tmp, dest, null);
+                else System.IO.File.Move(tmp, dest);
+                return true;
+            }
+            catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
+            {
+                await Task.Delay(80); // file still in use — wait for the mapping to drop
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = "Save failed: " + ex.Message; App.Log("EditorOverwrite", ex);
+                return false;
+            }
+        }
+        StatusText.Text = "Save failed: the file is still in use.";
+        return false;
     }
 }
