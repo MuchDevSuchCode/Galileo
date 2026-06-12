@@ -155,8 +155,8 @@ public sealed partial class MainWindow : Window
         try { _appWindow.SetIcon(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "galileo.ico")); } catch { }
         try { TitleLogo.Source = new BitmapImage(new Uri(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "galileo.png"))); } catch { }
 
-        // Mica backdrop for a modern translucent window.
-        SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
+        // Mica backdrop for a modern translucent window (cached; reused across theme changes).
+        EnsureMica();
 
         // Seamless modern chrome: draw our own content up into the title bar.
         ExtendsContentIntoTitleBar = true;
@@ -181,6 +181,7 @@ public sealed partial class MainWindow : Window
         ExplorerDetailsList.ItemsSource = _explorerItems;
         ExplorerIconsView.ItemTemplate = (DataTemplate)Application.Current.Resources["ExplorerIconTemplate"];
         _iconSize = _state.IconSize is > 0 and <= 240 ? _state.IconSize : 110;
+        _explorerViewMode = _state.ExplorerViewMode is "Large" or "Medium" or "Small" or "Details" ? _state.ExplorerViewMode : "Medium";
         _collagePreset = ParseCollagePreset(_state.CollagePreset);
         ExplorerItem.ShowFolderPreviews = _state.FolderPreviews;
         ExplorerItem.ShowExtensions = _state.ShowExtensions;
@@ -1811,6 +1812,12 @@ public sealed partial class MainWindow : Window
         ExplorerIconsView.Visibility = details ? Visibility.Collapsed : Visibility.Visible;
         ExplorerDetailsView.Visibility = details ? Visibility.Visible : Visibility.Collapsed;
         if (!details) ApplyIconSize();
+
+        // Keep the View flyout's checkmark in sync with the active mode (incl. the restored one on launch).
+        ViewLarge.IsChecked = _explorerViewMode == "Large";
+        ViewMedium.IsChecked = _explorerViewMode == "Medium";
+        ViewSmall.IsChecked = _explorerViewMode == "Small";
+        ViewDetails.IsChecked = details;
     }
 
     private void ApplyIconSize()
@@ -2429,6 +2436,8 @@ public sealed partial class MainWindow : Window
             _iconSize = _explorerViewMode switch { "Large" => 160, "Medium" => 110, _ => 72 };
             IconSizeSlider.Value = _iconSize;
         }
+        _state.ExplorerViewMode = _explorerViewMode;
+        _state.Save();
         ApplyViewMode();
     }
 
@@ -2439,6 +2448,7 @@ public sealed partial class MainWindow : Window
         if (_explorerViewMode == "Details") { _explorerViewMode = "Large"; ApplyViewMode(); }
         ApplyIconSize();
         _state.IconSize = _iconSize;
+        _state.ExplorerViewMode = _explorerViewMode;
         _state.Save();
     }
 
@@ -4690,6 +4700,15 @@ public sealed partial class MainWindow : Window
         "SolidBackgroundFillColorBaseBrush", "CardStrokeColorDefaultBrush", "SubtleFillColorSecondaryBrush"
     };
 
+    private Microsoft.UI.Xaml.Media.MicaBackdrop? _micaBackdrop;
+
+    // Reuse one Mica backdrop instead of allocating a new controller on every theme apply (avoids a flash).
+    private void EnsureMica()
+    {
+        _micaBackdrop ??= new Microsoft.UI.Xaml.Media.MicaBackdrop();
+        if (!ReferenceEquals(SystemBackdrop, _micaBackdrop)) SystemBackdrop = _micaBackdrop;
+    }
+
     private void ApplyTheme()
     {
         var res = Application.Current.Resources;
@@ -4698,12 +4717,12 @@ public sealed partial class MainWindow : Window
         switch (_state.Theme)
         {
             case "Light":
-                SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
+                EnsureMica();
                 RootGrid.Background = null;
                 SetElementTheme(ElementTheme.Light);
                 break;
             case "Dark":
-                SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
+                EnsureMica();
                 RootGrid.Background = null;
                 SetElementTheme(ElementTheme.Dark);
                 break;
@@ -4714,7 +4733,7 @@ public sealed partial class MainWindow : Window
                 ApplyCustomTheme(Rgb(255, 46, 48, 50), Rgb(255, 64, 66, 68), Rgb(255, 230, 230, 232), Rgb(120, 150, 154, 158));
                 break;
             default:
-                SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
+                EnsureMica();
                 RootGrid.Background = null;
                 SetElementTheme(ElementTheme.Default);
                 break;
@@ -4812,13 +4831,14 @@ public sealed partial class MainWindow : Window
     private void ReapplyAllSettings()
     {
         _iconSize = _state.IconSize is > 0 and <= 240 ? _state.IconSize : 110;
+        _explorerViewMode = _state.ExplorerViewMode is "Large" or "Medium" or "Small" or "Details" ? _state.ExplorerViewMode : "Medium";
         _collagePreset = ParseCollagePreset(_state.CollagePreset);
         ExplorerItem.ShowFolderPreviews = _state.FolderPreviews;
         ExplorerItem.ShowExtensions = _state.ShowExtensions;
         ApplyTheme();
         ApplyClickMode();
         IconSizeSlider.Value = _iconSize;
-        ApplyIconSize();
+        ApplyViewMode(); // restores Details vs icon view (and the View flyout check) on Cancel
         ResetVaultIdle();
         ApplyDeveloperMode();
         if (ExplorerView.Visibility == Visibility.Visible) LoadCurrentFolder();
