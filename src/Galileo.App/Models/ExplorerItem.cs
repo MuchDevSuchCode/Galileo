@@ -121,6 +121,7 @@ public partial class ExplorerItem : ObservableObject
                     using (var s = wb.PixelBuffer.AsStream()) s.Write(sp, 0, sp.Length);
                     Icon = wb;
                 }
+                else _iconRequested = false; // transient device/thumbnail miss → allow a retry instead of a permanent blank
                 return;
             }
 

@@ -30,11 +30,16 @@ public sealed partial class MainWindow
     private double? _editTrimEnd;
     private readonly List<(double Start, double End)> _editSegments = new();
     private readonly List<string> _editCodecIds = new();
+    private int _editorOpenGen; // bumped on every open/close so an in-flight probe can detect it was superseded
 
     private double CurrentVideoSeconds()
         => VideoPlayer.MediaPlayer?.PlaybackSession?.Position.TotalSeconds ?? 0;
 
-    private async void VideoEdit_Click(object sender, RoutedEventArgs e) => await OpenVideoEditorAsync();
+    private async void VideoEdit_Click(object sender, RoutedEventArgs e)
+    {
+        try { await OpenVideoEditorAsync(); }
+        catch (Exception ex) { EditorStatus.Text = "Couldn't open the editor: " + ex.Message; App.Log("OpenVideoEditor", ex); }
+    }
 
     private async Task OpenVideoEditorAsync()
     {
@@ -72,8 +77,10 @@ public sealed partial class MainWindow
         VideoEditorPanel.Visibility = Visibility.Visible;
         EditorStatus.Text = "Probing…";
 
+        var gen = ++_editorOpenGen; // detect close/reopen during the awaits below
         _editVideoInfo = await FfmpegVideo.ProbeAsync(_currentVideoPath);
         var encoders = await FfmpegVideo.DetectEncodersAsync();
+        if (gen != _editorOpenGen) return; // editor was closed or another video opened while probing
 
         // Codec choices: software + copy + any detected GPU encoders.
         _editCodecIds.Clear();
@@ -113,6 +120,7 @@ public sealed partial class MainWindow
     /// <summary>Full teardown — stops the live preview (restoring normal playback) and hides editor chrome.</summary>
     private void CloseVideoEditor()
     {
+        _editorOpenGen++; // supersede any in-flight OpenVideoEditorAsync probe
         _editorReady = false;
         StopLivePreview();
         UnsubscribePlayhead();
@@ -275,6 +283,7 @@ public sealed partial class MainWindow
 
         var progress = new Progress<double>(pct =>
         {
+            if (!ReferenceEquals(_activeOp, token)) return; // ignore stale reports if another op took over
             _transferFrac = Math.Clamp(pct / 100.0, 0, 1);
             if (TransferBarTrack.ActualWidth > 0) TransferBarFill.Width = TransferBarTrack.ActualWidth * _transferFrac;
             TransferStats.Text = $"{pct:0}%";
@@ -448,12 +457,13 @@ public sealed partial class MainWindow
     {
         if (!_previewOn || _previewBusy) return;
         _previewBusy = true;
-        DispatcherQueue.TryEnqueue(() =>
+        var queued = DispatcherQueue.TryEnqueue(() =>
         {
             try { GrabAndRenderFrame(sender); }
             catch (Exception ex) { App.Log("PreviewFrame", ex); }
             finally { _previewBusy = false; }
         });
+        if (!queued) _previewBusy = false; // never latch if the dispatch was dropped
     }
 
     private void GrabAndRenderFrame(MediaPlayer mp)
@@ -523,9 +533,22 @@ public sealed partial class MainWindow
     private void UpdatePreviewTransform()
     {
         if (EditPreviewTransform is null) return;
+        // For 90/270 the rotated image's bounding box swaps W/H, so a uniform-stretched Image overflows.
+        // Apply a compensating scale so the rotated preview re-fits its area (matches the export aspect).
+        double k = 1;
+        if ((_editRotate == 90 || _editRotate == 270) && _previewSrcW > 0 && _previewSrcH > 0)
+        {
+            double aw = EditPreviewImage.ActualWidth, ah = EditPreviewImage.ActualHeight;
+            if (aw > 0 && ah > 0)
+            {
+                var scale0 = Math.Min(aw / _previewSrcW, ah / _previewSrcH); // Uniform fit before rotation
+                double rw = _previewSrcW * scale0, rh = _previewSrcH * scale0;
+                if (rh > 0 && rw > 0) k = Math.Min(aw / rh, ah / rw); // re-fit the rotated box
+            }
+        }
         EditPreviewTransform.Rotation = _editRotate;
-        EditPreviewTransform.ScaleX = EditFlipHSwitch.IsOn ? -1 : 1;
-        EditPreviewTransform.ScaleY = EditFlipVSwitch.IsOn ? -1 : 1;
+        EditPreviewTransform.ScaleX = (EditFlipHSwitch.IsOn ? -1 : 1) * k;
+        EditPreviewTransform.ScaleY = (EditFlipVSwitch.IsOn ? -1 : 1) * k;
     }
 
     // Re-render the still preview when a tool changes (so paused edits update immediately).

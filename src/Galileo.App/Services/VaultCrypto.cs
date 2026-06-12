@@ -42,10 +42,21 @@ public static class VaultCrypto
         if (key is not null) CryptographicOperations.ZeroMemory(key);
     }
 
+    // Minimum KDF cost accepted at unlock time. The manifest's Argon2 params are plaintext on disk, so
+    // an attacker could lower them to make an offline brute-force cheap; clamp to this floor regardless.
+    private const int MinMemoryKib = 64 * 1024; // 64 MiB
+    private const int MinIterations = 2;
+    private const int MinParallelism = 1;
+
     /// <summary>Derives a 256-bit key-encryption key from a passphrase with Argon2id.</summary>
     public static byte[] DeriveKey(string passphrase, byte[] salt,
         int memoryKib = Argon2MemoryKib, int iterations = Argon2Iterations, int parallelism = Argon2Parallelism)
     {
+        // Never derive with weaker-than-floor params, even if the manifest asks for them (downgrade guard).
+        memoryKib = Math.Max(memoryKib, MinMemoryKib);
+        iterations = Math.Max(iterations, MinIterations);
+        parallelism = Math.Max(parallelism, MinParallelism);
+
         var pw = System.Text.Encoding.UTF8.GetBytes(passphrase);
         try
         {
