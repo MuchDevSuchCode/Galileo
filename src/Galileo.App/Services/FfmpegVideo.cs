@@ -213,7 +213,10 @@ public static class FfmpegVideo
 
             if (vcodec == "copy")
             {
+                // Stream copy can only cut on keyframes; normalize timestamps so the trimmed clip
+                // starts at 0 and plays back cleanly.
                 args.Add("-c:v"); args.Add("copy");
+                args.Add("-avoid_negative_ts"); args.Add("make_zero");
             }
             else
             {
@@ -337,13 +340,14 @@ public static class FfmpegVideo
 
         proc.OutputDataReceived += (_, e) =>
         {
-            if (e.Data is null) return;
-            if (e.Data.StartsWith("out_time_us=", StringComparison.Ordinal) && totalUs > 0
-                && long.TryParse(e.Data.AsSpan("out_time_us=".Length), out var us))
-            {
-                var pct = Math.Min(99, us / totalUs * 100);
-                if (Math.Abs(pct - lastPct) >= 0.5) { lastPct = pct; progress?.Report(pct); }
-            }
+            if (e.Data is null || totalUs <= 0) return;
+            // -progress emits out_time_us and out_time_ms (both in microseconds); accept either.
+            long us = -1;
+            if (e.Data.StartsWith("out_time_us=", StringComparison.Ordinal)) long.TryParse(e.Data.AsSpan("out_time_us=".Length), out us);
+            else if (e.Data.StartsWith("out_time_ms=", StringComparison.Ordinal)) long.TryParse(e.Data.AsSpan("out_time_ms=".Length), out us);
+            if (us < 0) return;
+            var pct = Math.Min(99, us / totalUs * 100);
+            if (Math.Abs(pct - lastPct) >= 0.5) { lastPct = pct; progress?.Report(pct); }
         };
         proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) { err.AppendLine(e.Data); if (err.Length > 8000) err.Remove(0, 4000); } };
 

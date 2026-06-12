@@ -521,6 +521,11 @@ public sealed partial class MainWindow : Window
         InfoPanel.Visibility = Visibility.Collapsed;
         ExplorerView.Visibility = Visibility.Visible;
         _chromeTimer.Stop();
+        // Re-assert the icon-grid cell size: when the explorer is re-shown after the viewer, the
+        // ItemsWrapGrid can come back without ItemWidth/Height and render a thumbnail at full size.
+        // Apply now and again after layout (the panel may not be realized yet on the first pass).
+        ApplyIconSize();
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, ApplyIconSize);
     }
 
     // --- Viewer chrome auto-hide ---
@@ -1456,7 +1461,15 @@ public sealed partial class MainWindow : Window
             _folderWatcher.Deleted += Bump;
             _folderWatcher.Changed += Bump;
             _folderWatcher.Renamed += (_, _) => DispatcherQueue.TryEnqueue(RestartWatchDebounce);
-            _folderWatcher.Error += (_, _) => DispatcherQueue.TryEnqueue(RestartWatchDebounce);
+            // On Error (buffer overflow) the watcher often stops permanently — tear it down and rebuild
+            // so live refresh keeps working, then reload to catch anything missed.
+            _folderWatcher.Error += (_, _) => DispatcherQueue.TryEnqueue(() =>
+            {
+                StopFolderWatch();
+                _watchedPath = null;
+                UpdateFolderWatch();
+                RestartWatchDebounce();
+            });
             _folderWatcher.EnableRaisingEvents = true;
         }
         catch (Exception ex)
@@ -1766,7 +1779,9 @@ public sealed partial class MainWindow : Window
     /// <summary>Remembers the current sort/group for the current folder.</summary>
     private void SaveSortPrefsForCurrentFolder()
     {
-        if (_currentFolder is null) return;
+        // Don't persist per-folder sort for sentinel/virtual locations (recycle bin, MTP/shell) — they
+        // aren't real paths and would accumulate junk entries in state.json.
+        if (_currentFolder is null || _currentFolder == RecycleBin.Location || ShellLoc.IsShell(_currentFolder)) return;
         _state.FolderSorts[_currentFolder] = new FolderSortPref
         {
             SortBy = _state.SortBy,
@@ -2263,7 +2278,11 @@ public sealed partial class MainWindow : Window
                 // Movie category → full multichannel output (no stereo downmix); Windows' spatial
                 // engine (Dolby Atmos / DTS:X / Windows Sonic) on the output device renders surround.
                 mp.AudioCategory = Windows.Media.Playback.MediaPlayerAudioCategory.Movie;
-                if (!isAudio && _state.StartVideoMuted) _videoMuted = true; // "Start videos muted" setting
+                // Reset mute per clip so a previously-muted video doesn't silence the next one; honor
+                // "Start videos muted" only for video (not audio).
+                _videoMuted = !isAudio && _state.StartVideoMuted;
+                if (_videoMuted && VideoVolumeSlider.Value > 0) VideoVolumeSlider.Value = 0; // keep slider in sync
+                else if (!_videoMuted && VideoVolumeSlider.Value <= 0) VideoVolumeSlider.Value = 100;
                 mp.IsMuted = _videoMuted;
                 mp.Volume = VideoVolumeSlider.Value / 100.0;
                 mp.IsLoopingEnabled = _videoRepeat;
@@ -2673,34 +2692,47 @@ public sealed partial class MainWindow : Window
         if (_currentFolder == RecycleBin.Location || ShellLoc.IsShell(_currentFolder)) { StatusText.Text = "Can't paste here."; return; }
         try
         {
-            var paths = new List<string>();
-            var move = false;
-
-            // Prefer the system clipboard (so files copied in Explorer paste too); fall back to the in-app clip.
+            // Read the system clipboard (so files copied in Explorer paste too).
+            var clip = new List<string>();
+            var clipMove = false;
             var content = Clipboard.GetContent();
             if (content.Contains(StandardDataFormats.StorageItems))
             {
                 try
                 {
                     var items = await content.GetStorageItemsAsync();
-                    paths = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
+                    clip = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
                 }
-                catch { /* fall back to the in-app clip below */ }
-                move = content.RequestedOperation.HasFlag(DataPackageOperation.Move);
+                catch { /* clipboard round-trip can drop items in unpackaged apps — handled below */ }
+                clipMove = content.RequestedOperation.HasFlag(DataPackageOperation.Move);
             }
-            if (_fileClip is { } fc)
-            {
-                if (paths.Count == 0) { paths = fc.Paths.ToList(); move = fc.Move; }
-                else if (SamePaths(paths, fc.Paths)) move = fc.Move; // our move/copy intent is the reliable one
-            }
-            if (paths.Count == 0) { StatusText.Text = "Nothing to paste."; return; }
 
-            var count = await RunTransferWithUiAsync(_currentFolder, paths, move);
-            if (move) _fileClip = null; // a cut is consumed by the first paste
+            // The in-app clip is the authoritative source/intent for things copied inside Galileo. Use it
+            // whenever the system clipboard is empty OR a subset of it (i.e. the OS round-trip dropped items)
+            // — this is the fix for "copy sometimes loses files". Only honor the system clipboard when it
+            // carries paths we didn't put there (a fresh external copy from Explorer).
+            List<string> paths;
+            bool move;
+            if (_fileClip is { } fc && (clip.Count == 0 || clip.All(p => fc.Paths.Contains(p, StringComparer.OrdinalIgnoreCase))))
+            {
+                paths = fc.Paths.ToList();
+                move = fc.Move;
+            }
+            else { paths = clip; move = clipMove; }
+
+            // Only transfer items that still exist; tell the user if some vanished.
+            var existing = paths.Where(p => File.Exists(p) || Directory.Exists(p)).ToList();
+            var missing = paths.Count - existing.Count;
+            if (existing.Count == 0) { StatusText.Text = "Nothing to paste."; return; }
+
+            var result = await RunTransferWithUiAsync(_currentFolder, existing, move);
+            if (move && !result.Canceled && result.Errors == 0) _fileClip = null; // a cut is consumed only on a clean paste
             LoadCurrentFolder();
-            StatusText.Text = $"{(move ? "Moved" : "Pasted")} {count} item(s)";
+            var msg = DescribeTransfer(result, move);
+            if (missing > 0) msg += $" ({missing} source(s) no longer existed)";
+            StatusText.Text = msg;
         }
-        catch (Exception ex) { StatusText.Text = $"Paste failed: {ex.Message}"; }
+        catch (Exception ex) { StatusText.Text = $"Paste failed: {ex.Message}"; App.Log("Paste", ex); }
     }
 
     private static bool SamePaths(List<string> a, IReadOnlyList<string> b)
@@ -3655,14 +3687,27 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { StatusText.Text = $"Drop failed: {ex.Message}"; App.Log("Drop", ex); return; }
         finally { deferral.Complete(); } // release the source app once we've read the dropped paths
 
+        paths = paths.Where(p => File.Exists(p) || Directory.Exists(p)).ToList(); // only transfer what's actually there
         if (paths.Count == 0) return;
         try
         {
-            var count = await RunTransferWithUiAsync(target, paths, move);
+            var result = await RunTransferWithUiAsync(target, paths, move);
             LoadCurrentFolder();
-            StatusText.Text = $"{(move ? "Moved" : "Copied")} {count} item(s) to {TabHeaderFor(target)}";
+            StatusText.Text = DescribeTransfer(result, move, TabHeaderFor(target));
         }
         catch (Exception ex) { StatusText.Text = $"Drop failed: {ex.Message}"; App.Log("Drop", ex); }
+    }
+
+    /// <summary>Human-readable transfer outcome that never hides skipped/failed/cancelled items.</summary>
+    private static string DescribeTransfer(TransferResult r, bool move, string? dest = null)
+    {
+        var verb = move ? "Moved" : "Copied";
+        var to = dest is null ? "" : $" to {dest}";
+        var extra = "";
+        if (r.Skipped > 0) extra += $", skipped {r.Skipped}";
+        if (r.Errors > 0) extra += $", {r.Errors} failed";
+        if (r.Canceled) extra += " — cancelled";
+        return $"{verb} {r.FilesCompleted} item(s){to}{extra}.";
     }
 
     // ===================== File-transfer progress (Apple-style panel) =====================
@@ -3677,8 +3722,9 @@ public sealed partial class MainWindow : Window
     private Func<bool>? _progressIsPaused;
 
     /// <summary>Runs a copy/move through the cancellable/pausable engine, showing the floating progress
-    /// card (after a short delay so instant operations don't flash it). Returns files completed.</summary>
-    private async System.Threading.Tasks.Task<int> RunTransferWithUiAsync(string destDir, List<string> paths, bool move)
+    /// card (after a short delay so instant operations don't flash it). Returns the full result so the
+    /// caller can report skipped/failed items instead of silently dropping them.</summary>
+    private async System.Threading.Tasks.Task<TransferResult> RunTransferWithUiAsync(string destDir, List<string> paths, bool move)
     {
         _progressCancel?.Invoke(); // only one panel at a time
         var transfer = new FileTransfer();
@@ -3688,13 +3734,12 @@ public sealed partial class MainWindow : Window
             cancel: transfer.Cancel, pauseToggle: transfer.TogglePause, isPaused: () => transfer.IsPaused, hideable: false);
 
         var revealCts = ScheduleReveal(token); // copies/moves only flash the card if they take a moment
-        var progress = new Progress<TransferProgress>(UpdateTransferUi);
+        var progress = new Progress<TransferProgress>(p => { if (ReferenceEquals(_activeOp, token)) UpdateTransferUi(p); });
         TransferResult result;
         try { result = await transfer.RunAsync(destDir, paths, move, progress, ResolveConflictAsync); }
         finally { EndProgressOp(token, revealCts); }
 
-        if (result.Skipped > 0) StatusText.Text = $"{(move ? "Moved" : "Copied")} {result.FilesCompleted}, skipped {result.Skipped}.";
-        return result.FilesCompleted;
+        return result;
     }
 
     /// <summary>Runs a secure wipe of the given paths behind the floating progress card. The card is shown
@@ -3708,7 +3753,7 @@ public sealed partial class MainWindow : Window
         BeginProgressOp(token, title, cancel: cts.Cancel, pauseToggle: null, isPaused: null, hideable: true);
         ShowTransferPanel(); // always show for wipes
 
-        var progress = new Progress<TransferProgress>(UpdateTransferUi);
+        var progress = new Progress<TransferProgress>(p => { if (ReferenceEquals(_activeOp, token)) UpdateTransferUi(p); });
         try { await SecureWipe.WipePathsAsync(paths, method, progress, cts.Token); }
         finally { EndProgressOp(token, null); }
     }
@@ -3760,11 +3805,14 @@ public sealed partial class MainWindow : Window
     private Task<ConflictChoice> ResolveConflictAsync(ConflictInfo info)
     {
         var tcs = new TaskCompletionSource<ConflictChoice>();
-        DispatcherQueue.TryEnqueue(async () =>
+        // On any UI failure (dialog collision, dispatch dropped while closing), default to KEEP BOTH so a
+        // conflicting file is never silently dropped — renaming is always non-destructive.
+        var queued = DispatcherQueue.TryEnqueue(async () =>
         {
-            try { tcs.SetResult(await ShowConflictDialogAsync(info)); }
-            catch { tcs.SetResult(new ConflictChoice { Action = ConflictAction.Skip }); }
+            try { tcs.TrySetResult(await ShowConflictDialogAsync(info)); }
+            catch { tcs.TrySetResult(new ConflictChoice { Action = ConflictAction.KeepBoth }); }
         });
+        if (!queued) tcs.TrySetResult(new ConflictChoice { Action = ConflictAction.KeepBoth });
         return tcs.Task;
     }
 
@@ -4115,24 +4163,22 @@ public sealed partial class MainWindow : Window
         _backupRunning = true;
         if (!silent) BackupNowBtn.IsEnabled = false;
         var progress = new Progress<string>(m => { if (!silent) BackupStatusText.Text = m; });
+        var ok = 0; var failed = 0;
         try
         {
             var n = 0;
             foreach (var v in vaults)
             {
                 if (!silent) BackupStatusText.Text = $"Backing up “{v.Name}” ({++n}/{vaults.Count})…";
-                await _drive.BackupVaultAsync(v, progress);
+                // Isolate each vault so one failure doesn't abort the rest or strand the timestamp.
+                try { await _drive.BackupVaultAsync(v, progress); ok++; }
+                catch (Exception ex) { failed++; App.Log("DriveBackup", ex); }
             }
-            _state.LastVaultBackupUtcTicks = DateTime.UtcNow.Ticks;
-            ForceSaveState();
-            if (silent) StatusText.Text = $"Scheduled backup complete ({vaults.Count} vault(s)).";
-            else BackupStatusText.Text = $"Backed up {vaults.Count} vault(s).";
+            if (ok > 0) { _state.LastVaultBackupUtcTicks = DateTime.UtcNow.Ticks; ForceSaveState(); }
+            var msg = failed == 0 ? $"Backed up {ok} vault(s)." : $"Backed up {ok}, {failed} failed.";
+            if (silent) StatusText.Text = "Scheduled backup: " + msg;
+            else BackupStatusText.Text = msg;
             if (SettingsOverlay.Visibility == Visibility.Visible) UpdateBackupUi();
-        }
-        catch (Exception ex)
-        {
-            if (!silent) BackupStatusText.Text = "Backup failed: " + ex.Message;
-            App.Log("DriveBackup", ex);
         }
         finally { _backupRunning = false; if (!silent) BackupNowBtn.IsEnabled = _drive.IsConnected; }
     }
@@ -4141,6 +4187,7 @@ public sealed partial class MainWindow : Window
     private async Task MaybeRunScheduledBackupAsync()
     {
         if (_backupRunning || !_drive.IsConnected) return;
+        if (_vaults.IsAnyUnlocked) return; // don't snapshot a vault mid-edit/mid-sync — wait until it's locked
         var interval = _state.BackupSchedule switch
         {
             "Daily" => TimeSpan.FromDays(1),
@@ -4213,6 +4260,8 @@ public sealed partial class MainWindow : Window
             catch (Exception ex) { StatusText.Text = "Connect failed: " + ex.Message; return; }
         }
 
+        if (_backupRunning) { StatusText.Text = "A backup is already running…"; return; }
+        _backupRunning = true; // don't collide with a scheduled BackupAllVaultsAsync on the same Drive folder
         StatusText.Text = $"Backing up “{v.Name}”…";
         try
         {
@@ -4222,6 +4271,7 @@ public sealed partial class MainWindow : Window
             StatusText.Text = $"Backed up “{v.Name}” to Google Drive.";
         }
         catch (Exception ex) { StatusText.Text = "Backup failed: " + ex.Message; App.Log("DriveBackup", ex); }
+        finally { _backupRunning = false; }
     }
 
     /// <summary>Persists state even while the Settings dialog has Save suppressed (for the backup timestamp).</summary>
@@ -5698,7 +5748,14 @@ public sealed partial class MainWindow : Window
         var work = _vaults.Current?.WorkingDir;
         StopVaultIdle();
         try { await _vaults.LockCurrentAsync(); }
-        catch (Exception ex) { StatusText.Text = "Lock failed: " + ex.Message; App.Log("VaultLock", ex); }
+        catch (Exception ex)
+        {
+            // A transient lock failure must not leave the vault unlocked with the idle timer stopped —
+            // re-arm so it retries instead of staying open indefinitely.
+            StatusText.Text = "Lock failed: " + ex.Message; App.Log("VaultLock", ex);
+            ResetVaultIdle();
+            return;
+        }
         RefreshVaults();
 
         // If we were browsing/viewing inside the vault, leave it (its folder is now wiped).
@@ -5750,9 +5807,11 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        if (_closingForVaultLock) return;       // second pass: cleanup already ran; let the close proceed
         try { _term?.Dispose(); _term = null; } catch { } // kill any terminal shell on close
+        try { VideoPlayer.MediaPlayer?.Pause(); } catch { } // don't keep audio playing during a deferred close
         StopFolderWatch();
-        if (_closingForVaultLock) return;       // second pass: let the close proceed
+        _backupTimer.Stop(); _driveWatcher.Stop();
         if (!_vaults.IsAnyUnlocked) return;
         args.Cancel = true;                      // defer close until the vault is secured
         try { await _vaults.LockCurrentAsync(); } catch (Exception ex) { App.Log("VaultCloseLock", ex); }

@@ -138,10 +138,21 @@ public sealed class FileTransfer
         var totalConflicts = copies.Count(o => File.Exists(o.Dest));
         var conflictsSeen = 0;
         var resolved = new List<CopyOp>(copies.Count);
+        var plannedDests = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // guard against in-batch collisions
         foreach (var op in copies)
         {
             if (IsCanceled) return new TransferResult { Canceled = true, Skipped = skipped };
-            if (!File.Exists(op.Dest)) { resolved.Add(op); continue; }
+
+            // Two ops resolving to the same destination would silently overwrite each other — treat a
+            // path already claimed earlier in this batch as a conflict and auto-rename (Keep both).
+            if (!File.Exists(op.Dest))
+            {
+                if (plannedDests.Add(op.Dest)) { resolved.Add(op); continue; }
+                op.Dest = UniquePath(op.Dest, plannedDests);
+                plannedDests.Add(op.Dest);
+                resolved.Add(op);
+                continue;
+            }
 
             ConflictAction action;
             if (batch is not null) action = batch.Action;
@@ -159,9 +170,9 @@ public sealed class FileTransfer
 
             switch (action)
             {
-                case ConflictAction.Overwrite: resolved.Add(op); break;                          // Create truncates
-                case ConflictAction.KeepBoth: op.Dest = UniquePath(op.Dest); resolved.Add(op); break;
-                case ConflictAction.Skip: skipped++; break;                                       // drop it
+                case ConflictAction.Overwrite: plannedDests.Add(op.Dest); resolved.Add(op); break; // Create truncates
+                case ConflictAction.KeepBoth: op.Dest = UniquePath(op.Dest, plannedDests); plannedDests.Add(op.Dest); resolved.Add(op); break;
+                case ConflictAction.Skip: skipped++; break;                                        // drop it
                 case ConflictAction.Cancel: return new TransferResult { Canceled = true, Skipped = skipped };
             }
         }
@@ -210,6 +221,9 @@ public sealed class FileTransfer
         }
 
         // ---- Streamed copies ----
+        // For a move, defer deleting sources until the whole copy succeeds, so cancelling leaves the
+        // originals intact (the dest may have partial copies, but no source data is lost).
+        var copiedSources = new List<string>();
         if (!canceled)
         {
             foreach (var dir in dirsToCreate) { try { Directory.CreateDirectory(dir); } catch { } }
@@ -221,7 +235,7 @@ public sealed class FileTransfer
                 try
                 {
                     CopyFile(op, ref bytesDone, Report);
-                    if (move) { try { File.Delete(op.Src); } catch { } } // move = copy then remove source file
+                    if (move) copiedSources.Add(op.Src);
                     filesDone++;
                     Report(Path.GetFileName(op.Dest), true);
                 }
@@ -230,9 +244,12 @@ public sealed class FileTransfer
             }
         }
 
-        // ---- Move cleanup: remove now-empty source folders we merged from ----
+        // ---- Finish a move (only on a clean run): delete copied sources, then prune emptied folders ----
         if (move && !canceled)
+        {
+            foreach (var src in copiedSources) { try { File.Delete(src); } catch { } }
             foreach (var dir in moveDirSources) RemoveEmptyDirs(dir);
+        }
 
         return new TransferResult { FilesCompleted = filesDone, Skipped = skipped, Canceled = canceled, Errors = errors };
     }
@@ -259,17 +276,37 @@ public sealed class FileTransfer
         };
     }
 
-    /// <summary>Equal length + equal SHA-256 → identical contents. Only called on a real collision.</summary>
+    /// <summary>Equal length + equal bytes → identical contents. Streams a chunk-by-chunk compare with an
+    /// early-out (cheaper than hashing the whole file twice). Only called on a real collision.</summary>
     private static bool FilesIdentical(string a, string b)
     {
         try
         {
-            if (new FileInfo(a).Length != new FileInfo(b).Length) return false;
-            using var sa = File.OpenRead(a);
-            using var sb = File.OpenRead(b);
-            return SHA256.HashData(sa).AsSpan().SequenceEqual(SHA256.HashData(sb));
+            var la = new FileInfo(a).Length;
+            if (la != new FileInfo(b).Length) return false;
+            using var sa = new FileStream(a, FileMode.Open, FileAccess.Read, FileShare.Read, Chunk, FileOptions.SequentialScan);
+            using var sb = new FileStream(b, FileMode.Open, FileAccess.Read, FileShare.Read, Chunk, FileOptions.SequentialScan);
+            var ba = new byte[Chunk];
+            var bb = new byte[Chunk];
+            while (true)
+            {
+                var na = ReadBlock(sa, ba);
+                var nb = ReadBlock(sb, bb);
+                if (na != nb) return false;
+                if (na == 0) return true;
+                if (!ba.AsSpan(0, na).SequenceEqual(bb.AsSpan(0, nb))) return false;
+            }
         }
         catch { return false; }
+    }
+
+    // Reads up to buf.Length bytes, looping until the buffer is full or EOF (a single Read may return less).
+    private static int ReadBlock(Stream s, byte[] buf)
+    {
+        var total = 0;
+        int n;
+        while (total < buf.Length && (n = s.Read(buf, total, buf.Length - total)) > 0) total += n;
+        return total;
     }
 
     private void CopyFile(CopyOp op, ref long bytesDone, Action<string, bool> report)
@@ -336,18 +373,20 @@ public sealed class FileTransfer
         catch { return false; }
     }
 
-    private static string UniquePath(string path)
+    private static string UniquePath(string path, HashSet<string>? avoid = null)
     {
-        if (!File.Exists(path)) return path;
+        bool Taken(string p) => File.Exists(p) || (avoid is not null && avoid.Contains(p));
+        if (!Taken(path)) return path;
         var dir = Path.GetDirectoryName(path)!;
         var stem = Path.GetFileNameWithoutExtension(path);
         var ext = Path.GetExtension(path);
         for (var i = 2; i < 10000; i++)
         {
             var candidate = Path.Combine(dir, $"{stem} ({i}){ext}");
-            if (!File.Exists(candidate)) return candidate;
+            if (!Taken(candidate)) return candidate;
         }
-        return path;
+        // Last resort: a unique suffix so we never return a colliding path (which would overwrite).
+        return Path.Combine(dir, $"{stem} ({Guid.NewGuid():N}){ext}");
     }
 
     private static bool IsSubPath(string parent, string child)
