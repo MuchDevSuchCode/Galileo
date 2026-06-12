@@ -5069,9 +5069,23 @@ public sealed partial class MainWindow : Window
             var path = System.IO.Path.Combine(dir, $"Galileo_{DateTimeOffset.Now:yyyy-MM-dd_HH-mm-ss}.png");
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
 
-            FrameworkElement? media = InVideo ? VideoPlayer
-                : (InViewer && ViewerImage.Source is not null ? ViewerImage : null);
+            // Video: decode the exact frame at the current position from the file — native resolution,
+            // true aspect ratio, and none of the player chrome (screen-grabbing the element would catch
+            // the transport controls and the letterbox bars).
+            if (InVideo && !string.IsNullOrEmpty(_currentVideoPath) && File.Exists(_currentVideoPath)
+                && !PhotoLibrary.IsAudio(_currentVideoPath) && FfmpegVideo.Available)
+            {
+                try
+                {
+                    await FfmpegVideo.SnapshotAsync(_currentVideoPath, CurrentVideoSeconds(), path);
+                    StatusText.Text = "Frame saved: " + path;
+                    return;
+                }
+                catch (Exception ex) { App.Log("Screenshot", ex); /* fall through to a region/window grab */ }
+            }
 
+            // Image in the viewer: just the image region (chrome hidden). Otherwise the whole window.
+            FrameworkElement? media = (InViewer && !InVideo && ViewerImage.Source is not null) ? ViewerImage : null;
             var saved = media is { ActualWidth: >= 1, ActualHeight: >= 1 }
                 ? await CaptureMediaOnlyAsync(hwnd, media, path)
                 : await ScreenCapture.CaptureWindowAsync(hwnd, path);
