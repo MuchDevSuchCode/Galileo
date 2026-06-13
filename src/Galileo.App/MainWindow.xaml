@@ -300,6 +300,10 @@
                         <ToggleButton x:Name="ShowHiddenToggle" Click="ShowAppHidden_Click" ToolTipService.ToolTip="Show app-hidden folders">
                             <FontIcon Glyph="&#xE890;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                         </ToggleButton>
+                        <ToggleButton x:Name="ShowWindowsHiddenToggle" Click="ShowWindowsHidden_Click"
+                                      ToolTipService.ToolTip="Show hidden items (this session only)">
+                            <FontIcon Glyph="&#xED1A;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                        </ToggleButton>
                         <Button x:Name="ViewModeBtn" ToolTipService.ToolTip="View">
                             <FontIcon Glyph="&#xE8A9;" FontFamily="Segoe Fluent Icons" FontSize="14" />
                             <Button.Flyout>

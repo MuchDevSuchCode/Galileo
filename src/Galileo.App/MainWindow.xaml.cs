@@ -120,6 +120,8 @@ public sealed partial class MainWindow : Window
     private int _navIndex = -1;
     private string? _currentFolder; // null = home (This PC)
     private bool _showAppHidden;
+    // Show Windows-hidden (OS hidden attribute) files/folders. Session-only — never persisted, resets on launch.
+    private bool _showWindowsHidden;
     private string _explorerViewMode = "Large";
     private double _iconSize = 110;
     private ExplorerItem? _explorerContextItem;
@@ -1459,7 +1461,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _explorerRaw = _fs.List(_currentFolder, showWindowsHidden: false, _showAppHidden);
+        _explorerRaw = _fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden);
         ApplySortAndGroup();
         ApplyViewMode();
         UpdateHideFolderButton();
@@ -1568,7 +1570,7 @@ public sealed partial class MainWindow : Window
         // Grouped or search views: patching grouped sources in place is fiddly — reload (keeps selection).
         if (_state.GroupBy != "None" || !string.IsNullOrEmpty(_searchQuery)) { ReloadKeepingSelection(); return; }
 
-        _explorerRaw = _fs.List(_currentFolder, showWindowsHidden: false, _showAppHidden);
+        _explorerRaw = _fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden);
         var target = SortItems(_explorerRaw);
         ReconcileExplorerItems(target);
 
@@ -2517,6 +2519,14 @@ public sealed partial class MainWindow : Window
         }
         _showAppHidden = ShowHiddenToggle.IsChecked == true;
         LoadCurrentFolder();
+    }
+
+    /// <summary>Toggles showing Windows-hidden (OS hidden-attribute) items. Session-only: not saved,
+    /// so it reverts to off on the next launch.</summary>
+    private void ShowWindowsHidden_Click(object sender, RoutedEventArgs e)
+    {
+        _showWindowsHidden = ShowWindowsHiddenToggle.IsChecked == true;
+        if (ExplorerView.Visibility == Visibility.Visible) LoadCurrentFolder();
     }
 
     // ---- Hide folder feature ----
