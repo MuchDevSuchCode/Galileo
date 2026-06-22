@@ -14,10 +14,17 @@ public static class DecodeThrottle
 {
     private static readonly SemaphoreSlim Gate = new(4, 4);
 
-    /// <summary>Runs <paramref name="work"/> while holding a decode slot; always releases it.</summary>
-    public static async Task RunAsync(Func<Task> work)
+    /// <summary>
+    /// Runs <paramref name="work"/> while holding a decode slot; always releases it.
+    /// Pass a <paramref name="ct"/> tied to the item's on-screen lifetime: a fast scroll queues
+    /// hundreds of waiters, and cancelling the ones that scrolled off before a slot opened lets the
+    /// queue drain without decoding now-invisible items — which is what otherwise keeps the decode
+    /// pipeline flooded and crashes the render thread. Throws <see cref="OperationCanceledException"/>
+    /// if cancelled while still waiting for a slot.
+    /// </summary>
+    public static async Task RunAsync(Func<Task> work, CancellationToken ct = default)
     {
-        await Gate.WaitAsync();
+        await Gate.WaitAsync(ct);
         try { await work(); }
         finally { Gate.Release(); }
     }

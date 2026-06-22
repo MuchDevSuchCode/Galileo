@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.UI.Xaml;
@@ -50,6 +51,7 @@ public partial class ExplorerItem : ObservableObject
     [ObservableProperty] private ImageSource? _icon;
 
     private bool _iconRequested;
+    private CancellationTokenSource? _iconCts;
 
     /// <summary>Total / free bytes for drives (0 for other items).</summary>
     public long TotalBytes { get; }
@@ -96,16 +98,32 @@ public partial class ExplorerItem : ObservableObject
         Icon = null;
     }
 
+    /// <summary>Cancels a queued/in-flight icon load when the item scrolls off-screen (its list
+    /// container is recycled), so a fast scroll doesn't leave hundreds of dead decodes flooding the
+    /// pipeline. Already-loaded icons are kept; the load simply re-runs when the item reappears.</summary>
+    public void CancelIconLoad()
+    {
+        if (Icon is not null) return; // finished loading — keep it
+        try { _iconCts?.Cancel(); } catch (ObjectDisposedException) { }
+        _iconRequested = false;
+    }
+
     public async Task LoadIconAsync(uint size = 96)
     {
         if (_iconRequested) return;
         _iconRequested = true;
+        _iconCts?.Dispose();
+        _iconCts = new CancellationTokenSource();
+        var ct = _iconCts.Token;
 
         var path = Path;
         var px = (int)Math.Clamp(size, 32u, 256u);
 
         // Throttle concurrent decodes — a fast scroll through hundreds of media files otherwise
-        // floods the decode pipeline and crashes the render thread.
+        // floods the decode pipeline and crashes the render thread. The token lets a decode that's
+        // still waiting for a slot bail out the moment its item scrolls off-screen.
+        try
+        {
         await DecodeThrottle.RunAsync(async () =>
         {
         try
@@ -183,7 +201,12 @@ public partial class ExplorerItem : ObservableObject
         {
             _iconRequested = false; // allow a retry later
         }
-        });
+        }, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            _iconRequested = false; // scrolled off before its decode slot opened — reload when realized again
+        }
     }
 
     private static async Task TryOverlayFirstImageAsync(string folderPath, byte[] folderPixels, int fw, int fh, int px)
