@@ -58,7 +58,7 @@ public sealed class VaultEntry
 /// of the app can use them as ordinary files; locking re-encrypts changes and securely wipes that
 /// folder.
 /// </summary>
-public sealed class Vault
+public sealed class Vault : IShareSource
 {
     public string Root { get; }
     public VaultManifest Manifest { get; private set; }
@@ -452,6 +452,25 @@ public sealed class Vault
         var json = VaultCrypto.Decrypt(_dek!, File.ReadAllBytes(IndexPath));
         try { return JsonSerializer.Deserialize<VaultIndex>(json, JsonOpts) ?? new VaultIndex(); }
         finally { CryptographicOperations.ZeroMemory(json); }
+    }
+
+    // ---------- Secure P2P sharing ----------
+
+    /// <summary>Entries currently available to a remote peer (empty while locked). On the wire and in the
+    /// audit log each is referenced only by its opaque <see cref="VaultEntry.BlobId"/>, never by name.</summary>
+    public IReadOnlyList<VaultEntry> ShareEntries() =>
+        _dek is null ? Array.Empty<VaultEntry>() : _index.Entries.ToList();
+
+    /// <summary>Opens a read stream over a shared entry by its opaque BlobId. The plaintext is read from the
+    /// ACL-restricted working folder and is never copied elsewhere on the host — it only streams, chunk by
+    /// chunk and re-encrypted per peer, to the remote viewer.</summary>
+    public Stream OpenSharedEntry(string blobId)
+    {
+        if (_dek is null || WorkingDir is null) throw new InvalidOperationException("Vault is locked.");
+        var e = _index.Entries.FirstOrDefault(x => x.BlobId == blobId)
+                ?? throw new FileNotFoundException("No such shared entry.");
+        var path = Path.Combine(WorkingDir, e.RelPath.Replace('/', Path.DirectorySeparatorChar));
+        return File.OpenRead(path);
     }
 
     // ---------- Helpers ----------
