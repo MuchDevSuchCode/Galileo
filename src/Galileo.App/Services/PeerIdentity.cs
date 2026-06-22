@@ -106,6 +106,10 @@ public static class PeerIdentity
         return secret;
     }
 
+    /// <summary>Derives the X25519 public key for a raw 32-byte private key (used for ephemeral session keys).</summary>
+    public static byte[] AgreePublicFromPrivate(byte[] agreePrivate)
+        => new X25519PrivateKeyParameters(agreePrivate, 0).GeneratePublicKey().GetEncoded();
+
     /// <summary>Signs data with the Ed25519 identity key (proves "I am this UUID" to the relay/peer).</summary>
     public static byte[] Sign(byte[] signPrivate, byte[] data)
     {
@@ -164,7 +168,8 @@ public static class PeerIdentity
 
     // ---- helpers ----
 
-    private static byte[] Hkdf(byte[] ikm, string info, int length)
+    /// <summary>HKDF-SHA256 expand (used for identity derivation and per-session key derivation).</summary>
+    public static byte[] Hkdf(byte[] ikm, string info, int length)
     {
         var hkdf = new HkdfBytesGenerator(new Sha256Digest());
         hkdf.Init(new HkdfParameters(ikm, null, Encoding.ASCII.GetBytes(info)));
