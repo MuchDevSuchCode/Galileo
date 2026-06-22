@@ -450,11 +450,11 @@ public sealed partial class MainWindow : Window
 
     private async void PhotoGrid_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
-        if (args.InRecycleQueue) return;
-        if (args.Item is PhotoItem item && item.Thumbnail is null)
-        {
+        if (args.Item is not PhotoItem item) return;
+        // Recycled out (scrolled off) — drop any queued decode so a fast scroll can't flood the pipeline.
+        if (args.InRecycleQueue) { item.CancelThumbnailLoad(); return; }
+        if (item.Thumbnail is null)
             await item.LoadThumbnailAsync();
-        }
     }
 
     // ===================== Gallery <-> Viewer =====================
@@ -2048,8 +2048,10 @@ public sealed partial class MainWindow : Window
 
     private async void ExplorerIcons_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
-        if (args.InRecycleQueue) return;
-        if (args.Item is ExplorerItem it && it.Icon is null)
+        if (args.Item is not ExplorerItem it) return;
+        // Recycled out (scrolled off) — drop any queued decode so a fast scroll can't flood the pipeline.
+        if (args.InRecycleQueue) { it.CancelIconLoad(); return; }
+        if (it.Icon is null)
             await it.LoadIconAsync((uint)Math.Clamp(_iconSize, 48, 256));
     }
 

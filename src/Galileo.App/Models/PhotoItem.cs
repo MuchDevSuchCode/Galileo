@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.UI.Xaml;
@@ -28,6 +29,7 @@ public partial class PhotoItem : ObservableObject
     private BitmapImage? _thumbnail;
 
     private bool _thumbnailRequested;
+    private CancellationTokenSource? _thumbnailCts;
 
     // Computed Visibility properties let the gallery template bind directly without a
     // value converter (keeps project-local types out of the XAML compiler's metadata pass).
@@ -65,31 +67,52 @@ public partial class PhotoItem : ObservableObject
         _aspectLoaded = true;
     }
 
+    /// <summary>Cancels a queued/in-flight thumbnail decode when the photo scrolls off-screen (its
+    /// grid container is recycled). A fast scroll otherwise leaves hundreds of dead decodes flooding
+    /// the pipeline; the decode simply re-runs when the photo scrolls back into view.</summary>
+    public void CancelThumbnailLoad()
+    {
+        if (Thumbnail is not null) return; // finished loading — keep it
+        try { _thumbnailCts?.Cancel(); } catch (ObjectDisposedException) { }
+        _thumbnailRequested = false;
+    }
+
     /// <summary>Lazily decodes a small thumbnail. Safe to call repeatedly.</summary>
     public async Task LoadThumbnailAsync(uint size = 240)
     {
         if (_thumbnailRequested) return;
         _thumbnailRequested = true;
+        _thumbnailCts?.Dispose();
+        _thumbnailCts = new CancellationTokenSource();
+        var ct = _thumbnailCts.Token;
 
-        // Throttle concurrent decodes so a fast scroll can't flood the render thread.
-        await Services.DecodeThrottle.RunAsync(async () =>
+        // Throttle concurrent decodes so a fast scroll can't flood the render thread. The token lets
+        // a decode still waiting for a slot bail out the moment its photo scrolls off-screen.
+        try
         {
-            try
+            await Services.DecodeThrottle.RunAsync(async () =>
             {
-                var file = await StorageFile.GetFileFromPathAsync(Path);
-                using StorageItemThumbnail thumb =
-                    await file.GetThumbnailAsync(ThumbnailMode.PicturesView, size, ThumbnailOptions.ResizeThumbnail);
+                try
+                {
+                    var file = await StorageFile.GetFileFromPathAsync(Path);
+                    using StorageItemThumbnail thumb =
+                        await file.GetThumbnailAsync(ThumbnailMode.PicturesView, size, ThumbnailOptions.ResizeThumbnail);
 
-                var bmp = new BitmapImage { DecodePixelWidth = (int)size };
-                await bmp.SetSourceAsync(thumb);
-                Thumbnail = bmp;
-            }
-            catch
-            {
-                // Unreadable / unsupported file — leave thumbnail null (placeholder shows).
-                _thumbnailRequested = false;
-            }
-        });
+                    var bmp = new BitmapImage { DecodePixelWidth = (int)size };
+                    await bmp.SetSourceAsync(thumb);
+                    Thumbnail = bmp;
+                }
+                catch
+                {
+                    // Unreadable / unsupported file — leave thumbnail null (placeholder shows).
+                    _thumbnailRequested = false;
+                }
+            }, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            _thumbnailRequested = false; // scrolled off before its decode slot opened — reload when realized again
+        }
     }
 
     public DateTime LastModifiedUtc
