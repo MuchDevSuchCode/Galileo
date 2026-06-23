@@ -246,6 +246,8 @@ public sealed partial class MainWindow : Window
                 RefreshFolderIncremental();
         };
 
+        InitBackground(); // tray icon + start-hidden if launched with --background
+
         // Windows may launch us with a file (default app) or folder to open.
         if (!string.IsNullOrEmpty(initialPath) && System.IO.File.Exists(initialPath))
         {
@@ -4705,6 +4707,8 @@ public sealed partial class MainWindow : Window
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
         BackupScheduleCombo.SelectedIndex = _state.BackupSchedule switch { "Daily" => 1, "Weekly" => 2, _ => 0 };
         RelayUrlBox.Text = _state.SecureRelayUrl;
+        RunInBackgroundSwitch.IsOn = _state.RunInBackground;
+        StartWithWindowsSwitch.IsOn = _state.StartWithWindows;
         UpdateBackupUi();
         SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
         SlideshowSecondsValue.Text = $"{_state.SlideshowSeconds}s";
@@ -5957,12 +5961,22 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // "Run in background": closing the window hides it to the tray and keeps the process (and the
+        // secure-sharing host) alive. Real exit comes from the tray menu (sets _exitingFromTray).
+        if (!_closingForVaultLock && !_exitingFromTray && _state.RunInBackground && _tray is not null)
+        {
+            args.Cancel = true;
+            try { _appWindow.Hide(); } catch { }
+            return;
+        }
+
         if (_closingForVaultLock) return;       // second pass: cleanup already ran; let the close proceed
         try { _term?.Dispose(); _term = null; } catch { } // kill any terminal shell on close
         try { VideoPlayer.MediaPlayer?.Pause(); } catch { } // don't keep audio playing during a deferred close
         StopFolderWatch();
         try { CleanupRemoteBrowse(); } catch { }   // securely wipe any shared-browse copies
         try { WipeShareTempDirs(); } catch { }
+        RemoveTray();
         _backupTimer.Stop(); _driveWatcher.Stop();
         if (!_vaults.IsAnyUnlocked) return;
         args.Cancel = true;                      // defer close until the vault is secured

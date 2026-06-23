@@ -1518,6 +1518,31 @@
                                 </Border>
                             </StackPanel>
 
+                            <!-- Background -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="BACKGROUND" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <StackPanel Spacing="14">
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Run in the background" />
+                                                <TextBlock Text="Closing the window hides Galileo to the system tray instead of quitting, so it keeps hosting your shares. Quit from the tray icon."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="RunInBackgroundSwitch" Toggled="RunInBackgroundSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Start with Windows" />
+                                                <TextBlock Text="Launch Galileo minimized to the tray when you sign in (also turns on Run in the background)."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="StartWithWindowsSwitch" Toggled="StartWithWindowsSwitch_Toggled" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+
                             <!-- Developer -->
                             <StackPanel Spacing="8">
                                 <TextBlock Text="DEVELOPER" Style="{StaticResource SettingSectionHeader}" />
