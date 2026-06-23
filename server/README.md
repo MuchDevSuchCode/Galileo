@@ -37,13 +37,17 @@ Environment overrides: `GALILEO_RELAY_PORT` (default 8765), `GALILEO_RELAY_DB` (
 
 `deploy.sh` provisions everything on a fresh instance: a Python venv, the relay as a hardened systemd
 service (bound to loopback), and an nginx reverse proxy that terminates TLS and upgrades the WebSocket.
-Open TCP 80 + 443 in the Lightsail firewall and point an A record at the instance first, then:
+Open TCP 80 + 443 in the Lightsail firewall and point an A record at the instance first, then on the
+instance (Ubuntu 24.04 LTS):
 
 ```bash
+git clone https://github.com/MuchDevSuchCode/Galileo.git
+cd Galileo/server
 sudo DOMAIN=relay.example.com EMAIL=you@example.com ./deploy.sh
 ```
 
-It's idempotent (re-run to update). Omit `DOMAIN` for a quick plain-HTTP test (no TLS).
+It's idempotent — to update later: `git pull && sudo DOMAIN=relay.example.com EMAIL=you@example.com ./deploy.sh`.
+Omit `DOMAIN` for a quick plain-HTTP test (no TLS). Verify with `curl https://relay.example.com/healthz`.
 
 Point Galileo at it via **Settings → Secure sharing → Relay URL** (e.g. `wss://your-host:8765`). For real
 deployments put it behind TLS (a reverse proxy terminating HTTPS/WSS); the end-to-end encryption protects
