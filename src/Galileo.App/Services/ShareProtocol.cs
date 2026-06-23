@@ -78,39 +78,68 @@ public static class ShareProtocol
     /// Emits opaque audit events (object = BlobId) to the relay as the viewer lists/opens files.</summary>
     public static async Task ServeAsync(RelayClient relay, IShareSource vault, SecureSession session, CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested)
+        // Track which files this viewer currently has open in their viewer, so we can audit a "close" for
+        // anything still open if the session ends (disconnect/crash) — no permanently-stale "still open".
+        var openIds = new HashSet<string>();
+        try
         {
-            byte[] reqBytes;
-            try { reqBytes = await session.ReceiveAsync(relay, ct); }
-            catch { break; } // session closed / cancelled / framing error → stop serving this peer
-
-            try
+            while (!ct.IsCancellationRequested)
             {
-                using var doc = JsonDocument.Parse(reqBytes);
-                var root = doc.RootElement;
-                switch (root.GetProperty("op").GetString())
+                byte[] reqBytes;
+                try { reqBytes = await session.ReceiveAsync(relay, ct); }
+                catch { break; } // session closed / cancelled / framing error → stop serving this peer
+
+                try
                 {
-                    case "list":
-                        await HandleListAsync(relay, vault, session, ct);
-                        break;
-                    case "open":
-                        await HandleOpenAsync(relay, vault, session, root, ct);
-                        break;
-                    case "close":
-                        // Viewer finished viewing a file — record a close event (no response). Pairing
-                        // open/close on the host lets it show how long each file was open.
-                        await relay.SendAuditAsync(session.PeerUuid, root.GetProperty("id").GetString() ?? "", "close", 0, ct);
-                        break;
-                    default:
-                        await SendAsync(relay, session, new { op = "error", msg = "unknown op" }, ct);
-                        break;
+                    using var doc = JsonDocument.Parse(reqBytes);
+                    var root = doc.RootElement;
+                    switch (root.GetProperty("op").GetString())
+                    {
+                        case "list":
+                            await HandleListAsync(relay, vault, session, ct);
+                            break;
+                        case "open":
+                            // Pure chunk transfer (for thumbnails / fetching) — not audited; only an
+                            // actual viewer "view" counts as access.
+                            await HandleOpenAsync(relay, vault, session, root, ct);
+                            break;
+                        case "view":
+                        {
+                            // Viewer opened a file in its viewer — the access we log.
+                            var id = root.GetProperty("id").GetString() ?? "";
+                            if (openIds.Add(id))
+                                await relay.SendAuditAsync(session.PeerUuid, id, "open", SizeOf(vault, id), ct);
+                            break;
+                        }
+                        case "close":
+                        {
+                            var id = root.GetProperty("id").GetString() ?? "";
+                            if (openIds.Remove(id))
+                                await relay.SendAuditAsync(session.PeerUuid, id, "close", 0, ct);
+                            break;
+                        }
+                        default:
+                            await SendAsync(relay, session, new { op = "error", msg = "unknown op" }, ct);
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    try { await SendAsync(relay, session, new { op = "error", msg = ex.Message }, ct); } catch { }
                 }
             }
-            catch (Exception ex)
-            {
-                try { await SendAsync(relay, session, new { op = "error", msg = ex.Message }, ct); } catch { }
-            }
         }
+        finally
+        {
+            // Session ended — close out anything the viewer left open so the log isn't stuck "still open".
+            foreach (var id in openIds)
+                try { await relay.SendAuditAsync(session.PeerUuid, id, "close", 0, CancellationToken.None); } catch { }
+        }
+    }
+
+    private static long SizeOf(IShareSource vault, string id)
+    {
+        try { using var s = vault.OpenSharedEntry(id); return s.Length; } catch { return 0; }
     }
 
     private static async Task HandleListAsync(RelayClient relay, IShareSource vault, SecureSession session, CancellationToken ct)
@@ -131,10 +160,6 @@ public static class ShareProtocol
 
         using var stream = vault.OpenSharedEntry(id);
         var total = stream.Length;
-
-        // Audit the access once, when the viewer starts reading the file (offset 0).
-        if (offset == 0)
-            await relay.SendAuditAsync(session.PeerUuid, id, "open", total, ct);
 
         if (offset >= total)
         {
@@ -198,8 +223,12 @@ public static class ShareProtocol
         }
     }
 
-    /// <summary>Tells the host the viewer has finished with an entry (fire-and-forget; no response).
-    /// The host records a "close" audit event so it can report how long the file was open.</summary>
+    /// <summary>Tells the host the viewer just opened an entry in its viewer (fire-and-forget). The host
+    /// records this as an access ("open"); paired with <see cref="CloseAsync"/> it yields a duration.</summary>
+    public static Task ViewAsync(RelayClient relay, SecureSession session, string id, CancellationToken ct = default)
+        => SendAsync(relay, session, new { op = "view", id }, ct);
+
+    /// <summary>Tells the host the viewer has finished viewing an entry (fire-and-forget; no response).</summary>
     public static Task CloseAsync(RelayClient relay, SecureSession session, string id, CancellationToken ct = default)
         => SendAsync(relay, session, new { op = "close", id }, ct);
 

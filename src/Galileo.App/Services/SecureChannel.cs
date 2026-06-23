@@ -152,6 +152,17 @@ public sealed class RelayClient : IDisposable
         return list;
     }
 
+    /// <summary>Deletes this identity's audit records on the relay (signed).</summary>
+    public static async Task ClearAuditAsync(string relayUrl, PeerKeys me, CancellationToken ct = default)
+    {
+        var http = HttpBaseFrom(relayUrl);
+        var ts = UnixNow();
+        var sig = Convert.ToBase64String(PeerIdentity.Sign(me.SignPrivate, Encoding.UTF8.GetBytes($"audit-clear:{me.Uuid}:{ts}")));
+        using var client = new HttpClient();
+        var resp = await client.PostAsJsonAsync($"{http}/audit/clear", new { uuid = me.Uuid.ToString(), ts, sig }, ct);
+        resp.EnsureSuccessStatusCode();
+    }
+
     /// <summary>Looks up a peer's public keys by UUID. Returns null if the relay doesn't know it.</summary>
     public static async Task<RemotePeer?> LookupAsync(string relayUrl, Guid uuid, CancellationToken ct = default)
     {
@@ -309,6 +320,7 @@ public sealed class SecureSession : IDisposable
 
     private readonly byte[] _sendKey;
     private readonly byte[] _recvKey;
+    private readonly SemaphoreSlim _sendGate = new(1, 1); // serialize Encrypt+send (download + view signals share a session)
     private long _sendCtr;
     private long _recvCtr;
 
@@ -447,9 +459,15 @@ public sealed class SecureSession : IDisposable
         return plain;
     }
 
-    /// <summary>Encrypt + send a plaintext message to the peer over the relay (within this session).</summary>
-    public Task SendAsync(RelayClient relay, ReadOnlySpan<byte> plaintext, CancellationToken ct = default)
-        => relay.SendAsync(PeerUuid, Sid, Encrypt(plaintext), ct);
+    /// <summary>Encrypt + send a plaintext message to the peer over the relay (within this session).
+    /// Serialized so concurrent senders (e.g. a background download + a view signal) can't race the
+    /// frame counter or interleave partial frames.</summary>
+    public async Task SendAsync(RelayClient relay, byte[] plaintext, CancellationToken ct = default)
+    {
+        await _sendGate.WaitAsync(ct);
+        try { var frame = Encrypt(plaintext); await relay.SendAsync(PeerUuid, Sid, frame, ct); }
+        finally { _sendGate.Release(); }
+    }
 
     /// <summary>Receive + decrypt the next message from the peer (within this session).</summary>
     public async Task<byte[]> ReceiveAsync(RelayClient relay, CancellationToken ct = default)
