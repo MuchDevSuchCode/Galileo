@@ -98,6 +98,10 @@ public static class ShareProtocol
                         case "list":
                             await HandleListAsync(relay, vault, session, ct);
                             break;
+                        case "endbrowse":
+                            // Viewer left the shared folder — log it so the owner sees the browse ended.
+                            await relay.SendAuditAsync(session.PeerUuid, "(index)", "browse_end", 0, ct);
+                            break;
                         case "open":
                             // Pure chunk transfer (for thumbnails / fetching) — not audited; only an
                             // actual viewer "view" counts as access.
@@ -161,6 +165,11 @@ public static class ShareProtocol
         using var stream = vault.OpenSharedEntry(id);
         var total = stream.Length;
 
+        // Log the access the first time the viewer pulls a file's bytes (browsing / thumbnails), as a
+        // standalone "fetch" event — distinct from "open" (viewed in the viewer) and not paired/duration'd.
+        if (offset == 0)
+            await relay.SendAuditAsync(session.PeerUuid, id, "fetch", total, ct);
+
         if (offset >= total)
         {
             await SendAsync(relay, session, new { op = "chunk", id, offset, data = "", eof = true }, ct);
@@ -222,6 +231,10 @@ public static class ShareProtocol
             if (root.GetProperty("eof").GetBoolean() || data.Length == 0) break;
         }
     }
+
+    /// <summary>Tells the host the viewer has left the shared folder (fire-and-forget); the host logs it.</summary>
+    public static Task EndBrowseAsync(RelayClient relay, SecureSession session, CancellationToken ct = default)
+        => SendAsync(relay, session, new { op = "endbrowse" }, ct);
 
     /// <summary>Tells the host the viewer just opened an entry in its viewer (fire-and-forget). The host
     /// records this as an access ("open"); paired with <see cref="CloseAsync"/> it yields a duration.</summary>

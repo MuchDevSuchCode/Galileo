@@ -66,6 +66,7 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        LogInfo($"OnLaunched args=[{string.Join(' ', Environment.GetCommandLineArgs().Skip(1))}]");
         _window = new MainWindow(GetInitialMediaPath());
         _window.Activate();
     }
@@ -77,6 +78,7 @@ public partial class App : Application
     public void OnRedirected(AppActivationArguments e)
     {
         var path = PathFromActivation(e);
+        LogInfo($"OnRedirected kind={e.Kind} path={path ?? "(none)"}");
         var window = _window;
         if (window is null) return;
         window.DispatcherQueue.TryEnqueue(() =>
@@ -152,6 +154,20 @@ public partial class App : Application
         {
             // Logging must never crash the app.
         }
+    }
+
+    /// <summary>Diagnostic info log: %LocalAppData%\Galileo\logs\app.log (lifecycle, sharing, tray — not errors).</summary>
+    public static readonly string InfoLogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo", "logs", "app.log");
+
+    public static void LogInfo(string message)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(InfoLogPath)!);
+            File.AppendAllText(InfoLogPath, $"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{Environment.NewLine}");
+        }
+        catch { /* logging must never crash the app */ }
     }
 
     private static string? GetInitialMediaPath()
