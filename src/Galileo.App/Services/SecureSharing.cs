@@ -61,6 +61,7 @@ public sealed class SecureSharing : IDisposable
     private string? _relayUrl;
     private CancellationTokenSource? _loopCts;
     private Func<Guid, IShareSource?>? _shareForPeer;
+    private bool _intentionalOffline = true;
 
     private SecureSharing(PeerKeys identity, ShareVaultData data, string? passphrase, string storePath)
     {
@@ -211,11 +212,42 @@ public sealed class SecureSharing : IDisposable
         await GoOfflineAsync();
         _relayUrl = relayUrl;
         _shareForPeer = shareForPeer;
-        await RelayClient.RegisterAsync(relayUrl, Identity, ct);
-        _relay = await RelayClient.ConnectAsync(relayUrl, Identity, ct);
+        _intentionalOffline = false;
+        await ConnectAndServeAsync(ct);
+        _ = Task.Run(ReconnectMonitorAsync); // keep us online: reconnect if the connection drops
+    }
+
+    private async Task ConnectAndServeAsync(CancellationToken ct)
+    {
+        await RelayClient.RegisterAsync(_relayUrl!, Identity, ct);
+        _relay = await RelayClient.ConnectAsync(_relayUrl!, Identity, ct);
         _loopCts = new CancellationTokenSource();
-        _ = Task.Run(() => HostLoopAsync(_loopCts.Token));
-        _ = Task.Run(() => MailLoopAsync(_loopCts.Token));
+        var token = _loopCts.Token;
+        _ = Task.Run(() => HostLoopAsync(token));
+        _ = Task.Run(() => MailLoopAsync(token));
+    }
+
+    // While we intend to be online, watch the connection; if it drops, reconnect (re-register, re-serve)
+    // with backoff. This keeps a host reachable across network blips and idle closes.
+    private async Task ReconnectMonitorAsync()
+    {
+        while (!_intentionalOffline)
+        {
+            var relay = _relay;
+            if (relay is null) break;
+            try { await relay.Completion; } catch { }
+            if (_intentionalOffline) break;
+
+            try { _loopCts?.Cancel(); } catch { }
+            relay.Dispose();
+            _relay = null;
+
+            for (var delayMs = 2000; !_intentionalOffline; delayMs = Math.Min(delayMs * 2, 30000))
+            {
+                try { await ConnectAndServeAsync(CancellationToken.None); break; }
+                catch { try { await Task.Delay(delayMs); } catch { } }
+            }
+        }
     }
 
     private async Task HostLoopAsync(CancellationToken ct)
@@ -346,6 +378,7 @@ public sealed class SecureSharing : IDisposable
 
     public Task GoOfflineAsync()
     {
+        _intentionalOffline = true; // stop the reconnect monitor
         try { _loopCts?.Cancel(); } catch { }
         _loopCts?.Dispose();
         _loopCts = null;
@@ -356,6 +389,7 @@ public sealed class SecureSharing : IDisposable
 
     public void Dispose()
     {
+        _intentionalOffline = true;
         try { _loopCts?.Cancel(); } catch { }
         _loopCts?.Dispose();
         _relay?.Dispose();

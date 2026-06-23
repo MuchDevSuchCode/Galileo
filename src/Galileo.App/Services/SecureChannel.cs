@@ -58,6 +58,7 @@ public sealed class RelayClient : IDisposable
     private readonly Channel<SessionId> _newSessions = Channel.CreateUnbounded<SessionId>();
     private readonly Channel<MailItem> _mail = Channel.CreateUnbounded<MailItem>();
     private Task? _recvLoop;
+    private Task? _keepAlive;
 
     private RelayClient(ClientWebSocket ws, PeerKeys me, string httpBase)
     {
@@ -202,7 +203,27 @@ public sealed class RelayClient : IDisposable
 
         var client = new RelayClient(ws, me, HttpBaseFrom(relayUrl));
         client._recvLoop = Task.Run(client.ReceiveLoopAsync);
+        client._keepAlive = Task.Run(client.KeepAliveLoopAsync);
         return client;
+    }
+
+    /// <summary>Completes when the connection's receive loop ends (the socket closed/errored). Callers can
+    /// await this to detect a dropped connection and reconnect.</summary>
+    public Task Completion => _recvLoop ?? Task.CompletedTask;
+
+    // Periodic ping so idle WebSocket connections (and intermediaries like nginx) don't get closed, and
+    // so a dead connection surfaces promptly.
+    private async Task KeepAliveLoopAsync()
+    {
+        try
+        {
+            while (!_cts.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), _cts.Token);
+                await SendRawAsync("{\"type\":\"ping\"}", _cts.Token);
+            }
+        }
+        catch { /* cancelled or socket closed — receive loop / Completion handles the rest */ }
     }
 
     /// <summary>Sends an opaque payload to a peer within a session (the relay forwards it blindly).</summary>
