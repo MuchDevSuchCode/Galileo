@@ -260,7 +260,16 @@ public sealed class Vault : IShareSource
     {
         if (_dek is null || WorkingDir is null) return;
         await _syncGate.WaitAsync();
-        try { await SyncWorkingToBlobsAsync(); }
+        try
+        {
+            // Safety net: never let an AUTOMATIC commit wipe the whole index because the working folder
+            // momentarily appears empty (a transient/bug is far likelier than the user deleting everything).
+            // A real "delete all" is still committed by the explicit lock.
+            if (_index.Entries.Count > 0 && Directory.Exists(WorkingDir)
+                && !Directory.EnumerateFiles(WorkingDir, "*", SearchOption.AllDirectories).Any())
+                return;
+            await SyncWorkingToBlobsAsync();
+        }
         finally { _syncGate.Release(); }
     }
 
