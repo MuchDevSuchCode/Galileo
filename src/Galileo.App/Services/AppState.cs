@@ -98,6 +98,13 @@ public sealed class AppState
     /// <summary>Relay server URL for secure peer-to-peer sharing (ws:// or wss://). Empty = not configured.</summary>
     public string SecureRelayUrl { get; set; } = "wss://relay.exploits.sh";
 
+    /// <summary>Keep Galileo running in the system tray when its window is closed (so secure sharing stays
+    /// online to serve friends). The window is hidden, not exited; quit from the tray menu.</summary>
+    public bool RunInBackground { get; set; }
+
+    /// <summary>Launch Galileo at sign-in (minimized to the tray) so it can host shares in the background.</summary>
+    public bool StartWithWindows { get; set; }
+
     // Developer mode (embedded terminal)
     public bool DeveloperMode { get; set; }
     public string TerminalShell { get; set; } = "cmd";   // cmd | powershell | wsl
@@ -241,5 +248,7 @@ public sealed class AppState
         SecureDeleteOnEmpty = o.SecureDeleteOnEmpty;
         BackupSchedule = o.BackupSchedule;
         SecureRelayUrl = o.SecureRelayUrl;
+        RunInBackground = o.RunInBackground;
+        StartWithWindows = o.StartWithWindows;
     }
 }
