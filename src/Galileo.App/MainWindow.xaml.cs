@@ -1395,6 +1395,7 @@ public sealed partial class MainWindow : Window
     private void NavigateTo(string? path, bool addHistory = true)
     {
         ClearSearch();
+        CheckLeftRemoteBrowse(path); // leaving a shared-browse folder → securely wipe its downloaded copies
         _currentFolder = path;
         if (addHistory)
         {
@@ -5904,6 +5905,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         RefreshVaults();
+        if (_sharing is not null) _ = _sharing.NotifyShareEndedAsync(); // tell anyone browsing that the share is gone
 
         // If we were browsing/viewing inside the vault, leave it (its folder is now wiped).
         if (work is not null && (_currentFolder?.StartsWith(work, StringComparison.OrdinalIgnoreCase) ?? false))
@@ -5959,6 +5961,8 @@ public sealed partial class MainWindow : Window
         try { _term?.Dispose(); _term = null; } catch { } // kill any terminal shell on close
         try { VideoPlayer.MediaPlayer?.Pause(); } catch { } // don't keep audio playing during a deferred close
         StopFolderWatch();
+        try { CleanupRemoteBrowse(); } catch { }   // securely wipe any shared-browse copies
+        try { WipeShareTempDirs(); } catch { }
         _backupTimer.Stop(); _driveWatcher.Stop();
         if (!_vaults.IsAnyUnlocked) return;
         args.Cancel = true;                      // defer close until the vault is secured

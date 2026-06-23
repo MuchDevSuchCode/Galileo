@@ -108,6 +108,18 @@ public sealed partial class MainWindow
         _sharingEventsAttached = true;
         // Friend requests surface in the hub's friends list (Accept there); just log here.
         _sharing.FriendRequestReceived += f => App.Log("Sharing", new Exception($"friend request from {f.Alias} ({f.Uuid})"));
+        // Owner locked/revoked while we were browsing them → tear our copy down immediately.
+        _sharing.ShareRevokedByOwner += peer => RootGrid.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_remoteBrowse?.Session.PeerUuid != peer) return;
+            var dir = _remoteBrowse.Dir;
+            if (string.Equals(_currentFolder, dir, StringComparison.OrdinalIgnoreCase)
+                || (_currentFolder?.StartsWith(dir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ?? false))
+                NavigateTo(null); // leaving triggers CleanupRemoteBrowse (secure wipe)
+            else
+                CleanupRemoteBrowse();
+            StatusText.Text = "The owner stopped sharing — the shared files were removed.";
+        });
     }
 
     // First-run: create or recover --------------------------------------------
@@ -358,15 +370,27 @@ public sealed partial class MainWindow
     private RemoteBrowse? _remoteBrowse;
     private string? _currentRemoteViewId; // the shared file currently open in the viewer (for view/close audit)
 
-    /// <summary>Wipe any leftover remote-browse temp folders (called at startup; best-effort).</summary>
+    /// <summary>Securely wipe any leftover remote-browse temp folders (called at startup and on exit).</summary>
     private static void WipeShareTempDirs()
     {
         try
         {
             var root = Path.Combine(Path.GetTempPath(), "GalileoShare");
-            if (Directory.Exists(root)) Directory.Delete(root, true);
+            if (Directory.Exists(root)) VaultCrypto.WipeDirectory(root);
         }
         catch { /* best effort */ }
+    }
+
+    /// <summary>If we're navigating out of the current shared-browse folder, tear it down and securely wipe
+    /// the downloaded copies — decrypted shared files never linger once you leave.</summary>
+    private void CheckLeftRemoteBrowse(string? target)
+    {
+        var rb = _remoteBrowse;
+        if (rb is null) return;
+        var inside = target is not null &&
+            (string.Equals(target, rb.Dir, StringComparison.OrdinalIgnoreCase)
+             || target.StartsWith(rb.Dir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+        if (!inside) CleanupRemoteBrowse();
     }
 
     // Hub "Browse <friend>" → open that friend's shared vault in the explorer.
@@ -498,7 +522,7 @@ public sealed partial class MainWindow
         try { rb.Cts.Cancel(); } catch { }
         try { rb.Session.Dispose(); } catch { }
         rb.Cts.Dispose();
-        try { if (Directory.Exists(rb.Dir)) Directory.Delete(rb.Dir, true); } catch { }
+        try { if (Directory.Exists(rb.Dir)) VaultCrypto.WipeDirectory(rb.Dir); } catch { }
     }
 
     /// <summary>Call when the actively-viewed file changes (image load / video open), or null when leaving

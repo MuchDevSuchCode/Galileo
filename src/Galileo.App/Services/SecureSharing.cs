@@ -54,6 +54,12 @@ public sealed class SecureSharing : IDisposable
     public event Action<Friend>? FriendRequestReceived;
     /// <summary>Raised (on a background thread) whenever the friend list / grants change.</summary>
     public event Action? Changed;
+    /// <summary>Raised (on a background thread) when a friend tells us they've stopped sharing (locked /
+    /// revoked) — the viewer should tear down any live browse of that peer.</summary>
+    public event Action<Guid>? ShareRevokedByOwner;
+
+    // Peers we're currently serving (have a live serve session with), so we can notify them on lock.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _activeViewers = new();
 
     private ShareVaultData _data;
     private string? _passphrase;
@@ -268,6 +274,7 @@ public sealed class SecureSharing : IDisposable
 
     private async Task ServePeerAsync(RelayClient relay, SessionId sess, CancellationToken ct)
     {
+        _activeViewers[sess.Peer] = 1;
         try
         {
             var peer = await RelayClient.LookupAsync(_relayUrl!, sess.Peer, ct);
@@ -278,6 +285,18 @@ public sealed class SecureSharing : IDisposable
             await ShareProtocol.ServeAsync(relay, src, session, ct);
         }
         catch { }
+        finally { _activeViewers.TryRemove(sess.Peer, out _); }
+    }
+
+    /// <summary>Tell everyone we're currently serving that the share has ended (we locked / revoked) so
+    /// their viewer tears the browse down. Sent over the mailbox channel (separate from serve sessions).</summary>
+    public async Task NotifyShareEndedAsync(CancellationToken ct = default)
+    {
+        if (_relay is null) return;
+        foreach (var peer in _activeViewers.Keys.ToList())
+        {
+            try { await SendMailAsync(peer, "share_revoked", await SealEmptyAsync(peer, ct), ct); } catch { }
+        }
     }
 
     private async Task MailLoopAsync(CancellationToken ct)
@@ -334,6 +353,9 @@ public sealed class SecureSharing : IDisposable
             case "unfriend":
                 RemoveFriendLocal(m.From);
                 Save(); Changed?.Invoke();
+                break;
+            case "share_revoked":
+                ShareRevokedByOwner?.Invoke(m.From);
                 break;
         }
     }
