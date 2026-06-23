@@ -56,6 +56,13 @@ public sealed class SecureSharing : IDisposable
     /// tells the app whether to show "unlock" vs "create" — it doesn't prove what the file is.)</summary>
     public static bool Exists() => File.Exists(StorePath);
 
+    /// <summary>Securely wipes the identity store from disk (overwrite-then-delete). Irreversible —
+    /// the identity is unrecoverable afterwards unless its recovery phrase was backed up.</summary>
+    public static void DeleteStore()
+    {
+        if (File.Exists(StorePath)) VaultCrypto.OverwriteAndDelete(StorePath);
+    }
+
     // ---- identity lifecycle ----
 
     /// <summary>Creates a brand-new identity from a freshly generated seed phrase. Returns the coordinator
