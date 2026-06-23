@@ -93,7 +93,7 @@ public sealed class AppState
     public string BackupSchedule { get; set; } = "Off";
 
     /// <summary>Relay server URL for secure peer-to-peer sharing (ws:// or wss://). Empty = not configured.</summary>
-    public string SecureRelayUrl { get; set; } = "";
+    public string SecureRelayUrl { get; set; } = "wss://relay.exploits.sh";
 
     // Developer mode (embedded terminal)
     public bool DeveloperMode { get; set; }
