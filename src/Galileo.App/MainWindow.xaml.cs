@@ -202,6 +202,7 @@ public sealed partial class MainWindow : Window
         // idle auto-lock + app-exit lock.
         _vaults.WipeOrphanWorkDirs();
         ArchiveService.WipeOrphans(); // clear any leftover extracted-zip temp dirs from a prior run
+        WipeShareTempDirs();          // clear any leftover remote-browse temp copies from a prior run
         VaultsList.ItemsSource = _vaultList;
         RefreshVaults();
         _vaultIdleTimer.Tick += VaultIdle_Tick;
@@ -5911,6 +5912,7 @@ public sealed partial class MainWindow : Window
     {
         var open = _vaults.IsAnyUnlocked;
         VaultLockBtn.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        VaultShareBtn.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         VaultLockText.Text = open && _vaults.Current is not null ? $"Lock “{_vaults.Current.Name}”" : "Lock vault";
     }
 
