@@ -10,6 +10,7 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.System;
 
 namespace Galileo;
 
@@ -25,6 +26,7 @@ public sealed partial class MainWindow
     private SecureSharing? _sharing;
     private string? _sharingPass;                       // held while the hub is in use, to re-seal on edits
     private readonly SemaphoreSlim _fetchLock = new(1, 1); // serialize fetches over a single session
+    private bool _accessLogRevealed;                    // the access-log entry stays hidden until Ctrl+Alt+L
 
     private void RelayUrlBox_TextChanged(object sender, TextChangedEventArgs e)
     {
@@ -53,6 +55,7 @@ public sealed partial class MainWindow
                     if (_sharing is null) return;
                 }
             }
+            await EnsureOnlineAsync(); // always go online once the identity is loaded
             await ShowSharingHubAsync();
         }
         catch (Exception ex) { await MessageAsync("Secure sharing", ex.Message); App.Log("Sharing", ex); }
@@ -141,6 +144,7 @@ public sealed partial class MainWindow
 
     private async Task ShowSharingHubAsync()
     {
+        _accessLogRevealed = false; // re-hide the access-log entry every time the hub is opened
         while (_sharing is not null)
         {
             string? action = null;
@@ -149,7 +153,7 @@ public sealed partial class MainWindow
             var panel = new StackPanel { Spacing = 8, MinWidth = 320 };
             panel.Children.Add(new TextBlock
             {
-                Text = _sharing.IsOnline ? "● Online" : "○ Offline",
+                Text = _sharing.IsOnline ? "● Online" : "○ Offline (relay unreachable)",
                 Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(
                     _sharing.IsOnline ? Microsoft.UI.Colors.LimeGreen : Microsoft.UI.Colors.Gray),
                 FontWeight = FontWeights.SemiBold,
@@ -163,9 +167,7 @@ public sealed partial class MainWindow
             }
 
             panel.Children.Add(Hub("Show my ID & fingerprint", "show"));
-            panel.Children.Add(Hub(_sharing.IsOnline ? "Go offline" : "Go online", "toggle"));
             panel.Children.Add(Hub("Add a peer…", "addpeer"));
-            panel.Children.Add(Hub("View access log", "audit"));
 
             if (_sharing.Peers.Count > 0)
             {
@@ -177,15 +179,37 @@ public sealed partial class MainWindow
                 }
             }
 
+            // Access log is hidden until the user presses the secret sequence Ctrl+Alt+L (deniability).
+            if (_accessLogRevealed) panel.Children.Add(Hub("View access log", "audit"));
+
+            var regen = Hub("Delete identity & regenerate…", "regen");
+            regen.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.IndianRed);
+            regen.Margin = new Thickness(0, 8, 0, 0);
+            panel.Children.Add(regen);
+
+            // Catch Ctrl+Alt+L anywhere in the hub: reveal the access-log entry and rebuild.
+            panel.KeyDown += (_, e) =>
+            {
+                if (e.Key == VirtualKey.L && IsCtrlDown() && IsAltDown() && !_accessLogRevealed)
+                {
+                    _accessLogRevealed = true;
+                    action = "refresh";
+                    dlg.Hide();
+                }
+            };
+
             dlg.Content = new ScrollViewer { Content = panel, MaxHeight = 460 };
             await dlg.ShowAsync();
 
             if (action is null) break;
             if (action == "show") await ShowMyIdentityAsync();
-            else if (action == "toggle") await ToggleOnlineAsync();
             else if (action == "addpeer") await AddPeerAsync();
             else if (action == "audit") await ShowAuditAsync();
+            else if (action == "regen") await RegenerateIdentityAsync();
+            else if (action == "refresh") { /* loop re-shows the hub with the log entry revealed */ }
             else if (action.StartsWith("browse:") && Guid.TryParse(action[7..], out var pu)) await BrowsePeerAsync(pu);
+
+            if (_sharing is null) break; // regenerate may have been cancelled mid-way
         }
     }
 
@@ -204,23 +228,46 @@ public sealed partial class MainWindow
         await new ContentDialog { Title = "My identity", Content = panel, CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot }.ShowAsync();
     }
 
-    private async Task ToggleOnlineAsync()
+    /// <summary>Connect to the relay if we aren't already (always-online). Best-effort: a failure just
+    /// leaves the hub showing "offline" — the user can still manage peers and retry by reopening.</summary>
+    private async Task EnsureOnlineAsync()
+    {
+        if (_sharing is null || _sharing.IsOnline) return;
+        var url = _state.SecureRelayUrl;
+        if (string.IsNullOrWhiteSpace(url)) return;
+        try { await _sharing.GoOnlineAsync(url, _vaults.Current); } // hosts the unlocked vault, if any
+        catch { /* stay offline; status line reflects it */ }
+    }
+
+    /// <summary>Securely wipes the current identity (and peers) and creates a fresh one in its place.</summary>
+    private async Task RegenerateIdentityAsync()
     {
         if (_sharing is null) return;
-        if (_sharing.IsOnline) { await _sharing.GoOfflineAsync(); return; }
-
-        var url = _state.SecureRelayUrl;
-        if (string.IsNullOrWhiteSpace(url)) { await MessageAsync("Go online", "Set a relay server URL in Settings first."); return; }
-
-        IShareSource? share = _vaults.Current; // host the currently-unlocked vault, if any
-        try
+        var confirm = new ContentDialog
         {
-            await _sharing.GoOnlineAsync(url, share);
-            await MessageAsync("Secure sharing", share is null
-                ? "You're online (browse-only — unlock a vault to share it with peers)."
-                : $"You're online. Approved peers can now browse \"{_vaults.Current!.Name}\" while it stays unlocked.");
-        }
-        catch (Exception ex) { await MessageAsync("Go online", "Couldn't connect to the relay: " + ex.Message); }
+            Title = "Delete identity & regenerate",
+            Content = new TextBlock
+            {
+                Text = "This permanently erases your current sharing identity and peer list from this device "
+                     + "and creates a brand-new identity with a new ID. Peers will no longer recognise you until "
+                     + "you re-share your new ID. This can't be undone unless you backed up the old recovery phrase.",
+                TextWrapping = TextWrapping.Wrap,
+            },
+            PrimaryButtonText = "Delete & regenerate",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = RootGrid.XamlRoot,
+        };
+        if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+
+        await _sharing.GoOfflineAsync();
+        _sharing.Dispose();
+        _sharing = null;
+        _sharingPass = null;
+        SecureSharing.DeleteStore();
+
+        await CreateIdentityAsync(); // prompts a new passphrase and shows the new recovery phrase
+        await EnsureOnlineAsync();
     }
 
     private async Task AddPeerAsync()
