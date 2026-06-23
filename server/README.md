@@ -33,6 +33,18 @@ python relay.py          # listens on 0.0.0.0:8765
 
 Environment overrides: `GALILEO_RELAY_PORT` (default 8765), `GALILEO_RELAY_DB` (default `relay.db`).
 
+### Production (AWS Lightsail / Ubuntu)
+
+`deploy.sh` provisions everything on a fresh instance: a Python venv, the relay as a hardened systemd
+service (bound to loopback), and an nginx reverse proxy that terminates TLS and upgrades the WebSocket.
+Open TCP 80 + 443 in the Lightsail firewall and point an A record at the instance first, then:
+
+```bash
+sudo DOMAIN=relay.example.com EMAIL=you@example.com ./deploy.sh
+```
+
+It's idempotent (re-run to update). Omit `DOMAIN` for a quick plain-HTTP test (no TLS).
+
 Point Galileo at it via **Settings → Secure sharing → Relay URL** (e.g. `wss://your-host:8765`). For real
 deployments put it behind TLS (a reverse proxy terminating HTTPS/WSS); the end-to-end encryption protects
 payloads regardless, but TLS hides metadata (which UUIDs talk) from the network.
