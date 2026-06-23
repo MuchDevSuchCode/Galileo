@@ -2050,7 +2050,12 @@ public sealed partial class MainWindow : Window
         BreadcrumbScroller.Visibility = Visibility.Visible;
     }
 
-    private void Refresh_Click(object sender, RoutedEventArgs e) => LoadCurrentFolder();
+    private void Refresh_Click(object sender, RoutedEventArgs e)
+    {
+        if (_remoteBrowse is not null && string.Equals(_currentFolder, _remoteBrowse.Dir, StringComparison.OrdinalIgnoreCase))
+            RefreshRemoteBrowse(); // re-list the owner's shared vault, not just the local temp copy
+        else LoadCurrentFolder();
+    }
 
     private async void ExplorerIcons_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
@@ -5224,8 +5229,10 @@ public sealed partial class MainWindow : Window
                 OpenVaultShortcutAsync(); e.Handled = true; break;
 
             case VirtualKey.F5:
-                if (ExplorerView.Visibility == Visibility.Visible) LoadCurrentFolder();
-                else StartSlideshow();
+                if (ExplorerView.Visibility != Visibility.Visible) StartSlideshow();
+                else if (_remoteBrowse is not null && string.Equals(_currentFolder, _remoteBrowse.Dir, StringComparison.OrdinalIgnoreCase))
+                    RefreshRemoteBrowse();   // re-list the owner's vault (adds/deletes/changes), not just the temp dir
+                else LoadCurrentFolder();
                 e.Handled = true; break;
 
             // Shift+S: save a screenshot of the window (skip while typing).
