@@ -12,10 +12,14 @@
 
 .PARAMETER SkipRegister
     Publish only; don't touch the registry.
+
+.PARAMETER NoShortcuts
+    Don't create the Start-menu / Desktop shortcuts.
 #>
 param(
     [string]$Configuration = 'Release',
-    [switch]$SkipRegister
+    [switch]$SkipRegister,
+    [switch]$NoShortcuts
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,6 +46,29 @@ if ($SkipRegister) {
     Write-Host "Published. Skipped registration (-SkipRegister)." -ForegroundColor Green
 } else {
     & (Join-Path $PSScriptRoot 'register-default.ps1') -ExePath $exe
+}
+
+# 4) Create Start menu + Desktop shortcuts (so it's searchable, pinnable, and on the desktop).
+if (-not $NoShortcuts) {
+    function New-GalileoShortcut([string]$LinkPath, [string]$Target) {
+        $shell = New-Object -ComObject WScript.Shell
+        $sc = $shell.CreateShortcut($LinkPath)
+        $sc.TargetPath       = $Target
+        $sc.WorkingDirectory = (Split-Path $Target)
+        $sc.IconLocation     = "$Target,0"
+        $sc.Description       = 'Galileo file explorer & media viewer'
+        $sc.Save()
+        [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
+    }
+    try {
+        $startMenu = Join-Path ([Environment]::GetFolderPath('Programs')) 'Galileo.lnk'
+        $desktop   = Join-Path ([Environment]::GetFolderPath('Desktop'))  'Galileo.lnk'
+        New-GalileoShortcut $startMenu $exe
+        New-GalileoShortcut $desktop   $exe
+        Write-Host "Shortcuts created: Start menu + Desktop." -ForegroundColor Green
+        Write-Host "  (Pin it: right-click the Start-menu entry -> Pin to Start / Pin to taskbar.)" -ForegroundColor DarkGray
+    }
+    catch { Write-Warning "Could not create shortcuts: $($_.Exception.Message)" }
 }
 
 Write-Host ""
