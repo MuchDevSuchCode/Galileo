@@ -106,6 +106,10 @@ public sealed class VaultManager
         if (c is not null) await c.LockAsync();
     }
 
+    /// <summary>Commits the unlocked vault's working folder to its encrypted store without locking, so
+    /// changes survive a non-graceful exit. No-op when nothing is unlocked.</summary>
+    public Task FlushCurrentAsync() => Current?.FlushAsync() ?? Task.CompletedTask;
+
     /// <summary>Crash recovery: at startup, securely wipe any leftover decrypted working folders.</summary>
     public void WipeOrphanWorkDirs()
     {

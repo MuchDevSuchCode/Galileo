@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Galileo.Services;
@@ -71,6 +72,7 @@ public sealed class Vault : IShareSource
 
     private byte[]? _dek;
     private VaultIndex _index = new();
+    private readonly SemaphoreSlim _syncGate = new(1, 1); // serialize commits (periodic flush vs lock)
 
     private string ManifestPath => Path.Combine(Root, "vault.json");
     private string IndexPath => Path.Combine(Root, "index.enc");
@@ -237,13 +239,29 @@ public sealed class Vault : IShareSource
     public async Task LockAsync()
     {
         if (_dek is null) return;
-        try { await SyncWorkingToBlobsAsync(); }
+        try
+        {
+            await _syncGate.WaitAsync();
+            try { await SyncWorkingToBlobsAsync(); }
+            finally { _syncGate.Release(); }
+        }
         finally
         {
             if (WorkingDir is not null) { VaultCrypto.WipeDirectory(WorkingDir); WorkingDir = null; }
             VaultCrypto.Wipe(_dek);
             _dek = null;
         }
+    }
+
+    /// <summary>Commits the working folder back to the encrypted blobs/index <b>without</b> locking — so
+    /// changes are durable even if the app is force-killed before a graceful lock. Safe to call often;
+    /// unchanged files keep their existing blob (no re-encryption).</summary>
+    public async Task FlushAsync()
+    {
+        if (_dek is null || WorkingDir is null) return;
+        await _syncGate.WaitAsync();
+        try { await SyncWorkingToBlobsAsync(); }
+        finally { _syncGate.Release(); }
     }
 
     // ---------- Import (create / move-to-vault) ----------

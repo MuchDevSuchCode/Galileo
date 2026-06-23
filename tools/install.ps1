@@ -28,12 +28,21 @@ $project = Resolve-Path (Join-Path $PSScriptRoot '..\src\Galileo.App\Galileo.App
 $dest    = Join-Path $env:LOCALAPPDATA 'Galileo\app'
 $exe     = Join-Path $dest 'Galileo.exe'
 
-# 1) The exe is locked while running — stop it so publish can overwrite.
+# 1) The exe is locked while running — stop it so publish can overwrite. Ask it to close gracefully first
+#    so it commits/locks any open vault, then force-kill stragglers.
 Get-Process 'Galileo' -ErrorAction SilentlyContinue | ForEach-Object {
-    Write-Host "Stopping running Galileo (pid $($_.Id))..." -ForegroundColor DarkGray
+    Write-Host "Closing running Galileo (pid $($_.Id))..." -ForegroundColor DarkGray
+    try { $_.CloseMainWindow() | Out-Null } catch { }
+}
+for ($i = 0; $i -lt 20; $i++) {
+    if (-not (Get-Process 'Galileo' -ErrorAction SilentlyContinue)) { break }
+    Start-Sleep -Milliseconds 250
+}
+Get-Process 'Galileo' -ErrorAction SilentlyContinue | ForEach-Object {
+    Write-Host "Force-stopping Galileo (pid $($_.Id))..." -ForegroundColor DarkGray
     $_ | Stop-Process -Force
 }
-Start-Sleep -Milliseconds 400
+Start-Sleep -Milliseconds 300
 
 # 2) Publish a fresh self-contained copy to the stable location.
 Write-Host "Publishing $Configuration build -> $dest" -ForegroundColor Cyan
