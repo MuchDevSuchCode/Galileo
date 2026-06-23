@@ -5739,9 +5739,9 @@ public sealed partial class MainWindow : Window
         ShowExplorer();
         NavigateTo(v.WorkingDir);
         StatusText.Text = $"Vault “{v.Name}” unlocked";
-        // If sharing is already unlocked this session, make sure we're online so friends can reach this
-        // newly-unlocked vault without re-toggling. (A cold launch still needs the sharing passphrase once.)
-        if (_sharing is not null) _ = EnsureOnlineAsync();
+        // Bring sharing online so friends can reach this vault — silently if the identity is already loaded,
+        // otherwise offer to (one passphrase prompt; remembered if declined this session).
+        _ = MaybeBringSharingOnlineAsync();
     }
 
     private async Task CreateVaultDialogAsync(IList<string>? importPaths)
