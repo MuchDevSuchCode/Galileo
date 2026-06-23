@@ -219,6 +219,7 @@ public sealed partial class MainWindow : Window
         _vaultIdleTimer.Tick += VaultIdle_Tick;
         _vaultFlushTimer.Tick += (_, _) => FlushVaultSoon();
         _vaultFlushDebounce.Tick += (_, _) => { _vaultFlushDebounce.Stop(); FlushVaultSoon(); };
+        _remoteSyncTimer.Tick += (_, _) => RemoteSyncTick();
 
         // When the clipboard changes from OUTSIDE Galileo (another app, or a text/image copy), drop our
         // in-app file clip so a later paste uses the new content — not a stale earlier file copy.
@@ -2079,10 +2080,16 @@ public sealed partial class MainWindow : Window
 
     private void Refresh_Click(object sender, RoutedEventArgs e)
     {
-        if (_remoteBrowse is not null && string.Equals(_currentFolder, _remoteBrowse.Dir, StringComparison.OrdinalIgnoreCase))
+        if (InRemoteBrowse(_currentFolder))
             RefreshRemoteBrowse(); // re-list the owner's shared vault, not just the local temp copy
         else LoadCurrentFolder();
     }
+
+    /// <summary>True when the folder is inside the active shared-vault browse (top level or a subfolder).</summary>
+    private bool InRemoteBrowse(string? folder) =>
+        _remoteBrowse is { } rb && folder is not null
+        && (string.Equals(folder, rb.Dir, StringComparison.OrdinalIgnoreCase)
+            || folder.StartsWith(rb.Dir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
 
     private async void ExplorerIcons_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
@@ -5288,7 +5295,7 @@ public sealed partial class MainWindow : Window
 
             case VirtualKey.F5:
                 if (ExplorerView.Visibility != Visibility.Visible) StartSlideshow();
-                else if (_remoteBrowse is not null && string.Equals(_currentFolder, _remoteBrowse.Dir, StringComparison.OrdinalIgnoreCase))
+                else if (InRemoteBrowse(_currentFolder))
                     RefreshRemoteBrowse();   // re-list the owner's vault (adds/deletes/changes), not just the temp dir
                 else LoadCurrentFolder();
                 e.Handled = true; break;

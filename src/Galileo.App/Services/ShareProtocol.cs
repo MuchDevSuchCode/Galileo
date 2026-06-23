@@ -81,6 +81,7 @@ public static class ShareProtocol
         // Track which files this viewer currently has open in their viewer, so we can audit a "close" for
         // anything still open if the session ends (disconnect/crash) — no permanently-stale "still open".
         var openIds = new HashSet<string>();
+        var listed = false; // audit "browse" once per session, not on every (auto-)refresh
         try
         {
             while (!ct.IsCancellationRequested)
@@ -97,6 +98,7 @@ public static class ShareProtocol
                     {
                         case "list":
                             await HandleListAsync(relay, vault, session, ct);
+                            if (!listed) { listed = true; await relay.SendAuditAsync(session.PeerUuid, "(index)", "list", 0, ct); }
                             break;
                         case "endbrowse":
                             // Viewer left the shared folder — log it so the owner sees the browse ended.
@@ -152,7 +154,6 @@ public static class ShareProtocol
         foreach (var e in vault.ShareEntries())
             entries.Add(new { id = e.BlobId, name = e.RelPath, size = e.Size, modified = e.ModifiedUtcTicks });
         await SendAsync(relay, session, new { op = "list", vault = vault.ShareName, entries }, ct);
-        await relay.SendAuditAsync(session.PeerUuid, "(index)", "list", entries.Count, ct);
     }
 
     private static async Task HandleOpenAsync(RelayClient relay, IShareSource vault, SecureSession session, JsonElement root, CancellationToken ct)
