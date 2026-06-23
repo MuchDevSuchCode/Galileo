@@ -2,6 +2,7 @@ using System;
 using Galileo.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.Win32;
+using Microsoft.Windows.AppLifecycle;
 
 namespace Galileo;
 
@@ -36,6 +37,7 @@ public sealed partial class MainWindow
 
     private void EnsureTray()
     {
+        EnsureSingleInstanceRegistered(); // so clicking the app icon reuses this tray instance
         if (_tray is not null) return;
         try
         {
@@ -47,11 +49,31 @@ public sealed partial class MainWindow
         catch (Exception ex) { App.Log("Tray", ex); }
     }
 
+    // Claim the single-instance key now (if Program.Main didn't, e.g. background was enabled mid-session)
+    // so subsequent launches redirect here instead of starting a second copy.
+    private void EnsureSingleInstanceRegistered()
+    {
+        if (App.SingleInstanceHooked) return;
+        try
+        {
+            var key = AppInstance.FindOrRegisterForKey("Galileo-SingleInstance");
+            if (key.IsCurrent)
+            {
+                key.Activated += (_, e) => (Application.Current as App)?.OnRedirected(e);
+                App.SingleInstanceHooked = true;
+            }
+        }
+        catch (Exception ex) { App.Log("SingleInstance", ex); }
+    }
+
     private void RemoveTray()
     {
         try { _tray?.Dispose(); } catch { }
         _tray = null;
     }
+
+    /// <summary>Bring the window back from the tray (used by tray Open and single-instance re-activation).</summary>
+    public void RestoreFromBackground() => ShowFromTray();
 
     private void ShowFromTray()
     {

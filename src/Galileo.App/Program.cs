@@ -37,7 +37,9 @@ public static class Program
     /// </summary>
     private static bool DecideRedirection()
     {
-        if (!App.State.SingleInstance) return false;
+        // Single-instance is required when running in the background, so clicking the app icon reuses the
+        // instance sitting in the tray instead of spawning a new one.
+        if (!App.State.SingleInstance && !App.State.RunInBackground && !App.State.StartWithWindows) return false;
         // "Open in new window" always gets its own window, even in single-instance mode.
         if (System.Linq.Enumerable.Contains(Environment.GetCommandLineArgs(), "--new-window")) return false;
         try
@@ -46,6 +48,7 @@ public static class Program
             if (keyInstance.IsCurrent)
             {
                 keyInstance.Activated += (_, e) => _app?.OnRedirected(e);
+                App.SingleInstanceHooked = true;
                 return false;
             }
             var activation = AppInstance.GetCurrent().GetActivatedEventArgs();
