@@ -459,20 +459,42 @@ public sealed class Vault : IShareSource
     /// <summary>Display name shown to a remote viewer (the vault's name).</summary>
     public string ShareName => Manifest.Name;
 
-    /// <summary>Entries currently available to a remote peer (empty while locked). On the wire and in the
-    /// audit log each is referenced only by its opaque <see cref="VaultEntry.BlobId"/>, never by name.</summary>
-    public IReadOnlyList<VaultEntry> ShareEntries() =>
-        _dek is null ? Array.Empty<VaultEntry>() : _index.Entries.ToList();
+    // Opaque, stable per-file id for sharing (a hash of the relative path). Used as the audit object id, so
+    // the relay never learns the filename, and as the fetch key. Recomputed from the live working folder so
+    // files added/removed while the vault is unlocked are reflected immediately (the index only updates on lock).
+    private Dictionary<string, string> _shareMap = new(); // share id -> full working-folder path
 
-    /// <summary>Opens a read stream over a shared entry by its opaque BlobId. The plaintext is read from the
+    private static string ShareId(string rel) =>
+        Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("share:" + rel)).AsSpan(0, 8)).ToLowerInvariant();
+
+    /// <summary>Entries currently available to a remote peer — enumerated from the live working folder
+    /// (empty while locked), so adds/deletes show up without locking. Each is referenced on the wire and in
+    /// the audit log only by an opaque id (a hash of its path), never by name.</summary>
+    public IReadOnlyList<VaultEntry> ShareEntries()
+    {
+        if (_dek is null || WorkingDir is null || !Directory.Exists(WorkingDir)) { _shareMap = new(); return Array.Empty<VaultEntry>(); }
+        var list = new List<VaultEntry>();
+        var map = new Dictionary<string, string>();
+        foreach (var f in Directory.EnumerateFiles(WorkingDir, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(WorkingDir, f).Replace(Path.DirectorySeparatorChar, '/');
+            var id = ShareId(rel);
+            map[id] = f;
+            var fi = new FileInfo(f);
+            list.Add(new VaultEntry { RelPath = rel, BlobId = id, Size = fi.Length, ModifiedUtcTicks = fi.LastWriteTimeUtc.Ticks });
+        }
+        _shareMap = map;
+        return list;
+    }
+
+    /// <summary>Opens a read stream over a shared entry by its opaque id. The plaintext is read from the
     /// ACL-restricted working folder and is never copied elsewhere on the host — it only streams, chunk by
     /// chunk and re-encrypted per peer, to the remote viewer.</summary>
-    public Stream OpenSharedEntry(string blobId)
+    public Stream OpenSharedEntry(string id)
     {
         if (_dek is null || WorkingDir is null) throw new InvalidOperationException("Vault is locked.");
-        var e = _index.Entries.FirstOrDefault(x => x.BlobId == blobId)
-                ?? throw new FileNotFoundException("No such shared entry.");
-        var path = Path.Combine(WorkingDir, e.RelPath.Replace('/', Path.DirectorySeparatorChar));
+        if (!_shareMap.TryGetValue(id, out var path)) { ShareEntries(); _shareMap.TryGetValue(id, out path); }
+        if (path is null || !File.Exists(path)) throw new FileNotFoundException("No such shared entry.");
         return File.OpenRead(path);
     }
 
