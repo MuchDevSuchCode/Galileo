@@ -1487,6 +1487,8 @@ public sealed partial class MainWindow : Window
         }
 
         _explorerRaw = _fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden);
+        if (_vaults.Current?.WorkingDir is { } vwd && _currentFolder.StartsWith(vwd, StringComparison.OrdinalIgnoreCase))
+            App.LogInfo($"vault folder load: {_explorerRaw.Count} item(s) at {_currentFolder}");
         ApplySortAndGroup();
         ApplyViewMode();
         UpdateHideFolderButton();
@@ -3616,10 +3618,16 @@ public sealed partial class MainWindow : Window
 
     private void ExplorerTabs_AddClick(TabView sender, object args) => NewTab(null);
 
-    private void ExplorerTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void ExplorerTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_switchingTabs) return;
         if (ExplorerTabs.SelectedItem is not TabViewItem tvi || tvi.Tag is not ExplorerTab tab) return;
+
+        // Returning to an unlocked vault tab: re-materialize the working copy if it went missing/empty
+        // (e.g. after viewing media in another tab) so it doesn't show empty until a manual re-open.
+        if (_vaults.Current?.WorkingDir is { } wd && tab.Current is { } tc
+            && tc.StartsWith(wd, StringComparison.OrdinalIgnoreCase))
+            try { await _vaults.EnsureCurrentWorkingAsync(); } catch (Exception ex) { App.Log("VaultEnsure", ex); }
 
         // Load the selected tab's navigation state into the live fields.
         _navHistory.Clear();
@@ -3631,6 +3639,17 @@ public sealed partial class MainWindow : Window
         LoadCurrentFolder();
         UpdateNavButtons();
         BuildBreadcrumb();
+
+        // Force one more list/render pass after layout settles — the grid can come back blank after a
+        // view transition (viewer/gallery → explorer) even though the collection is populated.
+        var folder = _currentFolder;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (ExplorerView.Visibility == Visibility.Visible
+                && string.Equals(_currentFolder, folder, StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrEmpty(_searchQuery))
+                RefreshFolderIncremental();
+        });
     }
 
     private void ExplorerTabs_CloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
