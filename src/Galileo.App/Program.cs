@@ -49,8 +49,10 @@ public static class Program
             {
                 keyInstance.Activated += (_, e) => _app?.OnRedirected(e);
                 App.SingleInstanceHooked = true;
+                App.LogInfo("single-instance: primary (will host)");
                 return false;
             }
+            App.LogInfo("single-instance: redirecting to the running instance");
             var activation = AppInstance.GetCurrent().GetActivatedEventArgs();
             keyInstance.RedirectActivationToAsync(activation).AsTask().Wait();
             return true;

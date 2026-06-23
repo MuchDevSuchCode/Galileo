@@ -520,6 +520,18 @@ public sealed partial class MainWindow
         _remoteBrowse = null;
         if (rb is null) return;
         try { rb.Cts.Cancel(); } catch { }
+        _ = FinishRemoteBrowseAsync(rb); // signal the owner we left, then dispose + securely wipe
+    }
+
+    private async Task FinishRemoteBrowseAsync(RemoteBrowse rb)
+    {
+        // Tell the host we've closed the folder (logged in their access log) before tearing the session down.
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await ShareProtocol.EndBrowseAsync(_sharing!.Relay, rb.Session, cts.Token);
+        }
+        catch { /* best effort */ }
         try { rb.Session.Dispose(); } catch { }
         rb.Cts.Dispose();
         try { if (Directory.Exists(rb.Dir)) VaultCrypto.WipeDirectory(rb.Dir); } catch { }
@@ -590,7 +602,9 @@ public sealed partial class MainWindow
             new GrantGatedSource(
                 () => _vaults.Current is not null && _sharing is not null && _sharing.IsGranted(_vaults.Current.Id, peer),
                 new LiveCurrentVaultSource(this));
-        try { await _sharing.GoOnlineAsync(url, shareForPeer); } catch { }
+        App.LogInfo($"sharing: going online to {url}");
+        try { await _sharing.GoOnlineAsync(url, shareForPeer); App.LogInfo("sharing: online"); }
+        catch (Exception ex) { App.LogInfo("sharing: go-online failed: " + ex.Message); }
     }
 
     private async Task RegenerateIdentityAsync()
@@ -657,25 +671,40 @@ public sealed partial class MainWindow
             const string TimeFmt = "yyyy-MM-dd HH:mm:ss";
             var asc = records.OrderBy(r => r.Time).ToList();
             var openAt = new Dictionary<string, DateTimeOffset>();
-            var rows = new List<(string who, string objectId, string when)>();
+            // (sortTime, objectId for link, title, detail line)
+            var rows = new List<(DateTimeOffset t, string objectId, string title, string detail)>();
             foreach (var r in asc)
             {
+                var who = PeerName(r.Viewer);
                 var key = r.Viewer + "|" + r.ObjectId;
-                if (r.Action == "open") openAt[key] = r.Time;
-                else if (r.Action == "close" && openAt.TryGetValue(key, out var t))
+                switch (r.Action)
                 {
-                    rows.Add((PeerName(r.Viewer), r.ObjectId,
-                        $"{t.LocalDateTime.ToString(TimeFmt)}  →  {r.Time.LocalDateTime:HH:mm:ss}   ·   open {FormatDuration(r.Time - t)}"));
-                    openAt.Remove(key);
+                    case "list":
+                        rows.Add((r.Time, "", "Opened your shared vault", $"by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}"));
+                        break;
+                    case "browse_end":
+                        rows.Add((r.Time, "", "Closed your shared vault", $"by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}"));
+                        break;
+                    case "fetch":
+                        rows.Add((r.Time, r.ObjectId, FileName(r.ObjectId), $"downloaded by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}"));
+                        break;
+                    case "open":
+                        openAt[key] = r.Time;
+                        break;
+                    case "close" when openAt.TryGetValue(key, out var t):
+                        rows.Add((t, r.ObjectId, FileName(r.ObjectId),
+                            $"viewed by {who}   ·   {t.LocalDateTime.ToString(TimeFmt)} → {r.Time.LocalDateTime:HH:mm:ss}  ({FormatDuration(r.Time - t)})"));
+                        openAt.Remove(key);
+                        break;
                 }
             }
-            foreach (var kv in openAt)
+            foreach (var kv in openAt) // opens still without a close
             {
                 var parts = kv.Key.Split('|', 2);
                 Guid.TryParse(parts[0], out var v);
-                rows.Add((PeerName(v), parts[1], $"{kv.Value.LocalDateTime.ToString(TimeFmt)}   ·   still open"));
+                rows.Add((kv.Value, parts[1], FileName(parts[1]), $"viewing by {PeerName(v)}   ·   {kv.Value.LocalDateTime.ToString(TimeFmt)}  (still open)"));
             }
-            rows.Reverse();
+            rows.Sort((a, b) => b.t.CompareTo(a.t)); // newest first
 
             var dlg = new ContentDialog { Title = "Access log", CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot };
             if (records.Count > 0)
@@ -696,23 +725,22 @@ public sealed partial class MainWindow
             else
             {
                 var list = new StackPanel { Spacing = 12, Width = 460 };
-                foreach (var (who, objectId, when) in rows)
+                foreach (var (_, objectId, title, detail) in rows)
                 {
                     var card = new StackPanel { Spacing = 1 };
-                    var path = PathFor(objectId);
+                    var path = objectId.Length > 0 ? PathFor(objectId) : null;
                     if (path is not null)
                     {
-                        // Clickable link: open the file (its vault is unlocked) — closes the log first.
-                        var link = new HyperlinkButton { Content = FileName(objectId), Padding = new Thickness(0), FontWeight = FontWeights.SemiBold };
-                        link.Click += (_, _) => { dlg.Hide(); OpenInNewWindow(path); };
+                        // Clickable link: open the file in this window (its vault is unlocked) — closes the log.
+                        var link = new HyperlinkButton { Content = title, Padding = new Thickness(0), FontWeight = FontWeights.SemiBold };
+                        link.Click += (_, _) => { dlg.Hide(); _ = OpenLogFileAsync(path); };
                         card.Children.Add(link);
                     }
                     else
                     {
-                        card.Children.Add(new TextBlock { Text = FileName(objectId), FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+                        card.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
                     }
-                    card.Children.Add(new TextBlock { Text = "by " + who, Opacity = 0.8, FontSize = 12, TextWrapping = TextWrapping.Wrap });
-                    card.Children.Add(new TextBlock { Text = when, Opacity = 0.6, FontSize = 12, TextWrapping = TextWrapping.Wrap });
+                    card.Children.Add(new TextBlock { Text = detail, Opacity = 0.7, FontSize = 12, TextWrapping = TextWrapping.Wrap });
                     list.Children.Add(card);
                 }
                 content = new ScrollViewer { Content = list, MaxHeight = 460, HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
@@ -721,6 +749,24 @@ public sealed partial class MainWindow
             await dlg.ShowAsync();
         }
         catch (Exception ex) { await MessageAsync("Access log", "Couldn't fetch the log: " + ex.Message); }
+    }
+
+    /// <summary>Opens a file referenced from the access log in THIS window (image → viewer, video/audio →
+    /// player). Avoids the separate --new-window process that was racing the folder load (empty window).</summary>
+    private async Task OpenLogFileAsync(string path)
+    {
+        try
+        {
+            if (PhotoLibrary.IsSupported(path)) await OpenSinglePhotoAsync(path);
+            else if (PhotoLibrary.IsMedia(path))
+            {
+                var fi = new FileInfo(path);
+                var item = new Models.ExplorerItem(path, Models.ExplorerItemKind.File, fi.Length, fi.LastWriteTime, fi.Extension);
+                OpenVideoFromExplorer(item);
+            }
+            else OpenInNewWindow(path);
+        }
+        catch (Exception ex) { App.Log("OpenLogFile", ex); }
     }
 
     private static string FormatDuration(TimeSpan d)
