@@ -78,6 +78,7 @@ public sealed partial class MainWindow : Window
     // round-trip and its RequestedOperation (cut vs copy) flag are unreliable in unpackaged apps, so we
     // also remember the paths + move intent here and prefer them when they match.
     private (List<string> Paths, bool Move)? _fileClip;
+    private bool _suppressClipChange; // ignore the ContentChanged caused by our own file copy/cut
 
     /// <summary>The secure-wipe method chosen in Settings (used for Empty / shred / Shift+Delete).</summary>
     private WipeMethod CurrentWipeMethod => SecureWipe.Parse(_state.WipeMethod);
@@ -212,6 +213,14 @@ public sealed partial class MainWindow : Window
         _vaultIdleTimer.Tick += VaultIdle_Tick;
         _vaultFlushTimer.Tick += (_, _) => FlushVaultSoon();
         _vaultFlushDebounce.Tick += (_, _) => { _vaultFlushDebounce.Stop(); FlushVaultSoon(); };
+
+        // When the clipboard changes from OUTSIDE Galileo (another app, or a text/image copy), drop our
+        // in-app file clip so a later paste uses the new content — not a stale earlier file copy.
+        Clipboard.ContentChanged += (_, _) =>
+        {
+            if (_suppressClipChange) { _suppressClipChange = false; return; }
+            _fileClip = null;
+        };
         _appWindow.Closing += AppWindow_Closing;
 
         // Catch Ctrl+C/X/V/A even if the explorer list marks them handled first (handledEventsToo).
@@ -2776,6 +2785,7 @@ public sealed partial class MainWindow : Window
                 : await StorageFile.GetFileFromPathAsync(path);
             var data = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
             data.SetStorageItems(new[] { item });
+            _suppressClipChange = true;
             Clipboard.SetContent(data);
             _fileClip = (new List<string> { path }, false);
             StatusText.Text = "Copied to clipboard";
@@ -2812,13 +2822,14 @@ public sealed partial class MainWindow : Window
                 clipMove = content.RequestedOperation.HasFlag(DataPackageOperation.Move);
             }
 
-            // The in-app clip is the authoritative source/intent for things copied inside Galileo. Use it
-            // whenever the system clipboard is empty OR a subset of it (i.e. the OS round-trip dropped items)
-            // — this is the fix for "copy sometimes loses files". Only honor the system clipboard when it
-            // carries paths we didn't put there (a fresh external copy from Explorer).
+            // The in-app clip is the authoritative source/intent for anything copied inside Galileo — it is
+            // kept current on each copy/cut and cleared whenever the clipboard changes externally. Trust it
+            // over the system clipboard, whose unpackaged round-trip can return stale or partial paths (which
+            // caused a second in-app copy to paste the FIRST file). Fall back to the system clipboard only
+            // when we have no in-app clip (a fresh external copy from Explorer).
             List<string> paths;
             bool move;
-            if (_fileClip is { } fc && (clip.Count == 0 || clip.All(p => fc.Paths.Contains(p, StringComparer.OrdinalIgnoreCase))))
+            if (_fileClip is { } fc)
             {
                 paths = fc.Paths.ToList();
                 move = fc.Move;
@@ -3052,6 +3063,7 @@ public sealed partial class MainWindow : Window
 
             var data = new DataPackage { RequestedOperation = cut ? DataPackageOperation.Move : DataPackageOperation.Copy };
             data.SetStorageItems(items);
+            _suppressClipChange = true;
             Clipboard.SetContent(data);
             _fileClip = (selection.Select(s => s.Path).ToList(), cut);
             StatusText.Text = $"{(cut ? "Cut" : "Copied")} {items.Count} item(s)";
@@ -3638,6 +3650,7 @@ public sealed partial class MainWindow : Window
                 : await StorageFile.GetFileFromPathAsync(path);
             var data = new DataPackage { RequestedOperation = DataPackageOperation.Move };
             data.SetStorageItems(new[] { si });
+            _suppressClipChange = true;
             Clipboard.SetContent(data);
             _fileClip = (new List<string> { path }, true);
             StatusText.Text = "Cut to clipboard";
@@ -5613,10 +5626,12 @@ public sealed partial class MainWindow : Window
     {
         if (e.ClickedItem is not Models.VaultInfo vi) return;
 
-        // Already unlocked → just browse its decrypted working folder.
+        // Already unlocked → browse its decrypted working folder. Re-materialize it first if it went
+        // missing/empty (otherwise it shows empty until a manual re-mount), then reload fresh.
         if (_vaults.Current?.Id == vi.Id && _vaults.Current.WorkingDir is not null)
         {
             ShowExplorer();
+            try { await _vaults.EnsureCurrentWorkingAsync(); } catch (Exception ex) { App.Log("VaultEnsure", ex); }
             NavigateTo(_vaults.Current.WorkingDir);
             return;
         }

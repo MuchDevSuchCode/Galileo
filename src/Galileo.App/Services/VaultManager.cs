@@ -110,6 +110,9 @@ public sealed class VaultManager
     /// changes survive a non-graceful exit. No-op when nothing is unlocked.</summary>
     public Task FlushCurrentAsync() => Current?.FlushAsync() ?? Task.CompletedTask;
 
+    /// <summary>Re-materializes the unlocked vault's working copy if it went missing/empty.</summary>
+    public Task EnsureCurrentWorkingAsync() => Current?.EnsureWorkingAsync() ?? Task.CompletedTask;
+
     /// <summary>Crash recovery: at startup, securely wipe any leftover decrypted working folders.</summary>
     public void WipeOrphanWorkDirs()
     {

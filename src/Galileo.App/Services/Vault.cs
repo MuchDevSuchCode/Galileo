@@ -264,6 +264,22 @@ public sealed class Vault : IShareSource
         finally { _syncGate.Release(); }
     }
 
+    /// <summary>Ensures the decrypted working copy exists; re-materializes it from the encrypted blobs if it
+    /// went missing or empty (so re-entering an unlocked vault always shows its contents, no re-mount needed).
+    /// Only acts when empty, so it never clobbers not-yet-committed additions.</summary>
+    public async Task EnsureWorkingAsync()
+    {
+        if (_dek is null) return;
+        await _syncGate.WaitAsync();
+        try
+        {
+            var empty = WorkingDir is null || !Directory.Exists(WorkingDir)
+                        || !Directory.EnumerateFileSystemEntries(WorkingDir).Any();
+            if (empty && _index.Entries.Count > 0) await DecryptAllToWorkingAsync();
+        }
+        finally { _syncGate.Release(); }
+    }
+
     // ---------- Import (create / move-to-vault) ----------
 
     /// <summary>Encrypts the given files/folders straight into the blob store and (optionally)
@@ -333,30 +349,35 @@ public sealed class Vault : IShareSource
         var sources = paths.ToList();
         var added = 0;
 
-        foreach (var p in sources)
+        await _syncGate.WaitAsync(); // don't race a concurrent flush mutating/iterating the index
+        try
         {
-            try
+            foreach (var p in sources)
             {
-                if (Directory.Exists(p))
+                try
                 {
-                    var baseName = Path.GetFileName(p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-                    foreach (var f in Directory.EnumerateFiles(p, "*", SearchOption.AllDirectories))
+                    if (Directory.Exists(p))
                     {
-                        var rel = baseName + "/" + Path.GetRelativePath(p, f).Replace(Path.DirectorySeparatorChar, '/');
-                        await AddOneToOpenAsync(f, rel);
+                        var baseName = Path.GetFileName(p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                        foreach (var f in Directory.EnumerateFiles(p, "*", SearchOption.AllDirectories))
+                        {
+                            var rel = baseName + "/" + Path.GetRelativePath(p, f).Replace(Path.DirectorySeparatorChar, '/');
+                            await AddOneToOpenAsync(f, rel);
+                            added++;
+                        }
+                    }
+                    else if (File.Exists(p))
+                    {
+                        await AddOneToOpenAsync(p, Path.GetFileName(p));
                         added++;
                     }
                 }
-                else if (File.Exists(p))
-                {
-                    await AddOneToOpenAsync(p, Path.GetFileName(p));
-                    added++;
-                }
+                catch { /* skip this source; continue with the rest */ }
             }
-            catch { /* skip this source; continue with the rest */ }
-        }
 
-        SaveIndex();
+            SaveIndex();
+        }
+        finally { _syncGate.Release(); }
 
         if (deleteOriginals)
         {
