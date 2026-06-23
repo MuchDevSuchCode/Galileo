@@ -10,105 +10,116 @@ using System.Threading.Tasks;
 
 namespace Galileo.Services;
 
-/// <summary>A peer this user shares with / can browse (UUID + a friendly local name).</summary>
-public sealed class SharePeer
+/// <summary>A mutual contact ("friend"). Linking is symmetric — once linked, either side can share or
+/// revoke any vault with the other, and either can unfriend (which drops all shares both ways).</summary>
+public sealed class Friend
 {
     public string Uuid { get; set; } = "";
-    public string Name { get; set; } = "";
+    public string Alias { get; set; } = "";      // the friend's display name, learned at link time
+    public string Status { get; set; } = "";     // pending_out | pending_in | linked
+
+    public bool IsLinked => Status == "linked";
 }
 
-// The persisted secret state: the seed phrase (identity) + the peer list. Serialized to JSON, then sealed
-// into a single opaque blob (see SecureSharing.Save). Field names are short and generic on purpose.
+// Persisted secret state, sealed into the opaque store.dat. Short, generic field names on purpose.
 internal sealed class ShareVaultData
 {
-    public string Seed { get; set; } = "";
-    public List<SharePeer> Peers { get; set; } = new();
+    public string Alias { get; set; } = "";                                   // this user's display name
+    public string Seed { get; set; } = "";                                    // BIP39 identity seed
+    public List<Friend> Friends { get; set; } = new();
+    public Dictionary<string, List<string>> Grants { get; set; } = new();      // vaultId -> friend uuids we share it with
 }
 
 /// <summary>
-/// Coordinator for secure peer-to-peer sharing. Owns the local cryptographic identity (derived from a
-/// BIP39 seed) and peer list, both persisted as a single <b>opaque, label-less encrypted blob</b> with a
-/// generic filename — at rest nothing hints that secure sharing exists (deniable storage). Also drives the
-/// relay connection: registering, hosting an unlocked vault for approved peers, and browsing a peer's vault.
+/// Coordinator for secure peer-to-peer sharing. Owns the local identity (from a BIP39 seed), a display
+/// alias, a mutual friend list, and per-vault share grants — all persisted as one opaque, label-less
+/// encrypted blob with a generic filename (deniable at rest). Drives the relay: registering, exchanging
+/// friend requests via the relay's store-and-forward mailbox, hosting granted vaults to linked friends,
+/// and browsing what friends share back.
 /// </summary>
 public sealed class SecureSharing : IDisposable
 {
-    // Generic filename + label-less contents: indistinguishable from any other opaque cache blob at rest.
-    private static string StorePath =>
+    private static string DefaultStorePath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo", "store.dat");
 
+    private readonly string _storePath;
+
     public PeerKeys Identity { get; private set; }
-    public List<SharePeer> Peers => _data.Peers;
+    public string Alias => _data.Alias;
+    public IReadOnlyList<Friend> Friends => _data.Friends;
     public bool IsOnline => _relay is not null;
 
-    private ShareVaultData _data;
-    private RelayClient? _relay;
-    private CancellationTokenSource? _hostCts;
-    private string? _relayUrl;
+    /// <summary>Raised (on a background thread) when a new incoming friend request arrives — UI should
+    /// marshal to its dispatcher and prompt the user to accept.</summary>
+    public event Action<Friend>? FriendRequestReceived;
+    /// <summary>Raised (on a background thread) whenever the friend list / grants change.</summary>
+    public event Action? Changed;
 
-    private SecureSharing(PeerKeys identity, ShareVaultData data)
+    private ShareVaultData _data;
+    private string? _passphrase;
+    private RelayClient? _relay;
+    private string? _relayUrl;
+    private CancellationTokenSource? _loopCts;
+    private Func<Guid, IShareSource?>? _shareForPeer;
+
+    private SecureSharing(PeerKeys identity, ShareVaultData data, string? passphrase, string storePath)
     {
         Identity = identity;
         _data = data;
+        _passphrase = passphrase;
+        _storePath = storePath;
     }
 
-    /// <summary>True once an identity has been created on this device. (The file is opaque; this only
-    /// tells the app whether to show "unlock" vs "create" — it doesn't prove what the file is.)</summary>
-    public static bool Exists() => File.Exists(StorePath);
+    public static bool Exists(string? storePath = null) => File.Exists(storePath ?? DefaultStorePath);
 
-    /// <summary>Securely wipes the identity store from disk (overwrite-then-delete). Irreversible —
-    /// the identity is unrecoverable afterwards unless its recovery phrase was backed up.</summary>
-    public static void DeleteStore()
+    public static void DeleteStore(string? storePath = null)
     {
-        if (File.Exists(StorePath)) VaultCrypto.OverwriteAndDelete(StorePath);
+        var p = storePath ?? DefaultStorePath;
+        if (File.Exists(p)) VaultCrypto.OverwriteAndDelete(p);
     }
 
     // ---- identity lifecycle ----
 
-    /// <summary>Creates a brand-new identity from a freshly generated seed phrase. Returns the coordinator
-    /// plus the seed phrase to show the user once for offline backup.</summary>
-    public static (SecureSharing sharing, string seedPhrase) CreateNew(string passphrase)
+    public static (SecureSharing sharing, string seedPhrase) CreateNew(string passphrase, string alias, string? storePath = null)
     {
         var seed = PeerIdentity.GenerateSeedPhrase();
-        var s = Recover(seed, passphrase);
-        return (s, seed);
+        return (Recover(seed, passphrase, alias, storePath), seed);
     }
 
-    /// <summary>Creates/overwrites the identity from an existing seed phrase (wallet-style recovery).</summary>
-    public static SecureSharing Recover(string seedPhrase, string passphrase)
+    public static SecureSharing Recover(string seedPhrase, string passphrase, string alias, string? storePath = null)
     {
         if (!PeerIdentity.ValidateSeedPhrase(seedPhrase))
             throw new ArgumentException("That doesn't look like a valid recovery phrase.");
         var keys = PeerIdentity.FromSeedPhrase(seedPhrase);
-        var data = new ShareVaultData { Seed = seedPhrase.Trim() };
-        var s = new SecureSharing(keys, data);
-        s.Save(passphrase);
+        var data = new ShareVaultData { Seed = seedPhrase.Trim(), Alias = alias.Trim() };
+        var s = new SecureSharing(keys, data, passphrase, storePath ?? DefaultStorePath);
+        s.Save();
         return s;
     }
 
-    /// <summary>Opens the existing identity blob with the sharing passphrase. Throws on a wrong passphrase.</summary>
-    public static SecureSharing Open(string passphrase)
+    public static SecureSharing Open(string passphrase, string? storePath = null)
     {
-        var blob = File.ReadAllBytes(StorePath);
+        var path = storePath ?? DefaultStorePath;
+        var blob = File.ReadAllBytes(path);
         if (blob.Length <= VaultCrypto.SaltSize) throw new InvalidDataException("Corrupt store.");
         var salt = blob[..VaultCrypto.SaltSize];
         var sealed_ = blob[VaultCrypto.SaltSize..];
         var kek = VaultCrypto.DeriveKey(passphrase, salt);
         try
         {
-            var json = VaultCrypto.Decrypt(kek, sealed_); // throws CryptographicException on wrong passphrase
+            var json = VaultCrypto.Decrypt(kek, sealed_); // throws on wrong passphrase
             var data = JsonSerializer.Deserialize<ShareVaultData>(json) ?? new ShareVaultData();
             var keys = PeerIdentity.FromSeedPhrase(data.Seed);
-            return new SecureSharing(keys, data);
+            return new SecureSharing(keys, data, passphrase, path);
         }
         finally { VaultCrypto.Wipe(kek); }
     }
 
-    /// <summary>Re-seals identity + peers into the opaque blob (random salt each time).</summary>
-    public void Save(string passphrase)
+    public void Save()
     {
+        if (_passphrase is null) throw new InvalidOperationException("No passphrase set.");
         var salt = VaultCrypto.RandomBytes(VaultCrypto.SaltSize);
-        var kek = VaultCrypto.DeriveKey(passphrase, salt);
+        var kek = VaultCrypto.DeriveKey(_passphrase, salt);
         try
         {
             var json = JsonSerializer.SerializeToUtf8Bytes(_data);
@@ -116,83 +127,185 @@ public sealed class SecureSharing : IDisposable
             var outp = new byte[salt.Length + sealed_.Length];
             Buffer.BlockCopy(salt, 0, outp, 0, salt.Length);
             Buffer.BlockCopy(sealed_, 0, outp, salt.Length, sealed_.Length);
-            Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);
-            File.WriteAllBytes(StorePath, outp);
+            Directory.CreateDirectory(Path.GetDirectoryName(_storePath)!);
+            File.WriteAllBytes(_storePath, outp);
             CryptographicOperations.ZeroMemory(json);
         }
         finally { VaultCrypto.Wipe(kek); }
     }
 
-    // ---- peers ----
+    // ---- friends (mutual contacts) ----
 
-    public void AddPeer(string uuid, string name, string passphrase)
+    public IEnumerable<Friend> LinkedFriends => _data.Friends.Where(f => f.IsLinked);
+    public Friend? FindFriend(Guid uuid) => _data.Friends.FirstOrDefault(f => f.Uuid == uuid.ToString());
+    private bool IsLinkedFriend(Guid uuid) => FindFriend(uuid)?.IsLinked == true;
+
+    /// <summary>Sends a friend request to another user (by ID). They must accept before you're linked.</summary>
+    public async Task SendFriendRequestAsync(Guid to, CancellationToken ct = default)
     {
-        if (!Guid.TryParse(uuid?.Trim(), out var g)) throw new ArgumentException("Not a valid peer ID.");
-        var id = g.ToString();
-        if (id == Identity.Uuid.ToString()) throw new ArgumentException("That's your own ID.");
-        var existing = _data.Peers.FirstOrDefault(p => p.Uuid == id);
-        if (existing is not null) existing.Name = name?.Trim() ?? "";
-        else _data.Peers.Add(new SharePeer { Uuid = id, Name = name?.Trim() ?? "" });
-        Save(passphrase);
+        if (_relay is null || _relayUrl is null) throw new InvalidOperationException("Go online first.");
+        if (to == Identity.Uuid) throw new ArgumentException("That's your own ID.");
+        var existing = FindFriend(to);
+        if (existing?.IsLinked == true) throw new InvalidOperationException("You're already linked with that user.");
+
+        await SendMailAsync(to, "friend_req", await AliasPayloadAsync(to, ct), ct);
+        if (existing is null) _data.Friends.Add(new Friend { Uuid = to.ToString(), Status = "pending_out" });
+        else if (existing.Status != "linked") existing.Status = "pending_out";
+        Save();
+        Changed?.Invoke();
     }
 
-    public void RemovePeer(string uuid, string passphrase)
+    /// <summary>Accepts an incoming friend request, completing the mutual link.</summary>
+    public async Task AcceptFriendAsync(Guid from, CancellationToken ct = default)
     {
-        _data.Peers.RemoveAll(p => p.Uuid == uuid);
-        Save(passphrase);
+        if (_relay is null) throw new InvalidOperationException("Go online first.");
+        var f = FindFriend(from) ?? throw new InvalidOperationException("No such request.");
+        await SendMailAsync(from, "friend_accept", await AliasPayloadAsync(from, ct), ct);
+        f.Status = "linked";
+        Save();
+        Changed?.Invoke();
     }
 
-    private bool IsApprovedPeer(Guid uuid) => _data.Peers.Any(p => p.Uuid == uuid.ToString());
+    /// <summary>Removes a friend and immediately drops every share to/from them (both directions).</summary>
+    public async Task UnfriendAsync(Guid uuid, CancellationToken ct = default)
+    {
+        if (_relay is not null)
+            try { await SendMailAsync(uuid, "unfriend", await SealEmptyAsync(uuid, ct), ct); } catch { /* still remove locally */ }
+        RemoveFriendLocal(uuid);
+        Save();
+        Changed?.Invoke();
+    }
 
-    // ---- relay connection + hosting ----
+    private void RemoveFriendLocal(Guid uuid)
+    {
+        _data.Friends.RemoveAll(f => f.Uuid == uuid.ToString());
+        foreach (var list in _data.Grants.Values) list.RemoveAll(u => u == uuid.ToString());
+    }
 
-    /// <summary>Connects to the relay, registers this identity, and (if <paramref name="share"/> is given)
-    /// begins accepting approved peers and serving that vault to them. Files never leave the host disk —
-    /// only re-encrypted chunks stream out. Re-call to update the shared vault.</summary>
-    public async Task GoOnlineAsync(string relayUrl, IShareSource? share, CancellationToken ct = default)
+    // ---- per-vault share grants ----
+
+    public bool IsGranted(string vaultId, Guid friend) =>
+        _data.Grants.TryGetValue(vaultId, out var l) && l.Contains(friend.ToString());
+
+    public IReadOnlyList<string> GrantedFriendIds(string vaultId) =>
+        _data.Grants.TryGetValue(vaultId, out var l) ? l : (IReadOnlyList<string>)Array.Empty<string>();
+
+    public void SetGrant(string vaultId, Guid friend, bool shared)
+    {
+        if (!IsLinkedFriend(friend)) throw new InvalidOperationException("Not a linked friend.");
+        var list = _data.Grants.TryGetValue(vaultId, out var l) ? l : (_data.Grants[vaultId] = new List<string>());
+        var id = friend.ToString();
+        if (shared && !list.Contains(id)) list.Add(id);
+        else if (!shared) list.Remove(id);
+        Save();
+        Changed?.Invoke();
+    }
+
+    // ---- relay connection ----
+
+    /// <summary>Connects to the relay and registers. <paramref name="shareForPeer"/> resolves the live
+    /// share source to serve a given connecting friend (apply grant gating there); return null to serve
+    /// nothing. Starts the host loop (serves linked friends) and the mail loop (friend requests).</summary>
+    public async Task GoOnlineAsync(string relayUrl, Func<Guid, IShareSource?> shareForPeer, CancellationToken ct = default)
     {
         await GoOfflineAsync();
         _relayUrl = relayUrl;
+        _shareForPeer = shareForPeer;
         await RelayClient.RegisterAsync(relayUrl, Identity, ct);
         _relay = await RelayClient.ConnectAsync(relayUrl, Identity, ct);
-
-        if (share is not null)
-        {
-            _hostCts = new CancellationTokenSource();
-            _ = Task.Run(() => HostLoopAsync(share, _hostCts.Token));
-        }
+        _loopCts = new CancellationTokenSource();
+        _ = Task.Run(() => HostLoopAsync(_loopCts.Token));
+        _ = Task.Run(() => MailLoopAsync(_loopCts.Token));
     }
 
-    private async Task HostLoopAsync(IShareSource share, CancellationToken ct)
+    private async Task HostLoopAsync(CancellationToken ct)
     {
         var relay = _relay!;
         try
         {
             while (!ct.IsCancellationRequested)
             {
-                var who = await relay.NewPeers.ReadAsync(ct);
-                if (!IsApprovedPeer(who)) continue; // ignore unknown peers entirely
-                _ = Task.Run(() => ServePeerAsync(relay, share, who, ct));
+                var sess = await relay.NewSessions.ReadAsync(ct);
+                if (!IsLinkedFriend(sess.Peer)) continue;  // only serve linked friends
+                _ = Task.Run(() => ServePeerAsync(relay, sess, ct));
             }
         }
         catch (OperationCanceledException) { }
-        catch { /* relay closed */ }
+        catch { }
     }
 
-    private async Task ServePeerAsync(RelayClient relay, IShareSource share, Guid who, CancellationToken ct)
+    private async Task ServePeerAsync(RelayClient relay, SessionId sess, CancellationToken ct)
     {
         try
         {
-            var peer = await RelayClient.LookupAsync(_relayUrl!, who, ct);
+            var peer = await RelayClient.LookupAsync(_relayUrl!, sess.Peer, ct);
             if (peer is null) return;
-            var hello = await relay.InboxFor(who).ReadAsync(ct);
-            using var session = await SecureSession.AcceptAsync(relay, Identity, peer, hello, ct);
-            await ShareProtocol.ServeAsync(relay, share, session, ct);
+            var hello = await relay.InboxFor(sess.Peer, sess.Sid).ReadAsync(ct);
+            using var session = await SecureSession.AcceptAsync(relay, Identity, peer, sess.Sid, hello, ct);
+            var src = _shareForPeer?.Invoke(sess.Peer) ?? EmptyShareSource.Instance; // grant-gated by the caller
+            await ShareProtocol.ServeAsync(relay, src, session, ct);
         }
-        catch { /* drop this peer's session */ }
+        catch { }
     }
 
-    /// <summary>Opens a viewing session to a peer (we must be online; the peer must be online to answer).</summary>
+    private async Task MailLoopAsync(CancellationToken ct)
+    {
+        var relay = _relay!;
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var m = await relay.Mail.ReadAsync(ct);
+                try { await ProcessMailAsync(m, ct); } catch { /* ignore a bad message */ }
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch { }
+    }
+
+    private async Task ProcessMailAsync(MailItem m, CancellationToken ct)
+    {
+        var sender = await RelayClient.LookupAsync(_relayUrl!, m.From, ct);
+        if (sender is null) return;
+        if (!PeerIdentity.Verify(sender.SignPublic, MailSigned(m.Mtype, m.From, Identity.Uuid, m.Ts, m.Payload), m.Signature))
+            return; // forged / tampered
+
+        switch (m.Mtype)
+        {
+            case "friend_req":
+            {
+                var alias = ReadAlias(sender, m.Payload);
+                var f = FindFriend(m.From);
+                if (f is null)
+                {
+                    f = new Friend { Uuid = m.From.ToString(), Alias = alias, Status = "pending_in" };
+                    _data.Friends.Add(f);
+                    Save();
+                    FriendRequestReceived?.Invoke(f);
+                }
+                else if (f.Status == "pending_out") // crossing requests → mutual link
+                {
+                    f.Status = "linked"; f.Alias = alias; Save(); Changed?.Invoke();
+                }
+                else { f.Alias = alias; Save(); Changed?.Invoke(); }
+                break;
+            }
+            case "friend_accept":
+            {
+                var alias = ReadAlias(sender, m.Payload);
+                var f = FindFriend(m.From) ?? new Friend { Uuid = m.From.ToString() };
+                if (FindFriend(m.From) is null) _data.Friends.Add(f);
+                f.Status = "linked"; f.Alias = alias;
+                Save(); Changed?.Invoke();
+                break;
+            }
+            case "unfriend":
+                RemoveFriendLocal(m.From);
+                Save(); Changed?.Invoke();
+                break;
+        }
+    }
+
     public async Task<SecureSession> ConnectToPeerAsync(Guid peerUuid, CancellationToken ct = default)
     {
         if (_relay is null || _relayUrl is null) throw new InvalidOperationException("Not online.");
@@ -201,17 +314,38 @@ public sealed class SecureSharing : IDisposable
         return await SecureSession.InitiateAsync(_relay, Identity, peer, ct);
     }
 
+    /// <summary>Whether a friend is currently connected to the relay (so we can browse them live).</summary>
+    public async Task<bool> IsPeerOnlineAsync(Guid uuid, CancellationToken ct = default)
+    {
+        if (_relayUrl is null) return false;
+        var p = await RelayClient.LookupAsync(_relayUrl, uuid, ct);
+        return p is not null && await OnlineFlagAsync(uuid, ct);
+    }
+
+    private async Task<bool> OnlineFlagAsync(Guid uuid, CancellationToken ct)
+    {
+        // /lookup carries an "online" flag; LookupAsync drops it, so re-query lightweight here.
+        try
+        {
+            using var http = new System.Net.Http.HttpClient();
+            var baseUrl = _relayUrl!.Replace("wss://", "https://").Replace("ws://", "http://").TrimEnd('/');
+            var json = await http.GetStringAsync($"{baseUrl}/lookup/{uuid}", ct);
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("online", out var o) && o.GetBoolean();
+        }
+        catch { return false; }
+    }
+
     public RelayClient Relay => _relay ?? throw new InvalidOperationException("Not online.");
 
-    /// <summary>Fetches this identity's access log from the relay.</summary>
     public Task<IReadOnlyList<RelayClient.AuditRecord>> QueryAuditAsync(string relayUrl, CancellationToken ct = default)
         => RelayClient.QueryAuditAsync(relayUrl, Identity, ct);
 
     public Task GoOfflineAsync()
     {
-        try { _hostCts?.Cancel(); } catch { }
-        _hostCts?.Dispose();
-        _hostCts = null;
+        try { _loopCts?.Cancel(); } catch { }
+        _loopCts?.Dispose();
+        _loopCts = null;
         _relay?.Dispose();
         _relay = null;
         return Task.CompletedTask;
@@ -219,9 +353,56 @@ public sealed class SecureSharing : IDisposable
 
     public void Dispose()
     {
-        try { _hostCts?.Cancel(); } catch { }
-        _hostCts?.Dispose();
+        try { _loopCts?.Cancel(); } catch { }
+        _loopCts?.Dispose();
         _relay?.Dispose();
         Identity.Wipe();
+    }
+
+    // ---- mail helpers ----
+
+    private static long UnixNow() => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+    private async Task SendMailAsync(Guid to, string mtype, byte[] payload, CancellationToken ct)
+    {
+        var ts = UnixNow();
+        var sig = PeerIdentity.Sign(Identity.SignPrivate, MailSigned(mtype, Identity.Uuid, to, ts, payload));
+        await _relay!.SendMailAsync(to, mtype, payload, ts, sig, ct);
+    }
+
+    private static byte[] MailSigned(string mtype, Guid from, Guid to, long ts, byte[] payload)
+    {
+        var prefix = Encoding.UTF8.GetBytes($"mail-v1|{mtype}|{from}|{to}|{ts}|");
+        var buf = new byte[prefix.Length + payload.Length];
+        Buffer.BlockCopy(prefix, 0, buf, 0, prefix.Length);
+        Buffer.BlockCopy(payload, 0, buf, prefix.Length, payload.Length);
+        return buf;
+    }
+
+    // Seal our alias to the recipient's key so the relay's mailbox can't read it.
+    private async Task<byte[]> AliasPayloadAsync(Guid to, CancellationToken ct)
+    {
+        var peer = await RelayClient.LookupAsync(_relayUrl!, to, ct)
+                   ?? throw new InvalidOperationException("Peer not found on the relay.");
+        var json = JsonSerializer.SerializeToUtf8Bytes(new { alias = _data.Alias });
+        return PeerIdentity.SealForPeer(Identity.AgreePrivate, peer.AgreePublic, json);
+    }
+
+    private async Task<byte[]> SealEmptyAsync(Guid to, CancellationToken ct)
+    {
+        var peer = await RelayClient.LookupAsync(_relayUrl!, to, ct)
+                   ?? throw new InvalidOperationException("Peer not found on the relay.");
+        return PeerIdentity.SealForPeer(Identity.AgreePrivate, peer.AgreePublic, Encoding.UTF8.GetBytes("{}"));
+    }
+
+    private string ReadAlias(RemotePeer sender, byte[] payload)
+    {
+        try
+        {
+            var plain = PeerIdentity.OpenFromPeer(Identity.AgreePrivate, sender.AgreePublic, payload);
+            using var doc = JsonDocument.Parse(plain);
+            return doc.RootElement.TryGetProperty("alias", out var a) ? a.GetString() ?? "" : "";
+        }
+        catch { return ""; }
     }
 }

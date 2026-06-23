@@ -456,6 +456,9 @@ public sealed class Vault : IShareSource
 
     // ---------- Secure P2P sharing ----------
 
+    /// <summary>Display name shown to a remote viewer (the vault's name).</summary>
+    public string ShareName => Manifest.Name;
+
     /// <summary>Entries currently available to a remote peer (empty while locked). On the wire and in the
     /// audit log each is referenced only by its opaque <see cref="VaultEntry.BlobId"/>, never by name.</summary>
     public IReadOnlyList<VaultEntry> ShareEntries() =>
