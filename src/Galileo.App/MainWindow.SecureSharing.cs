@@ -468,8 +468,12 @@ public sealed partial class MainWindow
                 {
                     var dest = Path.Combine(dir, it.Name.Replace('/', Path.DirectorySeparatorChar));
                     Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                    using var fs = File.Create(dest);
-                    await ShareProtocol.FetchAsync(relay, session, it.Id, it.Size, fs, null, cts.Token);
+                    // Download to a .part file, then rename — so the explorer only ever sees a complete
+                    // file appear (a partial file would thumbnail as blank and never retry).
+                    var part = dest + ".part";
+                    using (var fs = File.Create(part))
+                        await ShareProtocol.FetchAsync(relay, session, it.Id, it.Size, fs, null, cts.Token);
+                    File.Move(part, dest, overwrite: true);
                 }
                 catch { /* skip a file that fails */ }
                 done++;
@@ -477,6 +481,8 @@ public sealed partial class MainWindow
                 RootGrid.DispatcherQueue.TryEnqueue(() =>
                 {
                     if (_remoteBrowse?.Dir != dir) return; // a newer browse replaced us
+                    // Show the just-finished file immediately (the watcher debounce starves while files stream).
+                    if (string.Equals(_currentFolder, dir, StringComparison.OrdinalIgnoreCase)) RefreshFolderIncremental();
                     StatusText.Text = d < items.Count ? $"{name}: downloading {d}/{items.Count}…" : $"{name} — {items.Count} file(s) (shared, read-only)";
                 });
             }
