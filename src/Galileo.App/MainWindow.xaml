@@ -1486,6 +1486,23 @@
                                 </Border>
                             </StackPanel>
 
+                            <!-- Secure sharing -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="SECURE SHARING" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <StackPanel Spacing="14">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Text="Relay server" />
+                                            <TextBox x:Name="RelayUrlBox" PlaceholderText="wss://your-relay.example.com"
+                                                     TextChanged="RelayUrlBox_TextChanged" />
+                                            <TextBlock Text="Address of the rendezvous relay. Files are end-to-end encrypted and never stored on it."
+                                                       Style="{StaticResource SettingDesc}" />
+                                        </StackPanel>
+                                        <Button x:Name="ManageSharingBtn" Content="Manage secure sharing…" Click="ManageSharing_Click" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+
                             <!-- Developer -->
                             <StackPanel Spacing="8">
                                 <TextBlock Text="DEVELOPER" Style="{StaticResource SettingSectionHeader}" />

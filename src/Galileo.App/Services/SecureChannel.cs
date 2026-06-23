@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
@@ -89,6 +90,39 @@ public sealed class RelayClient : IDisposable
         var resp = await client.PostAsJsonAsync($"{http}/register",
             new { uuid = me.Uuid.ToString(), sign_pub = signPub, agree_pub = agreePub, ts, sig }, ct);
         resp.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>One access record from the relay's audit log (object ids are opaque — never filenames).</summary>
+    public sealed class AuditRecord
+    {
+        public required Guid Viewer { get; init; }
+        public required string ObjectId { get; init; }
+        public required string Action { get; init; }
+        public required long Bytes { get; init; }
+        public required DateTimeOffset Time { get; init; }
+    }
+
+    /// <summary>Fetches this identity's own access log from the relay (who viewed which opaque object, when).</summary>
+    public static async Task<IReadOnlyList<AuditRecord>> QueryAuditAsync(string relayUrl, PeerKeys me, CancellationToken ct = default)
+    {
+        var http = HttpBaseFrom(relayUrl);
+        var ts = UnixNow();
+        var sig = Convert.ToBase64String(PeerIdentity.Sign(me.SignPrivate, Encoding.UTF8.GetBytes($"audit-query:{me.Uuid}:{ts}")));
+        using var client = new HttpClient();
+        var resp = await client.PostAsJsonAsync($"{http}/audit/query", new { uuid = me.Uuid.ToString(), ts, sig }, ct);
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+        var list = new List<AuditRecord>();
+        foreach (var r in doc.RootElement.GetProperty("records").EnumerateArray())
+            list.Add(new AuditRecord
+            {
+                Viewer = Guid.TryParse(r.GetProperty("viewer_uuid").GetString(), out var v) ? v : Guid.Empty,
+                ObjectId = r.GetProperty("object_id").GetString() ?? "",
+                Action = r.GetProperty("action").GetString() ?? "",
+                Bytes = r.GetProperty("bytes").GetInt64(),
+                Time = DateTimeOffset.FromUnixTimeSeconds((long)r.GetProperty("ts").GetDouble()),
+            });
+        return list;
     }
 
     /// <summary>Looks up a peer's public keys by UUID. Returns null if the relay doesn't know it.</summary>

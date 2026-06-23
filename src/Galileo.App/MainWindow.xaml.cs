@@ -4698,6 +4698,7 @@ public sealed partial class MainWindow : Window
         SecureEmptySwitch.IsOn = _state.SecureDeleteOnEmpty;
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
         BackupScheduleCombo.SelectedIndex = _state.BackupSchedule switch { "Daily" => 1, "Weekly" => 2, _ => 0 };
+        RelayUrlBox.Text = _state.SecureRelayUrl;
         UpdateBackupUi();
         SlideshowSecondsSlider.Value = Math.Clamp(_state.SlideshowSeconds, 2, 30);
         SlideshowSecondsValue.Text = $"{_state.SlideshowSeconds}s";

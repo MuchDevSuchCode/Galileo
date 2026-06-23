@@ -92,6 +92,9 @@ public sealed class AppState
     /// signed in to Google Drive (it backs up on launch/while running once a backup is overdue).</summary>
     public string BackupSchedule { get; set; } = "Off";
 
+    /// <summary>Relay server URL for secure peer-to-peer sharing (ws:// or wss://). Empty = not configured.</summary>
+    public string SecureRelayUrl { get; set; } = "";
+
     // Developer mode (embedded terminal)
     public bool DeveloperMode { get; set; }
     public string TerminalShell { get; set; } = "cmd";   // cmd | powershell | wsl
@@ -233,5 +236,6 @@ public sealed class AppState
         WipeMethod = o.WipeMethod;
         SecureDeleteOnEmpty = o.SecureDeleteOnEmpty;
         BackupSchedule = o.BackupSchedule;
+        SecureRelayUrl = o.SecureRelayUrl;
     }
 }
