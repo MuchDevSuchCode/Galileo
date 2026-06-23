@@ -555,17 +555,27 @@ public sealed partial class MainWindow
             }
             string FileName(string id) => names.TryGetValue(id, out var f) ? f : "(item no longer shared)";
 
+            // Resolve an opaque object id to the real file on disk (only while its vault is unlocked).
+            string? PathFor(string objectId)
+            {
+                var wd = _vaults.Current?.WorkingDir;
+                if (wd is null || !names.TryGetValue(objectId, out var rel)) return null;
+                var p = Path.Combine(wd, rel.Replace('/', Path.DirectorySeparatorChar));
+                return File.Exists(p) ? p : null;
+            }
+
+            const string TimeFmt = "yyyy-MM-dd HH:mm:ss";
             var asc = records.OrderBy(r => r.Time).ToList();
             var openAt = new Dictionary<string, DateTimeOffset>();
-            var rows = new List<(string who, string file, string when)>();
+            var rows = new List<(string who, string objectId, string when)>();
             foreach (var r in asc)
             {
                 var key = r.Viewer + "|" + r.ObjectId;
                 if (r.Action == "open") openAt[key] = r.Time;
                 else if (r.Action == "close" && openAt.TryGetValue(key, out var t))
                 {
-                    rows.Add((PeerName(r.Viewer), FileName(r.ObjectId),
-                        $"{t.LocalDateTime:g} → {r.Time.LocalDateTime:t}   ·   open {FormatDuration(r.Time - t)}"));
+                    rows.Add((PeerName(r.Viewer), r.ObjectId,
+                        $"{t.LocalDateTime.ToString(TimeFmt)}  →  {r.Time.LocalDateTime:HH:mm:ss}   ·   open {FormatDuration(r.Time - t)}"));
                     openAt.Remove(key);
                 }
             }
@@ -573,10 +583,11 @@ public sealed partial class MainWindow
             {
                 var parts = kv.Key.Split('|', 2);
                 Guid.TryParse(parts[0], out var v);
-                rows.Add((PeerName(v), FileName(parts[1]), $"{kv.Value.LocalDateTime:g}   ·   still open"));
+                rows.Add((PeerName(v), parts[1], $"{kv.Value.LocalDateTime.ToString(TimeFmt)}   ·   still open"));
             }
             rows.Reverse();
 
+            var dlg = new ContentDialog { Title = "Access log", CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot };
             object content;
             if (rows.Count == 0)
             {
@@ -585,17 +596,29 @@ public sealed partial class MainWindow
             else
             {
                 var list = new StackPanel { Spacing = 12, Width = 460 };
-                foreach (var (who, file, when) in rows)
+                foreach (var (who, objectId, when) in rows)
                 {
                     var card = new StackPanel { Spacing = 1 };
-                    card.Children.Add(new TextBlock { Text = file, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+                    var path = PathFor(objectId);
+                    if (path is not null)
+                    {
+                        // Clickable link: open the file (its vault is unlocked) — closes the log first.
+                        var link = new HyperlinkButton { Content = FileName(objectId), Padding = new Thickness(0), FontWeight = FontWeights.SemiBold };
+                        link.Click += (_, _) => { dlg.Hide(); OpenInNewWindow(path); };
+                        card.Children.Add(link);
+                    }
+                    else
+                    {
+                        card.Children.Add(new TextBlock { Text = FileName(objectId), FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+                    }
                     card.Children.Add(new TextBlock { Text = "by " + who, Opacity = 0.8, FontSize = 12, TextWrapping = TextWrapping.Wrap });
                     card.Children.Add(new TextBlock { Text = when, Opacity = 0.6, FontSize = 12, TextWrapping = TextWrapping.Wrap });
                     list.Children.Add(card);
                 }
                 content = new ScrollViewer { Content = list, MaxHeight = 460, HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
             }
-            await new ContentDialog { Title = "Access log", Content = content, CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot }.ShowAsync();
+            dlg.Content = content;
+            await dlg.ShowAsync();
         }
         catch (Exception ex) { await MessageAsync("Access log", "Couldn't fetch the log: " + ex.Message); }
     }
