@@ -65,6 +65,11 @@ public static class ShareProtocol
                     case "open":
                         await HandleOpenAsync(relay, vault, session, root, ct);
                         break;
+                    case "close":
+                        // Viewer finished viewing a file — record a close event (no response). Pairing
+                        // open/close on the host lets it show how long each file was open.
+                        await relay.SendAuditAsync(session.PeerUuid, root.GetProperty("id").GetString() ?? "", "close", 0, ct);
+                        break;
                     default:
                         await SendAsync(relay, session, new { op = "error", msg = "unknown op" }, ct);
                         break;
@@ -160,6 +165,11 @@ public static class ShareProtocol
             if (root.GetProperty("eof").GetBoolean() || data.Length == 0) break;
         }
     }
+
+    /// <summary>Tells the host the viewer has finished with an entry (fire-and-forget; no response).
+    /// The host records a "close" audit event so it can report how long the file was open.</summary>
+    public static Task CloseAsync(RelayClient relay, SecureSession session, string id, CancellationToken ct = default)
+        => SendAsync(relay, session, new { op = "close", id }, ct);
 
     /// <summary>Convenience: fetch an entire entry into a byte array (for viewing small media in memory).</summary>
     public static async Task<byte[]> FetchAllAsync(RelayClient relay, SecureSession session, string id, long size, CancellationToken ct)
