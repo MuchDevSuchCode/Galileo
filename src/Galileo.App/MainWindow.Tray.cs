@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Galileo.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.Win32;
@@ -20,16 +21,21 @@ public sealed partial class MainWindow
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunValueName = "Galileo";
 
-    private static bool LaunchedInBackground()
-    {
-        foreach (var a in Environment.GetCommandLineArgs())
-            if (string.Equals(a, "--background", StringComparison.OrdinalIgnoreCase)) return true;
-        return false;
-    }
+    private static bool HasArg(string flag) =>
+        Environment.GetCommandLineArgs().Any(a => string.Equals(a, flag, StringComparison.OrdinalIgnoreCase));
+
+    private static bool LaunchedInBackground() => HasArg("--background");
+
+    /// <summary>A transient "open in its own window" instance — never a tray-resident background host.</summary>
+    private static bool LaunchedNewWindow() => HasArg("--new-window");
 
     /// <summary>Wire up tray + background behavior at startup from saved settings.</summary>
     private void InitBackground()
     {
+        // A --new-window instance is a throwaway viewer spawned by the primary — it must NOT create a tray
+        // icon or run in the background, or every "open in new window" would leave a permanent tray copy.
+        if (LaunchedNewWindow()) return;
+
         if (_state.RunInBackground || _state.StartWithWindows) EnsureTray();
         if (LaunchedInBackground() && _tray is not null)
             DispatcherQueue.TryEnqueue(() => { try { _appWindow.Hide(); } catch { } });
