@@ -82,7 +82,7 @@ def verify_sig(sign_pub_b64: str, message: bytes, sig_b64: str) -> bool:
         return False
 
 
-def fresh(ts: float, skew: int = 300) -> bool:
+def fresh(ts: int, skew: int = 300) -> bool:
     """Reject stale/forward-dated timestamps (replay window)."""
     return abs(time.time() - ts) <= skew
 
@@ -93,7 +93,7 @@ class RegisterReq(BaseModel):
     uuid: str
     sign_pub: str   # base64
     agree_pub: str  # base64
-    ts: float
+    ts: int         # unix seconds (integer — so the signed-message string matches byte-for-byte across languages)
     sig: str        # base64 Ed25519 over "register:{uuid}:{sign_pub}:{agree_pub}:{ts}"
 
 
@@ -129,7 +129,7 @@ def lookup(uuid: str):
 
 class AuditQuery(BaseModel):
     uuid: str
-    ts: float
+    ts: int
     sig: str  # Ed25519 over "audit-query:{uuid}:{ts}"
 
 
@@ -182,7 +182,7 @@ async def connect(ws: WebSocket):
     try:
         auth = json.loads(await ws.receive_text())
         uuid = str(auth.get("uuid", ""))
-        ts = float(auth.get("ts", 0))
+        ts = int(auth.get("ts", 0))
         with closing(db()) as conn:
             peer = conn.execute("SELECT sign_pub FROM peers WHERE uuid=?", (uuid,)).fetchone()
         if not peer or not fresh(ts) or not verify_sig(peer["sign_pub"], f"connect:{uuid}:{ts}".encode(), auth.get("sig", "")):

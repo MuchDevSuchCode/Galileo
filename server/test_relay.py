@@ -39,7 +39,7 @@ class Peer:
 
 
 async def register(client, p: Peer):
-    ts = time.time()
+    ts = int(time.time())
     msg = f"register:{p.uuid}:{p.sign_pub}:{p.agree_pub}:{ts}"
     r = await client.post(f"{BASE}/register", json={
         "uuid": p.uuid, "sign_pub": p.sign_pub, "agree_pub": p.agree_pub, "ts": ts, "sig": p.sig(msg)})
@@ -48,7 +48,7 @@ async def register(client, p: Peer):
 
 async def connect_ws(p: Peer):
     ws = await websockets.connect(WS)
-    ts = time.time()
+    ts = int(time.time())
     await ws.send(json.dumps({"uuid": p.uuid, "ts": ts, "sig": p.sig(f"connect:{p.uuid}:{ts}")}))
     ready = json.loads(await ws.recv())
     assert ready.get("type") == "ready", f"auth failed: {ready}"
@@ -73,7 +73,7 @@ async def main():
         print("OK unknown -> 404")
 
         # bad signature is rejected
-        ts = time.time()
+        ts = int(time.time())
         bad = await client.post(f"{BASE}/register", json={
             "uuid": host.uuid, "sign_pub": host.sign_pub, "agree_pub": host.agree_pub,
             "ts": ts, "sig": b64(b"\x00" * 64)})
@@ -100,7 +100,7 @@ async def main():
             "viewer_uuid": viewer.uuid, "object_id": "abc123opaque", "action": "open", "bytes": 4096}}))
         await asyncio.sleep(0.3)
 
-        ts = time.time()
+        ts = int(time.time())
         r = await client.post(f"{BASE}/audit/query", json={
             "uuid": host.uuid, "ts": ts, "sig": host.sig(f"audit-query:{host.uuid}:{ts}")})
         assert r.status_code == 200, f"audit query failed: {r.text}"
@@ -109,7 +109,7 @@ async def main():
         print("OK audit recorded + queried")
 
         # audit query with wrong signer is rejected
-        ts = time.time()
+        ts = int(time.time())
         r = await client.post(f"{BASE}/audit/query", json={
             "uuid": host.uuid, "ts": ts, "sig": viewer.sig(f"audit-query:{host.uuid}:{ts}")})
         assert r.status_code == 401, f"cross-signed audit should be 401, got {r.status_code}"
