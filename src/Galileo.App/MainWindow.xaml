@@ -228,6 +228,13 @@
                             <TextBlock Text="Collage" />
                         </StackPanel>
                     </Button>
+                    <Button x:Name="VaultShareBtn" Visibility="Collapsed" Click="VaultShare_Click"
+                            ToolTipService.ToolTip="Share this vault with chosen friends">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE72D;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                            <TextBlock Text="Share" />
+                        </StackPanel>
+                    </Button>
                     <Button x:Name="VaultLockBtn" Visibility="Collapsed" Click="VaultLock_Click"
                             ToolTipService.ToolTip="Lock the open vault (re-encrypts and hides it)">
                         <StackPanel Orientation="Horizontal" Spacing="6">

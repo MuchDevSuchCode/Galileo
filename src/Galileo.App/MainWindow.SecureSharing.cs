@@ -69,6 +69,19 @@ public sealed partial class MainWindow
         catch (Exception ex) { await MessageAsync("Secure sharing", ex.Message); App.Log("Sharing", ex); }
     }
 
+    /// <summary>Command-strip "Share" button (visible inside an unlocked vault): pick which friends get it.</summary>
+    private async void VaultShare_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (_vaults.Current is null) { await MessageAsync("Share", "Unlock a vault first."); return; }
+            if (!await EnsureIdentityAsync()) return;
+            await EnsureOnlineAsync();
+            await ShareCurrentVaultAsync();
+        }
+        catch (Exception ex) { await MessageAsync("Share", ex.Message); App.Log("Sharing", ex); }
+    }
+
     /// <summary>Unlocks the existing identity (passphrase) or runs first-time setup. Returns true if ready.</summary>
     private async Task<bool> EnsureIdentityAsync()
     {
@@ -330,8 +343,30 @@ public sealed partial class MainWindow
         await new ContentDialog { Title = "Share vault", Content = panel, CloseButtonText = "Done", XamlRoot = RootGrid.XamlRoot }.ShowAsync();
     }
 
-    // Browsing ---------------------------------------------------------------
+    // Browsing — present a friend's shared vault in the real file explorer ----
+    // Files stream into a temp working folder (read-only copy, wiped on the next browse / next launch);
+    // the explorer then shows them with thumbnails, gallery, viewer — exactly like any other folder.
 
+    private sealed class RemoteBrowse
+    {
+        public required SecureSession Session { get; init; }
+        public required string Dir { get; init; }
+        public required CancellationTokenSource Cts { get; init; }
+    }
+    private RemoteBrowse? _remoteBrowse;
+
+    /// <summary>Wipe any leftover remote-browse temp folders (called at startup; best-effort).</summary>
+    private static void WipeShareTempDirs()
+    {
+        try
+        {
+            var root = Path.Combine(Path.GetTempPath(), "GalileoShare");
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+        catch { /* best effort */ }
+    }
+
+    // Hub "Browse <friend>" → open that friend's shared vault in the explorer.
     private async Task BrowsePeerAsync(Guid peer)
     {
         if (_sharing is null) return;
@@ -342,13 +377,15 @@ public sealed partial class MainWindow
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             session = await _sharing.ConnectToPeerAsync(peer, cts.Token);
             var listing = await ShareProtocol.ListAsync(_sharing.Relay, session, cts.Token);
-            await ShowListingAsync(session, listing);
+            if (listing.Items.Count == 0) { session.Dispose(); await MessageAsync("Browse", "That friend isn't sharing anything right now."); return; }
+            StartRemoteBrowse(session, listing);
+            session = null; // ownership handed to _remoteBrowse
         }
-        catch (Exception ex) { await MessageAsync("Browse", "Couldn't reach that friend (are they online and sharing?). " + ex.Message); }
+        catch (Exception ex) { await MessageAsync("Browse", "Couldn't reach that friend (online + sharing?). " + ex.Message); }
         finally { session?.Dispose(); }
     }
 
-    /// <summary>Ctrl+Alt+V → "Shared with me": connect to each linked, online friend and list their share.</summary>
+    /// <summary>Ctrl+Alt+V → "Shared with me": find which friends are sharing, pick one, open it in the explorer.</summary>
     private async Task OpenSharesAsync()
     {
         if (!await EnsureIdentityAsync()) return;
@@ -356,116 +393,99 @@ public sealed partial class MainWindow
         if (_sharing is null) return;
         if (!_sharing.IsOnline) { await MessageAsync("Shared with me", "You're offline — check the relay URL in Settings."); return; }
 
-        var sessions = new List<SecureSession>();
-        var rows = new List<(string label, SecureSession s, SharedItem item)>();
-        try
+        var found = new List<(Friend f, SecureSession s, SharedListing l)>();
+        foreach (var f in _sharing.LinkedFriends)
         {
-            foreach (var f in _sharing.LinkedFriends)
+            if (!Guid.TryParse(f.Uuid, out var fid)) continue;
+            try
             {
-                if (!Guid.TryParse(f.Uuid, out var fid)) continue;
-                try
-                {
-                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-                    var s = await _sharing.ConnectToPeerAsync(fid, cts.Token);
-                    var listing = await ShareProtocol.ListAsync(_sharing.Relay, s, cts.Token);
-                    if (listing.Items.Count == 0) { s.Dispose(); continue; }
-                    sessions.Add(s);
-                    var who = string.IsNullOrWhiteSpace(f.Alias) ? f.Uuid[..8] : f.Alias;
-                    foreach (var it in listing.Items)
-                        rows.Add(($"{who}  ·  {listing.VaultName}  ·  {it.Name}", s, it));
-                }
-                catch { /* friend offline or not sharing — skip */ }
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                var s = await _sharing.ConnectToPeerAsync(fid, cts.Token);
+                var l = await ShareProtocol.ListAsync(_sharing.Relay, s, cts.Token);
+                if (l.Items.Count == 0) { s.Dispose(); continue; }
+                found.Add((f, s, l));
             }
-
-            if (rows.Count == 0) { await MessageAsync("Shared with me", "No friends are sharing anything with you right now."); return; }
-
-            while (true)
-            {
-                (string label, SecureSession s, SharedItem item)? picked = null;
-                var dlg = new ContentDialog { Title = "Shared with me", CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot };
-                var list = new ListView { ItemsSource = rows.Select(r => r.label).ToList(), IsItemClickEnabled = true, SelectionMode = ListViewSelectionMode.None, MaxHeight = 460, MinWidth = 460 };
-                list.ItemClick += (_, e) => { var i = rows.FindIndex(r => r.label == (string)e.ClickedItem); if (i >= 0) { picked = rows[i]; dlg.Hide(); } };
-                dlg.Content = list;
-                await dlg.ShowAsync();
-                if (picked is null) break;
-                await ViewSharedMediaAsync(picked.Value.s, picked.Value.item);
-            }
+            catch { /* friend offline or not sharing — skip */ }
         }
-        finally { foreach (var s in sessions) s.Dispose(); }
+
+        if (found.Count == 0) { await MessageAsync("Shared with me", "No friends are sharing anything with you right now."); return; }
+
+        var pick = found.Count == 1 ? 0 : await ChooseShareAsync(found);
+        if (pick < 0) { foreach (var x in found) x.s.Dispose(); return; }
+        for (var i = 0; i < found.Count; i++) if (i != pick) found[i].s.Dispose();
+        StartRemoteBrowse(found[pick].s, found[pick].l);
     }
 
-    private async Task ShowListingAsync(SecureSession session, SharedListing listing)
+    private async Task<int> ChooseShareAsync(List<(Friend f, SecureSession s, SharedListing l)> found)
     {
-        while (true)
+        var result = -1;
+        var dlg = new ContentDialog { Title = "Shared with me", CloseButtonText = "Cancel", XamlRoot = RootGrid.XamlRoot };
+        var panel = new StackPanel { Spacing = 8, MinWidth = 360 };
+        panel.Children.Add(new TextBlock { Text = "Open a shared vault:" });
+        for (var i = 0; i < found.Count; i++)
         {
-            SharedItem? picked = null;
-            var dlg = new ContentDialog { Title = string.IsNullOrWhiteSpace(listing.VaultName) ? "Shared vault" : listing.VaultName, CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot };
-            var panel = new StackPanel { Spacing = 8, MinWidth = 380 };
-            panel.Children.Add(new TextBlock { Text = listing.Items.Count == 0 ? "Nothing shared right now." : "Click a file to view it." });
-            if (listing.Items.Count > 0)
-            {
-                var lv = new ListView { ItemsSource = listing.Items, DisplayMemberPath = nameof(SharedItem.Name), IsItemClickEnabled = true, SelectionMode = ListViewSelectionMode.None, MaxHeight = 400 };
-                lv.ItemClick += (_, e) => { if (e.ClickedItem is SharedItem si) { picked = si; dlg.Hide(); } };
-                panel.Children.Add(lv);
-            }
-            dlg.Content = panel;
-            await dlg.ShowAsync();
-            if (picked is null) break;
-            await ViewSharedMediaAsync(session, picked);
+            var idx = i;
+            var who = string.IsNullOrWhiteSpace(found[i].f.Alias) ? found[i].f.Uuid[..8] : found[i].f.Alias;
+            var b = new Button { Content = $"{who} — {found[i].l.VaultName}  ({found[i].l.Items.Count} files)", HorizontalAlignment = HorizontalAlignment.Stretch };
+            b.Click += (_, _) => { result = idx; dlg.Hide(); };
+            panel.Children.Add(b);
         }
+        dlg.Content = panel;
+        await dlg.ShowAsync();
+        return result;
     }
 
-    private async Task ViewSharedMediaAsync(SecureSession session, SharedItem item)
+    // Stream the shared files into a temp folder and open it in the explorer. The folder watcher shows
+    // each file (with thumbnail) as it lands, so browsing feels exactly like a local folder.
+    private void StartRemoteBrowse(SecureSession session, SharedListing listing)
     {
-        string path;
-        try { path = await FetchToTempAsync(session, item); }
-        catch (Exception ex) { await MessageAsync("Open", "Couldn't fetch that file: " + ex.Message); return; }
-
-        FrameworkElement? view = null;
-        MediaPlayerElement? mpe = null;
-        try
-        {
-            var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
-            if (PhotoLibrary.IsMedia(path))
-            {
-                mpe = new MediaPlayerElement { AreTransportControlsEnabled = true, AutoPlay = true, Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, Height = 460, MinWidth = 640 };
-                mpe.Source = Windows.Media.Core.MediaSource.CreateFromStorageFile(file);
-                view = mpe;
-            }
-            else if (PhotoLibrary.IsSupported(path))
-            {
-                var img = new Image { Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, MaxHeight = 600, MaxWidth = 860 };
-                var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
-                using (var stream = await file.OpenReadAsync()) await bmp.SetSourceAsync(stream);
-                img.Source = bmp;
-                view = img;
-            }
-        }
-        catch (Exception ex) { await MessageAsync("Open", "Couldn't display that file: " + ex.Message); }
-
-        if (view is null) { OpenInNewWindow(path); return; } // non-viewable type → external; no close-time tracking
-
-        var dlg = new ContentDialog { Title = item.Name, Content = view, CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot };
-        try { await dlg.ShowAsync(); }
-        finally
-        {
-            if (mpe is not null) { var prev = mpe.Source as Windows.Media.Core.MediaSource; mpe.Source = null; prev?.Dispose(); }
-            try { await ShareProtocol.CloseAsync(_sharing!.Relay, session, item.Id); } catch { }
-            try { var d = Path.GetDirectoryName(path); if (d is not null) Directory.Delete(d, true); } catch { }
-        }
-    }
-
-    private async Task<string> FetchToTempAsync(SecureSession session, SharedItem si)
-    {
+        CleanupRemoteBrowse(); // tear down any previous browse
         var dir = Path.Combine(Path.GetTempPath(), "GalileoShare", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
-        var safeName = Path.GetFileName(si.Name.Replace('/', Path.DirectorySeparatorChar));
-        if (string.IsNullOrWhiteSpace(safeName)) safeName = "file";
-        var path = Path.Combine(dir, safeName);
-        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
-        using (var fs = File.Create(path))
-            await ShareProtocol.FetchAsync(_sharing!.Relay, session, si.Id, si.Size, fs, null, cts.Token);
-        return path;
+        var cts = new CancellationTokenSource();
+        _remoteBrowse = new RemoteBrowse { Session = session, Dir = dir, Cts = cts };
+
+        ShowExplorer();
+        NavigateTo(dir);
+        StatusText.Text = $"{listing.VaultName}: downloading {listing.Items.Count} file(s)…";
+
+        var relay = _sharing!.Relay;
+        var items = listing.Items;
+        var name = listing.VaultName;
+        _ = Task.Run(async () =>
+        {
+            var done = 0;
+            foreach (var it in items)
+            {
+                if (cts.IsCancellationRequested) return;
+                try
+                {
+                    var dest = Path.Combine(dir, it.Name.Replace('/', Path.DirectorySeparatorChar));
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                    using var fs = File.Create(dest);
+                    await ShareProtocol.FetchAsync(relay, session, it.Id, it.Size, fs, null, cts.Token);
+                }
+                catch { /* skip a file that fails */ }
+                done++;
+                var d = done;
+                RootGrid.DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (_remoteBrowse?.Dir != dir) return; // a newer browse replaced us
+                    StatusText.Text = d < items.Count ? $"{name}: downloading {d}/{items.Count}…" : $"{name} — {items.Count} file(s) (shared, read-only)";
+                });
+            }
+        });
+    }
+
+    private void CleanupRemoteBrowse()
+    {
+        var rb = _remoteBrowse;
+        _remoteBrowse = null;
+        if (rb is null) return;
+        try { rb.Cts.Cancel(); } catch { }
+        try { rb.Session.Dispose(); } catch { }
+        rb.Cts.Dispose();
+        try { if (Directory.Exists(rb.Dir)) Directory.Delete(rb.Dir, true); } catch { }
     }
 
     // Online + regenerate ----------------------------------------------------
@@ -537,14 +557,15 @@ public sealed partial class MainWindow
 
             var asc = records.OrderBy(r => r.Time).ToList();
             var openAt = new Dictionary<string, DateTimeOffset>();
-            var rows = new List<string>();
+            var rows = new List<(string who, string file, string when)>();
             foreach (var r in asc)
             {
                 var key = r.Viewer + "|" + r.ObjectId;
                 if (r.Action == "open") openAt[key] = r.Time;
                 else if (r.Action == "close" && openAt.TryGetValue(key, out var t))
                 {
-                    rows.Add($"{PeerName(r.Viewer)} — {FileName(r.ObjectId)} — opened {t.LocalDateTime:g}, closed {r.Time.LocalDateTime:t}  ({FormatDuration(r.Time - t)})");
+                    rows.Add((PeerName(r.Viewer), FileName(r.ObjectId),
+                        $"{t.LocalDateTime:g} → {r.Time.LocalDateTime:t}   ·   open {FormatDuration(r.Time - t)}"));
                     openAt.Remove(key);
                 }
             }
@@ -552,13 +573,28 @@ public sealed partial class MainWindow
             {
                 var parts = kv.Key.Split('|', 2);
                 Guid.TryParse(parts[0], out var v);
-                rows.Add($"{PeerName(v)} — {FileName(parts[1])} — opened {kv.Value.LocalDateTime:g}  (still open)");
+                rows.Add((PeerName(v), FileName(parts[1]), $"{kv.Value.LocalDateTime:g}   ·   still open"));
             }
             rows.Reverse();
 
-            object content = rows.Count == 0
-                ? new TextBlock { Text = "No file access recorded yet." }
-                : new ListView { ItemsSource = rows, SelectionMode = ListViewSelectionMode.None, MaxHeight = 460, MinWidth = 540 };
+            object content;
+            if (rows.Count == 0)
+            {
+                content = new TextBlock { Text = "No file access recorded yet." };
+            }
+            else
+            {
+                var list = new StackPanel { Spacing = 12, Width = 460 };
+                foreach (var (who, file, when) in rows)
+                {
+                    var card = new StackPanel { Spacing = 1 };
+                    card.Children.Add(new TextBlock { Text = file, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+                    card.Children.Add(new TextBlock { Text = "by " + who, Opacity = 0.8, FontSize = 12, TextWrapping = TextWrapping.Wrap });
+                    card.Children.Add(new TextBlock { Text = when, Opacity = 0.6, FontSize = 12, TextWrapping = TextWrapping.Wrap });
+                    list.Children.Add(card);
+                }
+                content = new ScrollViewer { Content = list, MaxHeight = 460, HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+            }
             await new ContentDialog { Title = "Access log", Content = content, CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot }.ShowAsync();
         }
         catch (Exception ex) { await MessageAsync("Access log", "Couldn't fetch the log: " + ex.Message); }
