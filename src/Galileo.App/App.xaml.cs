@@ -109,10 +109,16 @@ public partial class App : Application
 
     private static string? FirstExistingPath(IEnumerable<string> args)
     {
+        // Only ever open a real folder or media file the user passed — never a flag (e.g. --background) and
+        // never our own executable. The activation command line always starts with the exe path; opening it
+        // navigated to the app folder and then "opened" the exe, relaunching Galileo in a fork-bomb loop.
+        var self = Environment.ProcessPath;
         foreach (var a in args)
         {
-            if (string.IsNullOrWhiteSpace(a)) continue;
-            if (File.Exists(a) || Directory.Exists(a)) return a;
+            if (string.IsNullOrWhiteSpace(a) || a.StartsWith('-')) continue;
+            if (!string.IsNullOrEmpty(self) && string.Equals(a, self, StringComparison.OrdinalIgnoreCase)) continue;
+            if (Directory.Exists(a)) return a;
+            if (File.Exists(a) && (PhotoLibrary.IsSupported(a) || PhotoLibrary.IsMedia(a))) return a;
         }
         return null;
     }

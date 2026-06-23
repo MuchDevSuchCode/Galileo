@@ -2301,6 +2301,11 @@ public sealed partial class MainWindow : Window
         else if (item.IsImage) OpenImageFromExplorer(item);
         else if (PhotoLibrary.IsMedia(item.Path)) OpenVideoFromExplorer(item);
         else if (ArchiveService.IsArchive(item.Path)) _ = OpenArchiveAsync(item);
+        else if (string.Equals(item.Path, Environment.ProcessPath, StringComparison.OrdinalIgnoreCase))
+        {
+            // Never shell-launch our own executable (defense against any relaunch loop).
+            StatusText.Text = "That's Galileo itself.";
+        }
         else
         {
             try
