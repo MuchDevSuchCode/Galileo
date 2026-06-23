@@ -790,7 +790,7 @@ public sealed partial class MainWindow
                     {
                         // Clickable link: open the file in this window (its vault is unlocked) — closes the log.
                         var link = new HyperlinkButton { Content = title, Padding = new Thickness(0), FontWeight = FontWeights.SemiBold };
-                        link.Click += (_, _) => { dlg.Hide(); _ = OpenLogFileAsync(path); };
+                        link.Click += (_, _) => { dlg.Hide(); _ = OpenLocalFileInViewerAsync(path); };
                         card.Children.Add(link);
                     }
                     else
@@ -808,9 +808,9 @@ public sealed partial class MainWindow
         catch (Exception ex) { await MessageAsync("Access log", "Couldn't fetch the log: " + ex.Message); }
     }
 
-    /// <summary>Opens a file referenced from the access log in THIS window (image → viewer, video/audio →
-    /// player). Avoids the separate --new-window process that was racing the folder load (empty window).</summary>
-    private async Task OpenLogFileAsync(string path)
+    /// <summary>Opens a local file in THIS window (image → viewer, video/audio → player, else default app).
+    /// Used by access-log links and for vault files (which must never spawn a second instance).</summary>
+    private async Task OpenLocalFileInViewerAsync(string path)
     {
         try
         {
@@ -821,9 +821,13 @@ public sealed partial class MainWindow
                 var item = new Models.ExplorerItem(path, Models.ExplorerItemKind.File, fi.Length, fi.LastWriteTime, fi.Extension);
                 OpenVideoFromExplorer(item);
             }
-            else OpenInNewWindow(path);
+            else
+            {
+                try { ShellOps.AllowForeground(); System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = path, UseShellExecute = true }); }
+                catch (Exception ex) { StatusText.Text = ex.Message; }
+            }
         }
-        catch (Exception ex) { App.Log("OpenLogFile", ex); }
+        catch (Exception ex) { App.Log("OpenLocalFile", ex); }
     }
 
     private static string FormatDuration(TimeSpan d)

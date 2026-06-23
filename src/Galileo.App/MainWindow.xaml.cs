@@ -204,10 +204,16 @@ public sealed partial class MainWindow : Window
         _shell.WipeTemp(); // clear any device temp copies left by a previous run
 
         // Secure vault: wipe any decrypted working folder left by a crash, list vaults, and arm the
-        // idle auto-lock + app-exit lock.
-        _vaults.WipeOrphanWorkDirs();
-        ArchiveService.WipeOrphans(); // clear any leftover extracted-zip temp dirs from a prior run
-        WipeShareTempDirs();          // clear any leftover remote-browse temp copies from a prior run
+        // idle auto-lock + app-exit lock. A "--new-window" instance is spawned by an already-running
+        // primary (which may have a vault unlocked) — it must NOT run crash recovery, or it would wipe the
+        // live vault's working folder out from under the primary.
+        var spawnedNewWindow = Environment.GetCommandLineArgs().Any(a => string.Equals(a, "--new-window", StringComparison.OrdinalIgnoreCase));
+        if (!spawnedNewWindow)
+        {
+            _vaults.WipeOrphanWorkDirs();
+            ArchiveService.WipeOrphans(); // clear any leftover extracted-zip temp dirs from a prior run
+            WipeShareTempDirs();          // clear any leftover remote-browse temp copies from a prior run
+        }
         VaultsList.ItemsSource = _vaultList;
         RefreshVaults();
         _vaultIdleTimer.Tick += VaultIdle_Tick;
@@ -2094,10 +2100,17 @@ public sealed partial class MainWindow : Window
         OpenExplorerItem(item);
     }
 
+    /// <summary>True when a path lives inside the currently-unlocked vault's working folder.</summary>
+    private bool IsInCurrentVault(string? path) =>
+        _vaults.Current?.WorkingDir is { } wd && !string.IsNullOrEmpty(path)
+        && path.StartsWith(wd, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>Launches a fresh Galileo instance to open the path in its own window (works even in
-    /// single-instance mode via the --new-window flag).</summary>
+    /// single-instance mode via the --new-window flag). Vault files open in-process instead — a second
+    /// instance would wipe the vault working folder and read decrypted files outside the vault session.</summary>
     private void OpenInNewWindow(string path)
     {
+        if (IsInCurrentVault(path)) { _ = OpenLocalFileInViewerAsync(path); return; }
         try
         {
             var exe = Environment.ProcessPath;
@@ -2316,8 +2329,11 @@ public sealed partial class MainWindow : Window
         }
 
         // "Always open photos & videos in a new window": route real media files to a separate window.
+        // Never spawn a second instance for files inside the unlocked vault — a new process would wipe the
+        // vault's working folder (crash recovery) and read decrypted files outside the vault session.
         if (!bypassNewWindow && _state.AlwaysOpenMediaInNewWindow && !item.IsFolder
-            && (item.IsImage || PhotoLibrary.IsMedia(item.Path)))
+            && (item.IsImage || PhotoLibrary.IsMedia(item.Path))
+            && !IsInCurrentVault(item.Path))
         {
             OpenInNewWindow(item.Path);
             return;
