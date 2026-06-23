@@ -25,7 +25,6 @@ public sealed partial class MainWindow
 
     private SecureSharing? _sharing;
     private string? _sharingPass;                       // held while the hub is in use, to re-seal on edits
-    private readonly SemaphoreSlim _fetchLock = new(1, 1); // serialize fetches over a single session
     private bool _accessLogRevealed;                    // the access-log entry stays hidden until Ctrl+Alt+L
 
     private void RelayUrlBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -311,33 +310,79 @@ public sealed partial class MainWindow
 
     private async Task ShowPeerFilesAsync(SecureSession session, IReadOnlyList<SharedItem> items)
     {
-        var status = new TextBlock { Opacity = 0.7, TextWrapping = TextWrapping.Wrap };
-        var list = new ListView
+        while (true)
         {
-            ItemsSource = items, DisplayMemberPath = nameof(SharedItem.Name),
-            IsItemClickEnabled = true, SelectionMode = ListViewSelectionMode.None, MaxHeight = 380,
-        };
-        list.ItemClick += async (_, e) =>
-        {
-            if (e.ClickedItem is not SharedItem si) return;
-            if (!await _fetchLock.WaitAsync(0)) { status.Text = "Still fetching the last file…"; return; }
-            try
+            SharedItem? picked = null;
+            var dlg = new ContentDialog { Title = "Peer's shared vault", CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot };
+            var panel = new StackPanel { Spacing = 8, MinWidth = 380 };
+            panel.Children.Add(new TextBlock { Text = items.Count == 0 ? "This peer isn't sharing anything right now." : "Click a file to view it." });
+            if (items.Count > 0)
             {
-                status.Text = $"Fetching {si.Name}…";
-                var path = await FetchToTempAsync(session, si);
-                status.Text = $"Opened {si.Name}.";
-                OpenInNewWindow(path);
+                var list = new ListView
+                {
+                    ItemsSource = items, DisplayMemberPath = nameof(SharedItem.Name),
+                    IsItemClickEnabled = true, SelectionMode = ListViewSelectionMode.None, MaxHeight = 380,
+                };
+                list.ItemClick += (_, e) => { if (e.ClickedItem is SharedItem si) { picked = si; dlg.Hide(); } };
+                panel.Children.Add(list);
             }
-            catch (Exception ex) { status.Text = "Couldn't open that file: " + ex.Message; }
-            finally { _fetchLock.Release(); }
-        };
+            dlg.Content = panel;
+            await dlg.ShowAsync();
 
-        var panel = new StackPanel { Spacing = 8, MinWidth = 380 };
-        panel.Children.Add(new TextBlock { Text = items.Count == 0 ? "This peer isn't sharing anything right now." : "Click a file to open it." });
-        if (items.Count > 0) panel.Children.Add(list);
-        panel.Children.Add(status);
+            if (picked is null) break;          // user closed the list
+            await ViewSharedMediaAsync(session, picked); // view in-process, then re-show the list
+        }
+    }
 
-        await new ContentDialog { Title = "Peer's shared vault", Content = panel, CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot }.ShowAsync();
+    /// <summary>Fetches a shared file and views it in-process so we know exactly when it's opened and
+    /// closed — and signal the host on close so its access log can show how long it was open.</summary>
+    private async Task ViewSharedMediaAsync(SecureSession session, SharedItem item)
+    {
+        string path;
+        try { path = await FetchToTempAsync(session, item); }
+        catch (Exception ex) { await MessageAsync("Open", "Couldn't fetch that file: " + ex.Message); return; }
+
+        FrameworkElement? view = null;
+        MediaPlayerElement? mpe = null;
+        try
+        {
+            var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
+            if (PhotoLibrary.IsMedia(path))
+            {
+                mpe = new MediaPlayerElement
+                {
+                    AreTransportControlsEnabled = true, AutoPlay = true,
+                    Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, Height = 460, MinWidth = 640,
+                };
+                mpe.Source = Windows.Media.Core.MediaSource.CreateFromStorageFile(file);
+                view = mpe;
+            }
+            else if (PhotoLibrary.IsSupported(path))
+            {
+                var img = new Image { Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, MaxHeight = 600, MaxWidth = 860 };
+                var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
+                using (var stream = await file.OpenReadAsync()) await bmp.SetSourceAsync(stream);
+                img.Source = bmp;
+                view = img;
+            }
+        }
+        catch (Exception ex) { await MessageAsync("Open", "Couldn't display that file: " + ex.Message); }
+
+        if (view is null)
+        {
+            // Not viewable in-app (e.g. a document) — open externally; close time can't be tracked for these.
+            OpenInNewWindow(path);
+            return;
+        }
+
+        var dlg = new ContentDialog { Title = item.Name, Content = view, CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot };
+        try { await dlg.ShowAsync(); }
+        finally
+        {
+            if (mpe is not null) { var prev = mpe.Source as Windows.Media.Core.MediaSource; mpe.Source = null; prev?.Dispose(); }
+            try { await ShareProtocol.CloseAsync(_sharing!.Relay, session, item.Id); } catch { }
+            try { var d = Path.GetDirectoryName(path); if (d is not null) Directory.Delete(d, true); } catch { }
+        }
     }
 
     private async Task<string> FetchToTempAsync(SecureSession session, SharedItem si)
@@ -361,20 +406,57 @@ public sealed partial class MainWindow
         try
         {
             var records = await _sharing.QueryAuditAsync(url);
-            var rows = records.Select(r =>
-            {
-                var name = _sharing.Peers.FirstOrDefault(p => p.Uuid == r.Viewer.ToString())?.Name;
-                var who = string.IsNullOrWhiteSpace(name) ? r.Viewer.ToString()[..8] : name;
-                var what = r.Action == "list" ? "listed your files" : $"opened an item ({r.Bytes:n0} bytes)";
-                return $"{r.Time.LocalDateTime:g}  —  {who}  {what}";
-            }).ToList();
 
-            var content = rows.Count == 0
-                ? (object)new TextBlock { Text = "No access recorded yet." }
-                : new ListView { ItemsSource = rows, SelectionMode = ListViewSelectionMode.None, MaxHeight = 420, MinWidth = 420 };
+            // The relay only stores opaque object ids; resolve them to real filenames locally from the
+            // currently-shared (unlocked) vault so the log reads naturally without the relay ever knowing.
+            var names = new Dictionary<string, string>();
+            if (_vaults.Current is not null)
+                foreach (var e in _vaults.Current.ShareEntries()) names[e.BlobId] = e.RelPath;
+
+            string PeerName(Guid v)
+            {
+                var n = _sharing!.Peers.FirstOrDefault(p => p.Uuid == v.ToString())?.Name;
+                return string.IsNullOrWhiteSpace(n) ? v.ToString()[..8] : n!;
+            }
+            string FileName(string id) => names.TryGetValue(id, out var f) ? f : "(item no longer shared)";
+
+            // Pair each "open" with its later "close" per (viewer, file) to show who, what, when, and how long.
+            var asc = records.OrderBy(r => r.Time).ToList();
+            var openAt = new Dictionary<string, DateTimeOffset>();
+            var rows = new List<string>();
+            foreach (var r in asc)
+            {
+                var key = r.Viewer + "|" + r.ObjectId;
+                if (r.Action == "open") openAt[key] = r.Time;
+                else if (r.Action == "close" && openAt.TryGetValue(key, out var t))
+                {
+                    rows.Add($"{PeerName(r.Viewer)} — {FileName(r.ObjectId)} — opened {t.LocalDateTime:g}, closed {r.Time.LocalDateTime:t}  ({FormatDuration(r.Time - t)})");
+                    openAt.Remove(key);
+                }
+            }
+            // Opens with no matching close yet (still open, or the viewer didn't signal a close).
+            foreach (var kv in openAt)
+            {
+                var parts = kv.Key.Split('|', 2);
+                Guid.TryParse(parts[0], out var v);
+                rows.Add($"{PeerName(v)} — {FileName(parts[1])} — opened {kv.Value.LocalDateTime:g}  (still open)");
+            }
+            rows.Reverse(); // newest first
+
+            object content = rows.Count == 0
+                ? new TextBlock { Text = "No file access recorded yet." }
+                : new ListView { ItemsSource = rows, SelectionMode = ListViewSelectionMode.None, MaxHeight = 460, MinWidth = 540 };
             await new ContentDialog { Title = "Access log", Content = content, CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot }.ShowAsync();
         }
         catch (Exception ex) { await MessageAsync("Access log", "Couldn't fetch the log: " + ex.Message); }
+    }
+
+    private static string FormatDuration(TimeSpan d)
+    {
+        if (d.TotalSeconds < 1) return "<1s";
+        if (d.TotalMinutes < 1) return $"{(int)d.TotalSeconds}s";
+        if (d.TotalHours < 1) return $"{(int)d.TotalMinutes}m {d.Seconds}s";
+        return $"{(int)d.TotalHours}h {d.Minutes}m";
     }
 
     // ---- small dialog helpers ----
