@@ -532,6 +532,30 @@ public sealed partial class MainWindow
 
     // Online + regenerate ----------------------------------------------------
 
+    private bool _sharingOnlineDeclined; // skip re-prompting after the user cancels once this session
+
+    /// <summary>Called when a vault is unlocked: bring sharing online so friends can reach it. Silent if the
+    /// identity is already loaded; otherwise a single passphrase prompt (skipped if declined this session,
+    /// or if no sharing identity exists — preserving deniability).</summary>
+    private async Task MaybeBringSharingOnlineAsync()
+    {
+        try
+        {
+            if (_sharing is not null) { await EnsureOnlineAsync(); return; }
+            if (_sharingOnlineDeclined || !SecureSharing.Exists()) return;
+
+            var pass = await PromptPassphraseAsync("Secure sharing",
+                "Bring secure sharing online so friends can access the vaults you share with them? "
+                + "Enter your sharing passphrase, or cancel to skip.", "Go online");
+            if (pass is null) { _sharingOnlineDeclined = true; return; }
+            try { _sharing = SecureSharing.Open(pass); }
+            catch (CryptographicException) { await MessageAsync("Secure sharing", "Wrong passphrase."); return; }
+            AttachSharingEvents();
+            await EnsureOnlineAsync();
+        }
+        catch (Exception ex) { App.Log("Sharing", ex); }
+    }
+
     private async Task EnsureOnlineAsync()
     {
         if (_sharing is null || _sharing.IsOnline) return;
