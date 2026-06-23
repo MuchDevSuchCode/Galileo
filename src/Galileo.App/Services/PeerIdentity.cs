@@ -110,6 +110,29 @@ public static class PeerIdentity
     public static byte[] AgreePublicFromPrivate(byte[] agreePrivate)
         => new X25519PrivateKeyParameters(agreePrivate, 0).GeneratePublicKey().GetEncoded();
 
+    // ---- sealed messages to a specific peer (friend requests/accepts) ----
+    // Authenticated encryption to one peer using static X25519 (both ends derive the same key). Not
+    // forward-secret — fine for tiny control messages routed through the relay's store-and-forward mailbox,
+    // where the relay must not see the contents (e.g. the sender's alias).
+
+    private const string FriendInfo = "galileo-friend-v1";
+
+    public static byte[] SealForPeer(byte[] myAgreePrivate, byte[] theirAgreePublic, byte[] plaintext)
+    {
+        var ss = AgreeSharedSecret(myAgreePrivate, theirAgreePublic);
+        var key = Hkdf(ss, FriendInfo, 32);
+        try { return VaultCrypto.Encrypt(key, plaintext); }
+        finally { CryptographicOperations.ZeroMemory(ss); CryptographicOperations.ZeroMemory(key); }
+    }
+
+    public static byte[] OpenFromPeer(byte[] myAgreePrivate, byte[] theirAgreePublic, byte[] blob)
+    {
+        var ss = AgreeSharedSecret(myAgreePrivate, theirAgreePublic);
+        var key = Hkdf(ss, FriendInfo, 32);
+        try { return VaultCrypto.Decrypt(key, blob); }
+        finally { CryptographicOperations.ZeroMemory(ss); CryptographicOperations.ZeroMemory(key); }
+    }
+
     /// <summary>Signs data with the Ed25519 identity key (proves "I am this UUID" to the relay/peer).</summary>
     public static byte[] Sign(byte[] signPrivate, byte[] data)
     {

@@ -12,8 +12,39 @@ namespace Galileo.Services;
 /// <see cref="Vault"/> implements this; the protocol depends only on the seam (not on vault internals).</summary>
 public interface IShareSource
 {
+    /// <summary>Display name of the shared vault (shown to the viewer); empty when nothing is shared.</summary>
+    string ShareName { get; }
     IReadOnlyList<VaultEntry> ShareEntries();
     Stream OpenSharedEntry(string blobId);
+}
+
+/// <summary>Serves nothing — used when a friend has no current grant or the owner has no vault open.</summary>
+public sealed class EmptyShareSource : IShareSource
+{
+    public static readonly EmptyShareSource Instance = new();
+    public string ShareName => "";
+    public IReadOnlyList<VaultEntry> ShareEntries() => Array.Empty<VaultEntry>();
+    public Stream OpenSharedEntry(string blobId) => throw new FileNotFoundException("Not shared.");
+}
+
+/// <summary>Wraps a source so it only exposes anything while <paramref name="isGranted"/> returns true —
+/// lets share/revoke take effect live, per request, without tearing down the connection.</summary>
+public sealed class GrantGatedSource : IShareSource
+{
+    private readonly Func<bool> _isGranted;
+    private readonly IShareSource _inner;
+    public GrantGatedSource(Func<bool> isGranted, IShareSource inner) { _isGranted = isGranted; _inner = inner; }
+    public string ShareName => _isGranted() ? _inner.ShareName : "";
+    public IReadOnlyList<VaultEntry> ShareEntries() => _isGranted() ? _inner.ShareEntries() : Array.Empty<VaultEntry>();
+    public Stream OpenSharedEntry(string blobId) =>
+        _isGranted() ? _inner.OpenSharedEntry(blobId) : throw new FileNotFoundException("Not shared.");
+}
+
+/// <summary>A host's shared vault as the viewer sees it: the vault name plus its entries.</summary>
+public sealed class SharedListing
+{
+    public required string VaultName { get; init; }
+    public required IReadOnlyList<SharedItem> Items { get; init; }
 }
 
 /// <summary>One entry in a remote peer's shared vault, as seen by the viewer.</summary>
@@ -87,7 +118,7 @@ public static class ShareProtocol
         var entries = new List<object>();
         foreach (var e in vault.ShareEntries())
             entries.Add(new { id = e.BlobId, name = e.RelPath, size = e.Size, modified = e.ModifiedUtcTicks });
-        await SendAsync(relay, session, new { op = "list", entries }, ct);
+        await SendAsync(relay, session, new { op = "list", vault = vault.ShareName, entries }, ct);
         await relay.SendAuditAsync(session.PeerUuid, "(index)", "list", entries.Count, ct);
     }
 
@@ -121,8 +152,8 @@ public static class ShareProtocol
 
     // ---------------- Viewer (browses + fetches from a host over one session) ----------------
 
-    /// <summary>Lists the host's shared entries.</summary>
-    public static async Task<IReadOnlyList<SharedItem>> ListAsync(RelayClient relay, SecureSession session, CancellationToken ct)
+    /// <summary>Lists the host's shared vault (name + entries).</summary>
+    public static async Task<SharedListing> ListAsync(RelayClient relay, SecureSession session, CancellationToken ct)
     {
         await SendAsync(relay, session, new { op = "list" }, ct);
         using var doc = JsonDocument.Parse(await session.ReceiveAsync(relay, ct));
@@ -139,7 +170,8 @@ public static class ShareProtocol
                 Size = e.GetProperty("size").GetInt64(),
                 ModifiedUtcTicks = e.GetProperty("modified").GetInt64(),
             });
-        return items;
+        var name = root.TryGetProperty("vault", out var v) ? v.GetString() ?? "" : "";
+        return new SharedListing { VaultName = name, Items = items };
     }
 
     /// <summary>Streams a shared entry's bytes into <paramref name="dest"/>, reporting bytes received.</summary>

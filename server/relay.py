@@ -62,6 +62,16 @@ def init_db() -> None:
                 ts          REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS audit_host ON audit(host_uuid, ts);
+            CREATE TABLE IF NOT EXISTS mailbox (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                to_uuid   TEXT NOT NULL,  -- recipient
+                from_uuid TEXT NOT NULL,  -- sender
+                mtype     TEXT NOT NULL,  -- friend_req | friend_accept | unfriend
+                payload   TEXT NOT NULL,  -- base64 opaque ciphertext (relay can't read it)
+                sig       TEXT NOT NULL,  -- base64 Ed25519 over from|to|mtype|ts|payload (verified by recipient)
+                ts        INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS mailbox_to ON mailbox(to_uuid, id);
             """
         )
         conn.commit()
@@ -163,6 +173,57 @@ def record_audit(host_uuid: str, rec: dict) -> None:
         pass  # auditing must never break relaying
 
 
+# ----------------------------- mailbox (store-and-forward) -----------------------------
+# Small control messages (friend request / accept / unfriend) for peers who may be offline. The relay
+# stores opaque ciphertext + routing/sig only; the alias and any details inside payload are end-to-end
+# encrypted to the recipient. Delivered immediately if the recipient is online, else on their next connect.
+
+async def deliver_mail(ws: WebSocket, row) -> None:
+    await ws.send_text(json.dumps({
+        "type": "mail", "from": row["from_uuid"], "mtype": row["mtype"],
+        "payload": row["payload"], "sig": row["sig"], "ts": row["ts"],
+    }))
+
+
+async def flush_mailbox(ws: WebSocket, uuid: str) -> None:
+    with closing(db()) as conn:
+        rows = conn.execute(
+            "SELECT id, from_uuid, mtype, payload, sig, ts FROM mailbox WHERE to_uuid=? ORDER BY id", (uuid,)
+        ).fetchall()
+    for r in rows:
+        try:
+            await deliver_mail(ws, r)
+            with closing(db()) as conn:
+                conn.execute("DELETE FROM mailbox WHERE id=?", (r["id"],))
+                conn.commit()
+        except Exception:
+            break  # socket died mid-flush; leave the rest queued for next time
+
+
+async def handle_mail(from_uuid: str, msg: dict) -> None:
+    to = str(msg.get("to", ""))
+    if not to:
+        return
+    record = {
+        "from_uuid": from_uuid, "mtype": str(msg.get("mtype", "")),
+        "payload": str(msg.get("payload", "")), "sig": str(msg.get("sig", "")),
+        "ts": int(msg.get("ts", 0) or 0),
+    }
+    target = _online.get(to)
+    if target is not None:
+        try:
+            await deliver_mail(target, {"id": 0, "to_uuid": to, **record})
+            return
+        except Exception:
+            pass  # fall through to store if delivery failed
+    with closing(db()) as conn:
+        conn.execute(
+            "INSERT INTO mailbox(to_uuid, from_uuid, mtype, payload, sig, ts) VALUES(?,?,?,?,?,?)",
+            (to, record["from_uuid"], record["mtype"], record["payload"], record["sig"], record["ts"]),
+        )
+        conn.commit()
+
+
 # ----------------------------- WebSocket relay -----------------------------
 #
 # Protocol (all JSON text frames):
@@ -192,16 +253,22 @@ async def connect(ws: WebSocket):
 
         _online[uuid] = ws
         await ws.send_text(json.dumps({"type": "ready"}))
+        await flush_mailbox(ws, uuid)
 
         while True:
             msg = json.loads(await ws.receive_text())
             kind = msg.get("type")
-            if kind == "relay":
+            if kind == "mail":
+                await handle_mail(uuid, msg)
+            elif kind == "relay":
                 target = _online.get(str(msg.get("to", "")))
                 if target is None:
                     await ws.send_text(json.dumps({"type": "error", "reason": "peer offline", "to": msg.get("to")}))
                     continue
-                await target.send_text(json.dumps({"type": "relay", "from": uuid, "payload": msg.get("payload", "")}))
+                await target.send_text(json.dumps({
+                    "type": "relay", "from": uuid,
+                    "sid": msg.get("sid", ""), "payload": msg.get("payload", ""),
+                }))
             elif kind == "audit":
                 record_audit(uuid, msg.get("record", {}) or {})
             elif kind == "ping":

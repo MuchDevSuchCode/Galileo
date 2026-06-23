@@ -14,6 +14,23 @@ using System.Threading.Tasks;
 
 namespace Galileo.Services;
 
+/// <summary>Identifies one inbound session: the connecting peer plus a session id it chose.</summary>
+public sealed class SessionId
+{
+    public required Guid Peer { get; init; }
+    public required string Sid { get; init; }
+}
+
+/// <summary>A store-and-forward control message from a peer (friend request/accept/unfriend).</summary>
+public sealed class MailItem
+{
+    public required Guid From { get; init; }
+    public required string Mtype { get; init; }
+    public required byte[] Payload { get; init; }   // opaque ciphertext sealed to us
+    public required byte[] Signature { get; init; } // Ed25519 by the sender over from|to|mtype|ts|payload
+    public required long Ts { get; init; }
+}
+
 /// <summary>A peer's public identity as discovered from the relay (UUID + public keys).</summary>
 public sealed class RemotePeer
 {
@@ -35,8 +52,11 @@ public sealed class RelayClient : IDisposable
     private readonly string _httpBase;
     private readonly CancellationTokenSource _cts = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
-    private readonly ConcurrentDictionary<Guid, Channel<byte[]>> _inboxes = new();
-    private readonly Channel<Guid> _newPeers = Channel.CreateUnbounded<Guid>();
+    // Inbound session payloads are demultiplexed per (peer, session id) so concurrent or sequential
+    // sessions to the same peer never collide on one queue. Key = "{peer}|{sid}".
+    private readonly ConcurrentDictionary<string, Channel<byte[]>> _inboxes = new();
+    private readonly Channel<SessionId> _newSessions = Channel.CreateUnbounded<SessionId>();
+    private readonly Channel<MailItem> _mail = Channel.CreateUnbounded<MailItem>();
     private Task? _recvLoop;
 
     private RelayClient(ClientWebSocket ws, PeerKeys me, string httpBase)
@@ -48,14 +68,21 @@ public sealed class RelayClient : IDisposable
 
     public Guid Uuid => _me.Uuid;
 
-    /// <summary>Emits a peer UUID the first time an envelope arrives from it (host side: accept new viewers).</summary>
-    public ChannelReader<Guid> NewPeers => _newPeers.Reader;
+    /// <summary>Emits (peer, session id) the first time a frame arrives for a new inbound session
+    /// (host side: accept the connecting viewer's session).</summary>
+    public ChannelReader<SessionId> NewSessions => _newSessions.Reader;
 
-    /// <summary>Per-peer inbound queue of opaque payloads (created on demand).</summary>
-    public ChannelReader<byte[]> InboxFor(Guid peer) => Inbox(peer).Reader;
+    /// <summary>A store-and-forward control message (friend request/accept/unfriend) from another peer.
+    /// The <see cref="MailItem.Payload"/> is opaque ciphertext sealed to us; verify Sig and decrypt it.</summary>
+    public ChannelReader<MailItem> Mail => _mail.Reader;
 
-    private Channel<byte[]> Inbox(Guid peer) =>
-        _inboxes.GetOrAdd(peer, _ => Channel.CreateUnbounded<byte[]>());
+    /// <summary>Per-session inbound queue of opaque payloads (created on demand).</summary>
+    public ChannelReader<byte[]> InboxFor(Guid peer, string sid) => Inbox(peer, sid).Reader;
+
+    private static string Key(Guid peer, string sid) => peer.ToString() + "|" + sid;
+
+    private Channel<byte[]> Inbox(Guid peer, string sid) =>
+        _inboxes.GetOrAdd(Key(peer, sid), _ => Channel.CreateUnbounded<byte[]>());
 
     private static long UnixNow() => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
@@ -167,10 +194,22 @@ public sealed class RelayClient : IDisposable
         return client;
     }
 
-    /// <summary>Sends an opaque payload to a peer (the relay forwards it without inspecting it).</summary>
-    public async Task SendAsync(Guid to, byte[] payload, CancellationToken ct = default)
+    /// <summary>Sends an opaque payload to a peer within a session (the relay forwards it blindly).</summary>
+    public async Task SendAsync(Guid to, string sid, byte[] payload, CancellationToken ct = default)
     {
-        var frame = JsonSerializer.Serialize(new { type = "relay", to = to.ToString(), payload = Convert.ToBase64String(payload) });
+        var frame = JsonSerializer.Serialize(new { type = "relay", to = to.ToString(), sid, payload = Convert.ToBase64String(payload) });
+        await SendRawAsync(frame, ct);
+    }
+
+    /// <summary>Sends a store-and-forward control message to a peer (delivered now if online, else queued).
+    /// The payload is opaque to the relay; sign it so the recipient can authenticate it.</summary>
+    public async Task SendMailAsync(Guid to, string mtype, byte[] payload, long ts, byte[] signature, CancellationToken ct = default)
+    {
+        var frame = JsonSerializer.Serialize(new
+        {
+            type = "mail", to = to.ToString(), mtype,
+            payload = Convert.ToBase64String(payload), ts, sig = Convert.ToBase64String(signature),
+        });
         await SendRawAsync(frame, ct);
     }
 
@@ -208,11 +247,23 @@ public sealed class RelayClient : IDisposable
                     case "relay":
                         if (Guid.TryParse(root.GetProperty("from").GetString(), out var from))
                         {
+                            var sid = root.TryGetProperty("sid", out var s) ? s.GetString() ?? "" : "";
                             var payload = Convert.FromBase64String(root.GetProperty("payload").GetString() ?? "");
-                            var fresh = !_inboxes.ContainsKey(from);
-                            Inbox(from).Writer.TryWrite(payload);
-                            if (fresh) _newPeers.Writer.TryWrite(from);
+                            var fresh = !_inboxes.ContainsKey(Key(from, sid));
+                            Inbox(from, sid).Writer.TryWrite(payload);
+                            if (fresh) _newSessions.Writer.TryWrite(new SessionId { Peer = from, Sid = sid });
                         }
+                        break;
+                    case "mail":
+                        if (Guid.TryParse(root.GetProperty("from").GetString(), out var mfrom))
+                            _mail.Writer.TryWrite(new MailItem
+                            {
+                                From = mfrom,
+                                Mtype = root.GetProperty("mtype").GetString() ?? "",
+                                Payload = Convert.FromBase64String(root.GetProperty("payload").GetString() ?? ""),
+                                Signature = Convert.FromBase64String(root.GetProperty("sig").GetString() ?? ""),
+                                Ts = root.TryGetProperty("ts", out var mts) ? mts.GetInt64() : 0,
+                            });
                         break;
                     // "error"/"pong" are advisory; ignore here (callers time out on missing replies).
                 }
@@ -262,17 +313,21 @@ public sealed class SecureSession : IDisposable
     private long _recvCtr;
 
     public Guid PeerUuid { get; }
+    public string Sid { get; }
 
-    private SecureSession(Guid peer, byte[] sendKey, byte[] recvKey)
+    private SecureSession(Guid peer, string sid, byte[] sendKey, byte[] recvKey)
     {
         PeerUuid = peer;
+        Sid = sid;
         _sendKey = sendKey;
         _recvKey = recvKey;
     }
 
-    /// <summary>Initiator side of the handshake (the viewer connecting to a host).</summary>
+    /// <summary>Initiator side of the handshake (the viewer connecting to a host). Generates a fresh
+    /// session id so repeat/concurrent connections to the same peer never collide.</summary>
     public static async Task<SecureSession> InitiateAsync(RelayClient relay, PeerKeys me, RemotePeer them, CancellationToken ct = default)
     {
+        var sid = Guid.NewGuid().ToString("N");
         // 1) send hello with our signed ephemeral public key
         var eph = GenerateEphemeral();
         try
@@ -281,11 +336,11 @@ public sealed class SecureSession : IDisposable
             var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var sig = Convert.ToBase64String(PeerIdentity.Sign(me.SignPrivate,
                 Encoding.UTF8.GetBytes($"{HsContext}|{me.Uuid}|{them.Uuid}|{ephPub}|{ts}")));
-            await relay.SendAsync(them.Uuid,
+            await relay.SendAsync(them.Uuid, sid,
                 Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { t = "hs1", eph = ephPub, ts, sig })), ct);
 
             // 2) receive hello-ack, verify it signs our ephemeral too (transcript binding)
-            var reply = await ReadJsonAsync(relay.InboxFor(them.Uuid), ct);
+            var reply = await ReadJsonAsync(relay.InboxFor(them.Uuid, sid), ct);
             if (reply.GetProperty("t").GetString() != "hs2") throw new InvalidOperationException("Unexpected handshake reply.");
             var theirEphB64 = reply.GetProperty("eph").GetString()!;
             var theirTs = reply.GetProperty("ts").GetInt64();
@@ -295,13 +350,14 @@ public sealed class SecureSession : IDisposable
                 throw new InvalidOperationException("Peer handshake signature invalid.");
 
             var theirEph = Convert.FromBase64String(theirEphB64);
-            return Derive(me, them, eph.AgreePrivate, theirEph, weAreInitiator: true);
+            return Derive(me, them, sid, eph.AgreePrivate, theirEph);
         }
         finally { eph.Wipe(); }
     }
 
-    /// <summary>Responder side (the host accepting a viewer). <paramref name="firstHello"/> is the viewer's hs1 payload.</summary>
-    public static async Task<SecureSession> AcceptAsync(RelayClient relay, PeerKeys me, RemotePeer them, byte[] firstHello, CancellationToken ct = default)
+    /// <summary>Responder side (the host accepting a viewer). <paramref name="firstHello"/> is the viewer's
+    /// hs1 payload, received on session <paramref name="sid"/>.</summary>
+    public static async Task<SecureSession> AcceptAsync(RelayClient relay, PeerKeys me, RemotePeer them, string sid, byte[] firstHello, CancellationToken ct = default)
     {
         using var helloDoc = JsonDocument.Parse(firstHello);
         var hello = helloDoc.RootElement;
@@ -320,18 +376,18 @@ public sealed class SecureSession : IDisposable
             var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var sig = Convert.ToBase64String(PeerIdentity.Sign(me.SignPrivate,
                 Encoding.UTF8.GetBytes($"{HsContext}|{me.Uuid}|{them.Uuid}|{theirEphB64}|{ephPub}|{ts}")));
-            await relay.SendAsync(them.Uuid,
+            await relay.SendAsync(them.Uuid, sid,
                 Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { t = "hs2", eph = ephPub, ts, sig })), ct);
 
             var theirEph = Convert.FromBase64String(theirEphB64);
-            return Derive(me, them, eph.AgreePrivate, theirEph, weAreInitiator: false);
+            return Derive(me, them, sid, eph.AgreePrivate, theirEph);
         }
         finally { eph.Wipe(); }
     }
 
     // Mix ephemeral-ephemeral DH (forward secrecy) with static-static DH (binds to identities), then split
     // into per-direction keys keyed by a stable ordering of the two UUIDs.
-    private static SecureSession Derive(PeerKeys me, RemotePeer them, byte[] myEphPriv, byte[] theirEphPub, bool weAreInitiator)
+    private static SecureSession Derive(PeerKeys me, RemotePeer them, string sid, byte[] myEphPriv, byte[] theirEphPub)
     {
         var ee = PeerIdentity.AgreeSharedSecret(myEphPriv, theirEphPub);
         var ss = PeerIdentity.AgreeSharedSecret(me.AgreePrivate, them.AgreePublic);
@@ -351,7 +407,7 @@ public sealed class SecureSession : IDisposable
                 var keyBtoA = Hkdf(root, "b2a", 32);
                 // I send with my-to-peer key; receive with peer-to-me key.
                 var (sendKey, recvKey) = aFirst ? (keyAtoB, keyBtoA) : (keyBtoA, keyAtoB);
-                return new SecureSession(them.Uuid, sendKey, recvKey);
+                return new SecureSession(them.Uuid, sid, sendKey, recvKey);
             }
             finally { CryptographicOperations.ZeroMemory(root); }
         }
@@ -391,13 +447,13 @@ public sealed class SecureSession : IDisposable
         return plain;
     }
 
-    /// <summary>Encrypt + send a plaintext message to the peer over the relay.</summary>
+    /// <summary>Encrypt + send a plaintext message to the peer over the relay (within this session).</summary>
     public Task SendAsync(RelayClient relay, ReadOnlySpan<byte> plaintext, CancellationToken ct = default)
-        => relay.SendAsync(PeerUuid, Encrypt(plaintext), ct);
+        => relay.SendAsync(PeerUuid, Sid, Encrypt(plaintext), ct);
 
-    /// <summary>Receive + decrypt the next message from the peer.</summary>
+    /// <summary>Receive + decrypt the next message from the peer (within this session).</summary>
     public async Task<byte[]> ReceiveAsync(RelayClient relay, CancellationToken ct = default)
-        => Decrypt(await relay.InboxFor(PeerUuid).ReadAsync(ct));
+        => Decrypt(await relay.InboxFor(PeerUuid, Sid).ReadAsync(ct));
 
     private static byte[] NonceFor(long counter)
     {

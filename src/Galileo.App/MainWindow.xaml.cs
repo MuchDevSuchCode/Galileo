@@ -5205,9 +5205,9 @@ public sealed partial class MainWindow : Window
 
         switch (e.Key)
         {
-            // Ctrl+Alt+V: open a vault (the only entry point when the vault is hidden from the sidebar).
+            // Ctrl+Alt+V: open a local vault, or browse what friends share with you.
             case VirtualKey.V when IsCtrlDown() && IsAltDown() && !IsTextInputFocused():
-                _ = ShowVaultPickerAsync(); e.Handled = true; break;
+                OpenVaultShortcutAsync(); e.Handled = true; break;
 
             case VirtualKey.F5:
                 if (ExplorerView.Visibility == Visibility.Visible) LoadCurrentFolder();
