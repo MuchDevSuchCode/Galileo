@@ -27,6 +27,10 @@ public partial class App : Application
 
     private static readonly object _fcLock = new();
 
+    /// <summary>True once this process is registered as the single-instance key holder and its Activated
+    /// handler is wired to <see cref="OnRedirected"/> (by Program.Main or, mid-session, by the tray).</summary>
+    internal static bool SingleInstanceHooked;
+
     private Window? _window;
 
     public App()
@@ -79,8 +83,12 @@ public partial class App : Application
         {
             try
             {
-                if (window is MainWindow mw && !string.IsNullOrEmpty(path)) mw.OpenExternalPath(path!);
-                window.Activate();
+                if (window is MainWindow mw)
+                {
+                    if (!string.IsNullOrEmpty(path)) mw.OpenExternalPath(path!);
+                    mw.RestoreFromBackground(); // un-hide if it was minimized to the tray, then bring to front
+                }
+                else window.Activate();
             }
             catch (Exception ex) { Log("Redirected", ex); }
         });
