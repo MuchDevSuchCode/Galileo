@@ -366,6 +366,8 @@ public sealed partial class MainWindow
         public required CancellationTokenSource Cts { get; init; }
         // full temp path (lowercased) -> shared object id, so opening a temp file maps back to the share.
         public required Dictionary<string, string> PathToId { get; init; }
+        // Serializes list/download so an initial sync and a refresh can't race the session's request/response.
+        public SemaphoreSlim Gate { get; } = new(1, 1);
     }
     private RemoteBrowse? _remoteBrowse;
     private string? _currentRemoteViewId; // the shared file currently open in the viewer (for view/close audit)
@@ -462,55 +464,109 @@ public sealed partial class MainWindow
         return result;
     }
 
-    // Stream the shared files into a temp folder and open it in the explorer. The folder watcher shows
-    // each file (with thumbnail) as it lands, so browsing feels exactly like a local folder.
+    // Open a friend's shared vault in the explorer. Files stream into a temp folder; refreshing (F5)
+    // re-lists against the live vault so adds/deletes/changes on the owner's side show up.
     private void StartRemoteBrowse(SecureSession session, SharedListing listing)
     {
         CleanupRemoteBrowse(); // tear down any previous browse
         var dir = Path.Combine(Path.GetTempPath(), "GalileoShare", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
-        var cts = new CancellationTokenSource();
-        var pathToId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var it in listing.Items)
-            pathToId[Path.Combine(dir, it.Name.Replace('/', Path.DirectorySeparatorChar))] = it.Id;
-        _remoteBrowse = new RemoteBrowse { Session = session, Dir = dir, Cts = cts, PathToId = pathToId };
+        _remoteBrowse = new RemoteBrowse
+        {
+            Session = session, Dir = dir, Cts = new CancellationTokenSource(),
+            PathToId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+        };
 
         ShowExplorer();
         NavigateTo(dir);
-        StatusText.Text = $"{listing.VaultName}: downloading {listing.Items.Count} file(s)…";
+        _ = Task.Run(() => SyncRemoteBrowseAsync(_remoteBrowse, listing));
+    }
 
-        var relay = _sharing!.Relay;
-        var items = listing.Items;
-        var name = listing.VaultName;
-        _ = Task.Run(async () =>
+    /// <summary>Re-sync the open shared folder against the owner's live vault (F5): pull new/changed files,
+    /// remove ones the owner deleted, drop stale partials.</summary>
+    private void RefreshRemoteBrowse()
+    {
+        var rb = _remoteBrowse;
+        if (rb is null) return;
+        StatusText.Text = "Refreshing shared vault…";
+        _ = Task.Run(() => SyncRemoteBrowseAsync(rb, null)); // null → re-list from the owner
+    }
+
+    private async Task SyncRemoteBrowseAsync(RemoteBrowse rb, SharedListing? listing)
+    {
+        var relay = _sharing?.Relay;
+        if (relay is null) return;
+        await rb.Gate.WaitAsync();
+        try
         {
+            // Re-list from the owner unless we were handed a fresh listing (initial open).
+            if (listing is null)
+            {
+                using var lcts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                listing = await ShareProtocol.ListAsync(relay, rb.Session, lcts.Token);
+            }
+            var dir = rb.Dir;
+            var sep = Path.DirectorySeparatorChar;
+
+            // Desired state: dest path -> object id.
+            var desired = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var it in listing.Items)
+                desired[Path.Combine(dir, it.Name.Replace('/', sep))] = it.Id;
+
+            // Remove files the owner deleted, and any leftover partials.
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                    if (f.EndsWith(".part", StringComparison.OrdinalIgnoreCase) || !desired.ContainsKey(f))
+                        try { File.SetAttributes(f, FileAttributes.Normal); File.Delete(f); } catch { }
+            }
+            catch { }
+
+            rb.PathToId.Clear();
+            foreach (var kv in desired) rb.PathToId[kv.Key] = kv.Value;
+
+            var items = listing.Items;
+            var name = listing.VaultName;
             var done = 0;
             foreach (var it in items)
             {
-                if (cts.IsCancellationRequested) return;
-                try
+                if (rb.Cts.IsCancellationRequested) return;
+                var dest = Path.Combine(dir, it.Name.Replace('/', sep));
+                // Download only what we don't already have at the right size (handles adds + changes).
+                if (!File.Exists(dest) || new FileInfo(dest).Length != it.Size)
                 {
-                    var dest = Path.Combine(dir, it.Name.Replace('/', Path.DirectorySeparatorChar));
-                    Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                    // Download to a .part file, then rename — so the explorer only ever sees a complete
-                    // file appear (a partial file would thumbnail as blank and never retry).
                     var part = dest + ".part";
-                    using (var fs = File.Create(part))
-                        await ShareProtocol.FetchAsync(relay, session, it.Id, it.Size, fs, null, cts.Token);
-                    File.Move(part, dest, overwrite: true);
+                    try
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                        using (var fs = File.Create(part))
+                        {
+                            try { File.SetAttributes(part, FileAttributes.Hidden); } catch { } // hide the partial from the view
+                            await ShareProtocol.FetchAsync(relay, rb.Session, it.Id, it.Size, fs, null, rb.Cts.Token);
+                        }
+                        File.Move(part, dest, overwrite: true);
+                        try { File.SetAttributes(dest, FileAttributes.Normal); } catch { }
+                    }
+                    catch { try { File.Delete(part); } catch { } } // clear the partial if the file is gone / failed
                 }
-                catch { /* skip a file that fails */ }
                 done++;
-                var d = done;
+                var d = done; var total = items.Count;
                 RootGrid.DispatcherQueue.TryEnqueue(() =>
                 {
                     if (_remoteBrowse?.Dir != dir) return; // a newer browse replaced us
-                    // Show the just-finished file immediately (the watcher debounce starves while files stream).
                     if (string.Equals(_currentFolder, dir, StringComparison.OrdinalIgnoreCase)) RefreshFolderIncremental();
-                    StatusText.Text = d < items.Count ? $"{name}: downloading {d}/{items.Count}…" : $"{name} — {items.Count} file(s) (shared, read-only)";
+                    StatusText.Text = d < total ? $"{name}: syncing {d}/{total}…" : $"{name} — {total} file(s) (shared, read-only)";
                 });
             }
-        });
+            // Final refresh so deletions disappear even if nothing was downloaded.
+            RootGrid.DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_remoteBrowse?.Dir == dir && string.Equals(_currentFolder, dir, StringComparison.OrdinalIgnoreCase))
+                    RefreshFolderIncremental();
+            });
+        }
+        catch (Exception ex) { App.Log("RemoteSync", ex); }
+        finally { rb.Gate.Release(); }
     }
 
     private void CleanupRemoteBrowse()
@@ -534,6 +590,7 @@ public sealed partial class MainWindow
         catch { /* best effort */ }
         try { rb.Session.Dispose(); } catch { }
         rb.Cts.Dispose();
+        rb.Gate.Dispose();
         try { if (Directory.Exists(rb.Dir)) VaultCrypto.WipeDirectory(rb.Dir); } catch { }
     }
 
