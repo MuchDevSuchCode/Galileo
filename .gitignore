@@ -4,6 +4,8 @@
 [Oo]ut/
 publish/
 [Pp]ublish/
+dist/
+[Dd]ist/
 [Dd]ebug/
 [Rr]elease/
 x64/
