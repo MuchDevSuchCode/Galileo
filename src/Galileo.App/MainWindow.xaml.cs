@@ -522,6 +522,7 @@ public sealed partial class MainWindow : Window
     {
         if (VideoEditorPanel.Visibility == Visibility.Visible || EditTimeline.Visibility == Visibility.Visible) CloseVideoEditor();
         StopVideo();
+        NoteRemoteView(null); // leaving the viewer → close any shared-file access
         ViewerView.Visibility = Visibility.Collapsed;
         GalleryView.Visibility = Visibility.Collapsed;
         CollageView.Visibility = Visibility.Collapsed;
@@ -558,6 +559,7 @@ public sealed partial class MainWindow : Window
         }
 
         EnterImageMode();
+        NoteRemoteView(item.Path); // log a view if this image is from a friend's shared vault
         _rotation = 0;
         _bmpW = _bmpH = 0;
 
@@ -2328,6 +2330,7 @@ public sealed partial class MainWindow : Window
         {
             var file = await StorageFile.GetFileFromPathAsync(item.Path);
             ShowViewer();
+            NoteRemoteView(item.Path); // log a view if this video is from a friend's shared vault
             EnterVideoMode();
             var isAudio = PhotoLibrary.IsAudio(item.Path);
             AudioOverlay.Visibility = isAudio ? Visibility.Visible : Visibility.Collapsed;

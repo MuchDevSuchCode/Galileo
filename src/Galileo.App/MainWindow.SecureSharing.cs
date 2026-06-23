@@ -352,8 +352,11 @@ public sealed partial class MainWindow
         public required SecureSession Session { get; init; }
         public required string Dir { get; init; }
         public required CancellationTokenSource Cts { get; init; }
+        // full temp path (lowercased) -> shared object id, so opening a temp file maps back to the share.
+        public required Dictionary<string, string> PathToId { get; init; }
     }
     private RemoteBrowse? _remoteBrowse;
+    private string? _currentRemoteViewId; // the shared file currently open in the viewer (for view/close audit)
 
     /// <summary>Wipe any leftover remote-browse temp folders (called at startup; best-effort).</summary>
     private static void WipeShareTempDirs()
@@ -443,7 +446,10 @@ public sealed partial class MainWindow
         var dir = Path.Combine(Path.GetTempPath(), "GalileoShare", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         var cts = new CancellationTokenSource();
-        _remoteBrowse = new RemoteBrowse { Session = session, Dir = dir, Cts = cts };
+        var pathToId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var it in listing.Items)
+            pathToId[Path.Combine(dir, it.Name.Replace('/', Path.DirectorySeparatorChar))] = it.Id;
+        _remoteBrowse = new RemoteBrowse { Session = session, Dir = dir, Cts = cts, PathToId = pathToId };
 
         ShowExplorer();
         NavigateTo(dir);
@@ -479,6 +485,7 @@ public sealed partial class MainWindow
 
     private void CleanupRemoteBrowse()
     {
+        NoteRemoteView(null); // close out any in-viewer access first
         var rb = _remoteBrowse;
         _remoteBrowse = null;
         if (rb is null) return;
@@ -486,6 +493,35 @@ public sealed partial class MainWindow
         try { rb.Session.Dispose(); } catch { }
         rb.Cts.Dispose();
         try { if (Directory.Exists(rb.Dir)) Directory.Delete(rb.Dir, true); } catch { }
+    }
+
+    /// <summary>Call when the actively-viewed file changes (image load / video open), or null when leaving
+    /// the viewer. If the file belongs to the current remote browse, signal the owner so their access log
+    /// records what was actually viewed (open) and when it was closed (duration).</summary>
+    private void NoteRemoteView(string? path)
+    {
+        var rb = _remoteBrowse;
+        string? newId = null;
+        if (rb is not null && path is not null && rb.PathToId.TryGetValue(path, out var id)) newId = id;
+        if (newId == _currentRemoteViewId) return; // unchanged
+
+        var prev = _currentRemoteViewId;
+        _currentRemoteViewId = newId;
+        if (rb is null) { _currentRemoteViewId = null; return; }
+
+        if (prev is not null) _ = SafeSignalAsync(rb.Session, prev, open: false);
+        if (newId is not null) _ = SafeSignalAsync(rb.Session, newId, open: true);
+    }
+
+    private async Task SafeSignalAsync(SecureSession session, string id, bool open)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            if (open) await ShareProtocol.ViewAsync(_sharing!.Relay, session, id, cts.Token);
+            else await ShareProtocol.CloseAsync(_sharing!.Relay, session, id, cts.Token);
+        }
+        catch { /* best effort */ }
     }
 
     // Online + regenerate ----------------------------------------------------
@@ -588,6 +624,16 @@ public sealed partial class MainWindow
             rows.Reverse();
 
             var dlg = new ContentDialog { Title = "Access log", CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot };
+            if (records.Count > 0)
+            {
+                dlg.PrimaryButtonText = "Clear log";
+                dlg.PrimaryButtonClick += async (_, args) =>
+                {
+                    var def = args.GetDeferral();
+                    try { await _sharing!.ClearAuditAsync(url); } catch { }
+                    def.Complete();
+                };
+            }
             object content;
             if (rows.Count == 0)
             {

@@ -160,6 +160,20 @@ def audit_query(q: AuditQuery):
     return {"records": [dict(r) for r in rows]}
 
 
+@app.post("/audit/clear")
+def audit_clear(q: AuditQuery):
+    """Deletes the caller's own audit records (signed over 'audit-clear:{uuid}:{ts}')."""
+    if not fresh(q.ts):
+        raise HTTPException(400, "stale timestamp")
+    with closing(db()) as conn:
+        peer = conn.execute("SELECT sign_pub FROM peers WHERE uuid=?", (q.uuid,)).fetchone()
+        if not peer or not verify_sig(peer["sign_pub"], f"audit-clear:{q.uuid}:{q.ts}".encode(), q.sig):
+            raise HTTPException(401, "bad signature")
+        conn.execute("DELETE FROM audit WHERE host_uuid=?", (q.uuid,))
+        conn.commit()
+    return {"ok": True}
+
+
 def record_audit(host_uuid: str, rec: dict) -> None:
     try:
         with closing(db()) as conn:

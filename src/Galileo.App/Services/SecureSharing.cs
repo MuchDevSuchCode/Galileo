@@ -341,6 +341,9 @@ public sealed class SecureSharing : IDisposable
     public Task<IReadOnlyList<RelayClient.AuditRecord>> QueryAuditAsync(string relayUrl, CancellationToken ct = default)
         => RelayClient.QueryAuditAsync(relayUrl, Identity, ct);
 
+    public Task ClearAuditAsync(string relayUrl, CancellationToken ct = default)
+        => RelayClient.ClearAuditAsync(relayUrl, Identity, ct);
+
     public Task GoOfflineAsync()
     {
         try { _loopCts?.Cancel(); } catch { }
