@@ -105,6 +105,10 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _backupTimer = new() { Interval = TimeSpan.FromMinutes(30) };
     private readonly ObservableCollection<Models.VaultInfo> _vaultList = new();
     private readonly DispatcherTimer _vaultIdleTimer = new();
+    // Commit the unlocked vault's working folder to its encrypted store continuously, so a non-graceful
+    // exit can't lose changes. Backstop (periodic) + a short debounce fired when the working folder changes.
+    private readonly DispatcherTimer _vaultFlushTimer = new() { Interval = TimeSpan.FromSeconds(15) };
+    private readonly DispatcherTimer _vaultFlushDebounce = new() { Interval = TimeSpan.FromMilliseconds(2500) };
     private bool _closingForVaultLock;  // guards the re-entrant AppWindow.Closing lock flow
 
     // Polls for mounted/removed drives so the sidebar and This PC view stay current
@@ -206,6 +210,8 @@ public sealed partial class MainWindow : Window
         VaultsList.ItemsSource = _vaultList;
         RefreshVaults();
         _vaultIdleTimer.Tick += VaultIdle_Tick;
+        _vaultFlushTimer.Tick += (_, _) => FlushVaultSoon();
+        _vaultFlushDebounce.Tick += (_, _) => { _vaultFlushDebounce.Stop(); FlushVaultSoon(); };
         _appWindow.Closing += AppWindow_Closing;
 
         // Catch Ctrl+C/X/V/A even if the explorer list marks them handled first (handledEventsToo).
@@ -244,6 +250,10 @@ public sealed partial class MainWindow : Window
                 && string.IsNullOrEmpty(_searchQuery)
                 && string.Equals(_currentFolder, _watchedPath, StringComparison.OrdinalIgnoreCase))
                 RefreshFolderIncremental();
+            // If the change was inside the unlocked vault, commit it to the encrypted store promptly.
+            if (_vaults.Current?.WorkingDir is { } wd && _currentFolder is { } cf
+                && cf.StartsWith(wd, StringComparison.OrdinalIgnoreCase))
+                ScheduleVaultFlush();
         };
 
         InitBackground(); // tray icon + start-hidden if launched with --background
@@ -5753,6 +5763,7 @@ public sealed partial class MainWindow : Window
     {
         RefreshVaults();
         ResetVaultIdle();
+        StartVaultFlush(); // commit working-folder changes continuously, not only on lock
         ShowExplorer();
         NavigateTo(v.WorkingDir);
         StatusText.Text = $"Vault “{v.Name}” unlocked";
@@ -5911,6 +5922,7 @@ public sealed partial class MainWindow : Window
     {
         var work = _vaults.Current?.WorkingDir;
         StopVaultIdle();
+        StopVaultFlush();
         try { await _vaults.LockCurrentAsync(); }
         catch (Exception ex)
         {
@@ -5954,6 +5966,25 @@ public sealed partial class MainWindow : Window
 
     private void StopVaultIdle() => _vaultIdleTimer.Stop();
 
+    /// <summary>Begin continuous commits for a freshly-unlocked vault.</summary>
+    private void StartVaultFlush() => _vaultFlushTimer.Start();
+
+    private void StopVaultFlush() { _vaultFlushTimer.Stop(); _vaultFlushDebounce.Stop(); }
+
+    /// <summary>Schedule a commit shortly after a working-folder change (coalesces bursts).</summary>
+    private void ScheduleVaultFlush() { _vaultFlushDebounce.Stop(); _vaultFlushDebounce.Start(); }
+
+    private void FlushVaultSoon()
+    {
+        if (_vaults.IsAnyUnlocked) _ = SafeFlushVaultAsync();
+    }
+
+    private async Task SafeFlushVaultAsync()
+    {
+        try { await _vaults.FlushCurrentAsync(); }
+        catch (Exception ex) { App.Log("VaultFlush", ex); }
+    }
+
     private void VaultIdle_Tick(object? sender, object e)
     {
         _vaultIdleTimer.Stop();
@@ -5978,6 +6009,7 @@ public sealed partial class MainWindow : Window
         if (!_closingForVaultLock && !_exitingFromTray && _state.RunInBackground && _tray is not null)
         {
             args.Cancel = true;
+            try { await _vaults.FlushCurrentAsync(); } catch { } // commit vault changes before going to the tray
             try { _appWindow.Hide(); } catch { }
             return;
         }
