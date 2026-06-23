@@ -85,6 +85,9 @@ public sealed class AppState
     public bool VaultWipeOnFailure { get; set; }
     /// <summary>Number of consecutive wrong passphrases that triggers a wipe (when enabled).</summary>
     public int VaultWipeAfterAttempts { get; set; } = 10;
+    /// <summary>Hide the vault entry from the sidebar entirely; open a vault with Ctrl+Alt+V instead
+    /// (deniability — nothing in the UI hints a vault exists). On by default.</summary>
+    public bool HideVaultEntry { get; set; } = true;
     /// <summary>UTC ticks of the last successful Google Drive vault backup (0 = never).</summary>
     public long LastVaultBackupUtcTicks { get; set; }
 
@@ -227,6 +230,7 @@ public sealed class AppState
         VaultDefaultUseHello = o.VaultDefaultUseHello;
         VaultWipeOnFailure = o.VaultWipeOnFailure;
         VaultWipeAfterAttempts = o.VaultWipeAfterAttempts;
+        HideVaultEntry = o.HideVaultEntry;
         SlideshowSeconds = o.SlideshowSeconds;
         SlideshowShuffle = o.SlideshowShuffle;
         SlideshowLoop = o.SlideshowLoop;
