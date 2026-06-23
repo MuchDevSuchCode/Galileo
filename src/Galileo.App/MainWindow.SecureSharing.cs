@@ -361,7 +361,7 @@ public sealed partial class MainWindow
 
     private sealed class RemoteBrowse
     {
-        public required SecureSession Session { get; init; }
+        public required SecureSession Session { get; set; } // replaced if the session dies and we reconnect
         public required string Dir { get; init; }
         public required CancellationTokenSource Cts { get; init; }
         // full temp path (lowercased) -> shared object id, so opening a temp file maps back to the share.
@@ -371,6 +371,7 @@ public sealed partial class MainWindow
     }
     private RemoteBrowse? _remoteBrowse;
     private string? _currentRemoteViewId; // the shared file currently open in the viewer (for view/close audit)
+    private readonly DispatcherTimer _remoteSyncTimer = new() { Interval = TimeSpan.FromSeconds(8) }; // live auto-sync
 
     /// <summary>Securely wipe any leftover remote-browse temp folders (called at startup and on exit).</summary>
     private static void WipeShareTempDirs()
@@ -480,6 +481,7 @@ public sealed partial class MainWindow
         ShowExplorer();
         NavigateTo(dir);
         _ = Task.Run(() => SyncRemoteBrowseAsync(_remoteBrowse, listing));
+        _remoteSyncTimer.Start(); // keep it live: auto-sync the owner's adds/deletes every few seconds
     }
 
     /// <summary>Re-sync the open shared folder against the owner's live vault (F5): pull new/changed files,
@@ -492,6 +494,15 @@ public sealed partial class MainWindow
         _ = Task.Run(() => SyncRemoteBrowseAsync(rb, null)); // null → re-list from the owner
     }
 
+    /// <summary>Periodic auto-sync so the owner's adds/deletes show up without a manual refresh.</summary>
+    private void RemoteSyncTick()
+    {
+        var rb = _remoteBrowse;
+        if (rb is null) { _remoteSyncTimer.Stop(); return; }
+        if (rb.Gate.CurrentCount == 0) return; // a sync is already in progress
+        _ = Task.Run(() => SyncRemoteBrowseAsync(rb, null));
+    }
+
     private async Task SyncRemoteBrowseAsync(RemoteBrowse rb, SharedListing? listing)
     {
         var relay = _sharing?.Relay;
@@ -499,12 +510,29 @@ public sealed partial class MainWindow
         await rb.Gate.WaitAsync();
         try
         {
-            // Re-list from the owner unless we were handed a fresh listing (initial open).
+            // Re-list from the owner unless we were handed a fresh listing (initial open). If the session
+            // has died (owner reconnected / a relay drop), re-establish it once and retry — otherwise a
+            // refresh would silently keep stale files.
             if (listing is null)
             {
-                using var lcts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-                listing = await ShareProtocol.ListAsync(relay, rb.Session, lcts.Token);
+                try
+                {
+                    using var lcts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+                    listing = await ShareProtocol.ListAsync(relay, rb.Session, lcts.Token);
+                }
+                catch
+                {
+                    try
+                    {
+                        using var rcts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+                        var fresh = await _sharing!.ConnectToPeerAsync(rb.Session.PeerUuid, rcts.Token);
+                        var old = rb.Session; rb.Session = fresh; try { old.Dispose(); } catch { }
+                        listing = await ShareProtocol.ListAsync(relay, fresh, rcts.Token);
+                    }
+                    catch { return; } // owner offline — keep what we have
+                }
             }
+            App.LogInfo($"remote sync: owner lists {listing.Items.Count} item(s) for {listing.VaultName}");
             var dir = rb.Dir;
             var sep = Path.DirectorySeparatorChar;
 
@@ -514,13 +542,15 @@ public sealed partial class MainWindow
                 desired[Path.Combine(dir, it.Name.Replace('/', sep))] = it.Id;
 
             // Remove files the owner deleted, and any leftover partials.
+            var removed = 0;
             try
             {
                 foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
                     if (f.EndsWith(".part", StringComparison.OrdinalIgnoreCase) || !desired.ContainsKey(f))
-                        try { File.SetAttributes(f, FileAttributes.Normal); File.Delete(f); } catch { }
+                        try { File.SetAttributes(f, FileAttributes.Normal); File.Delete(f); removed++; } catch { }
             }
             catch { }
+            if (removed > 0) App.LogInfo($"remote sync: removed {removed} file(s) the owner deleted");
 
             rb.PathToId.Clear();
             foreach (var kv in desired) rb.PathToId[kv.Key] = kv.Value;
@@ -571,6 +601,7 @@ public sealed partial class MainWindow
 
     private void CleanupRemoteBrowse()
     {
+        _remoteSyncTimer.Stop();
         NoteRemoteView(null); // close out any in-viewer access first
         var rb = _remoteBrowse;
         _remoteBrowse = null;
