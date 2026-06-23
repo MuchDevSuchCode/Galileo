@@ -4686,6 +4686,7 @@ public sealed partial class MainWindow : Window
         VaultWipeSwitch.IsOn = _state.VaultWipeOnFailure;
         VaultWipeCountBox.Value = _state.VaultWipeAfterAttempts;
         VaultWipeCountRow.Visibility = _state.VaultWipeOnFailure ? Visibility.Visible : Visibility.Collapsed;
+        HideVaultSwitch.IsOn = _state.HideVaultEntry;
         DeveloperModeSwitch.IsOn = _state.DeveloperMode;
         WipeMethodCombo.SelectedIndex = CurrentWipeMethod switch
         {
@@ -5028,6 +5029,14 @@ public sealed partial class MainWindow : Window
         _state.Save();
     }
 
+    private void HideVaultSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.HideVaultEntry = HideVaultSwitch.IsOn;
+        _state.Save();
+        RefreshVaults();
+    }
+
     private void CollageLayoutCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingSettings) return;
@@ -5177,7 +5186,8 @@ public sealed partial class MainWindow : Window
     {
         if (PeekOverlay.Visibility == Visibility.Visible) return;
         if (ExplorerView.Visibility != Visibility.Visible) return;
-        if (!IsCtrlDown() || IsTextInputFocused()) return;
+        // Let Ctrl+Alt+V (open vault) fall through to RootGrid_KeyDown — don't treat it as paste.
+        if (!IsCtrlDown() || IsAltDown() || IsTextInputFocused()) return;
         switch (e.Key)
         {
             case VirtualKey.C: _ = CopySelectedExplorerAsync(cut: false); e.Handled = true; break;
@@ -5195,6 +5205,10 @@ public sealed partial class MainWindow : Window
 
         switch (e.Key)
         {
+            // Ctrl+Alt+V: open a vault (the only entry point when the vault is hidden from the sidebar).
+            case VirtualKey.V when IsCtrlDown() && IsAltDown() && !IsTextInputFocused():
+                _ = ShowVaultPickerAsync(); e.Handled = true; break;
+
             case VirtualKey.F5:
                 if (ExplorerView.Visibility == Visibility.Visible) LoadCurrentFolder();
                 else StartSlideshow();
@@ -5508,7 +5522,8 @@ public sealed partial class MainWindow : Window
         // The vault list only appears once something is unlocked; otherwise a single discreet entry.
         var open = _vaults.IsAnyUnlocked;
         VaultsSection.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
-        VaultsLockedEntry.Visibility = open ? Visibility.Collapsed : Visibility.Visible;
+        // When hidden for deniability, the locked entry never shows — open a vault with Ctrl+Alt+V.
+        VaultsLockedEntry.Visibility = (open || _state.HideVaultEntry) ? Visibility.Collapsed : Visibility.Visible;
         UpdateVaultLockButton();
     }
 

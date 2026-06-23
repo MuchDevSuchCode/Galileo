@@ -269,7 +269,7 @@ self-contained copy, just run `.\tools\install.ps1` again.
 Galileo can store folders in an encrypted **vault** that is hidden from Windows and only readable while unlocked.
 
 - **Create** — right-click a folder → **Move to new vault…**, or use **New vault** in the sidebar. You set a vault name and a strong passphrase (rated live by a **strength meter**, optionally enrolling **Windows Hello**). The folder's files are encrypted into the vault and the originals are securely removed.
-- **Discreet by default** — vaults are **not listed in the sidebar** until one is unlocked; click the **Vaults** entry to pick a vault to unlock or to create one. Once unlocked, the full list appears.
+- **Hidden by default** — by default there is **no vault entry anywhere in the UI**; press **Ctrl+Alt+V** to open the vault picker (unlock or create). This keeps the app from hinting that a vault exists. You can switch to showing a discreet **Vaults** sidebar entry instead via **Settings → Secure vault → Hide vault from the sidebar**. Either way, the full list only appears once a vault is unlocked.
 - **Send to Vault** — while a vault is unlocked, right-click any file/folder in clear space → **Send to Vault**. Each item is encrypted into the open vault immediately and the original is securely wiped from clear space.
 - **Hidden from Windows** — vault contents live as opaque, random-named encrypted blobs under `%LocalAppData%\Galileo\Vaults\<id>` with an encrypted index. There is no readable folder, filename, or content in Explorer.
 - **Encryption** — each file is encrypted with **AES-256-GCM** (chunked, so multi-GB videos stream). The data key is wrapped by a key derived from your passphrase with **Argon2id**, and (optionally) by a **Windows Hello / TPM** keyslot. Either factor unlocks the same vault; **the passphrase is the only recovery key — there is no reset.**
@@ -375,6 +375,7 @@ Turn on **Settings → Developer → Developer Mode** to dock a real **terminal 
 | `Space` | **Peek** — preview the selected file (explorer) |
 | `←` `→` `↑` `↓` | Step to prev / next file while peeking |
 | `F5` | Refresh folder (explorer) · **start slideshow** (viewer/gallery) |
+| `Ctrl`+`Alt`+`V` | **Open a vault** (the entry point when the vault is hidden) |
 | `Space` | Slideshow play / pause (slideshow) |
 | `←` `→` `↑` `↓` | (in slideshow) prev / next / speed |
 | `Esc` | Close settings · exit slideshow / full screen · back to explorer |

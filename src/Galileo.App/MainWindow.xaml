@@ -1411,6 +1411,14 @@
                                                        SpinButtonPlacementMode="Inline" Width="120" VerticalAlignment="Center"
                                                        ValueChanged="VaultWipeCount_ValueChanged" />
                                         </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Hide vault from the sidebar" />
+                                                <TextBlock Text="No vault entry is shown anywhere. Open a vault with Ctrl+Alt+V instead."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="HideVaultSwitch" Toggled="HideVaultSwitch_Toggled" />
+                                        </Grid>
                                     </StackPanel>
                                 </Border>
                             </StackPanel>
