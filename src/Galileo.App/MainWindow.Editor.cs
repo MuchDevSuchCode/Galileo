@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 using System.Threading.Tasks;
 using Galileo.Models;
 using Galileo.Services;
@@ -31,6 +32,8 @@ public sealed partial class MainWindow
 
     private bool _editLoading;
     private long _lastEditChangeTick;
+    private int _editLoadToken;                          // supersedes an in-flight open so the wrong image can't appear
+    private readonly SemaphoreSlim _editLoadGate = new(1, 1); // serialize loads into the shared editor
 
     private Rect _editFitRect;      // where the image is drawn in the canvas (display space)
     private double _editFitScale = 1;
@@ -56,12 +59,24 @@ public sealed partial class MainWindow
         item ??= Current ?? _contextItem;
         if (item is null || !PhotoLibrary.IsSupported(item.Path)) { StatusText.Text = "This file can't be edited."; return; }
 
-        _editPath = item.Path;
+        var token = ++_editLoadToken;   // any earlier open is now stale
+        var path = item.Path;
+
+        // Reset ALL editor state up front so nothing carries over from a previous image.
+        _editPath = path;
         _editLoading = true;
         _edit = new EditState();
         _editUndo.Clear();
         _editRedo.Clear();
         _markup.Clear();
+        _orientedW = _orientedH = 0; _editFitScale = 1; _editFitRect = default; _viewSrc = default;
+        _dragging = false; _pendingCrop = null; _cropDrag = ""; _cropAtDragStart = default; _pendingShape = null;
+        _cropAspect = 0;
+        ResetEditSliders();
+        _editLoading = true;
+        if (CropAspectCombo.Items.Count > 0) CropAspectCombo.SelectedIndex = 0;
+        _editLoading = false;
+        SetCanvasMode("none");
 
         if (_editCanvas is null)
         {
@@ -71,20 +86,27 @@ public sealed partial class MainWindow
             EditCanvasHost.Children.Insert(0, _editCanvas);
         }
 
-        ResetEditSliders();
-        _editLoading = true;
-        if (CropAspectCombo.Items.Count > 0) CropAspectCombo.SelectedIndex = 0;
-        _editLoading = false;
-        _cropAspect = 0;
-        SetCanvasMode("none");
+        // Serialize loads into the shared editor; a newer open (token) skips this one entirely so it can
+        // never clobber the bitmap or pop the wrong image into view.
+        await _editLoadGate.WaitAsync();
+        try
+        {
+            if (token != _editLoadToken) return;
+            try { await _editor.LoadAsync(path); }
+            catch (Exception ex)
+            {
+                if (token == _editLoadToken) { _editLoading = false; StatusText.Text = "Couldn't open for editing: " + ex.Message; }
+                App.Log("Editor", ex);
+                return;
+            }
+            if (token != _editLoadToken) return; // superseded while loading
 
-        try { await _editor.LoadAsync(item.Path); }
-        catch (Exception ex) { _editLoading = false; StatusText.Text = "Couldn't open for editing: " + ex.Message; App.Log("Editor", ex); return; }
-
-        ViewerView.Visibility = Visibility.Collapsed;
-        EditorView.Visibility = Visibility.Visible;
-        _editLoading = false;
-        _editCanvas?.Invalidate();
+            ViewerView.Visibility = Visibility.Collapsed;
+            EditorView.Visibility = Visibility.Visible;
+            _editLoading = false;
+            _editCanvas?.Invalidate();
+        }
+        finally { _editLoadGate.Release(); }
     }
 
     private void ExitEditMode(bool reloadViewer)
