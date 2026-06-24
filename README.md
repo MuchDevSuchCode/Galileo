@@ -218,10 +218,6 @@ Or use the helper, which stops the running app, publishes a self-contained Relea
 .\tools\install.ps1 -SkipRegister
 ```
 
-> The publish prints a harmless `NETSDK1198: win-AnyCPU.pubxml was not found` warning because the
-> `.csproj` names a per-platform publish profile and `$(Platform)` resolves to `AnyCPU`; it falls
-> back to the `-r` settings above. Pass `-p:Platform=x64` to silence it.
-
 **Helper scripts** (`tools/`):
 - **`install.ps1`** — publish a self-contained copy to `%LocalAppData%\Galileo\app` and register it as a default photo app (`-SkipRegister` to skip registration).
 - **`update.ps1`** — stop any running instance, `git pull`, and re-publish to the installed copy.
