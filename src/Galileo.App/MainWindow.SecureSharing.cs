@@ -375,6 +375,21 @@ public sealed partial class MainWindow
     private RemoteBrowse? _remoteBrowse;
     private string? _currentRemoteViewId; // the shared file currently open in the viewer (for view/close audit)
     private readonly DispatcherTimer _remoteSyncTimer = new() { Interval = TimeSpan.FromSeconds(8) }; // live auto-sync
+    // Auto-disconnect a remote browse after a configurable idle period (B's privacy/safety setting).
+    private readonly DispatcherTimer _remoteIdleTimer = new() { Interval = TimeSpan.FromSeconds(20) };
+    private DateTimeOffset _lastRemoteActivity;
+
+    /// <summary>Disconnect the open shared browse once it's been idle for the user's configured timeout.</summary>
+    private void RemoteIdleTick()
+    {
+        if (_remoteBrowse is null) { _remoteIdleTimer.Stop(); return; }
+        var mins = _state.RemoteIdleDisconnectMinutes;
+        if (mins <= 0) { _remoteIdleTimer.Stop(); return; }
+        if ((DateTimeOffset.Now - _lastRemoteActivity).TotalMinutes < mins) return;
+        _remoteIdleTimer.Stop();
+        StatusText.Text = "Disconnected from the shared vault after being idle.";
+        NavigateTo(null); // tears down the browse (signals the owner) and securely wipes the downloaded copies
+    }
 
     /// <summary>Securely wipe any leftover remote-browse temp folders (called at startup and on exit).</summary>
     private static void WipeShareTempDirs()
@@ -485,6 +500,8 @@ public sealed partial class MainWindow
         NavigateTo(dir);
         _ = Task.Run(() => SyncRemoteBrowseAsync(_remoteBrowse, listing));
         _remoteSyncTimer.Start(); // keep it live: auto-sync the owner's adds/deletes every few seconds
+        _lastRemoteActivity = DateTimeOffset.Now;
+        if (_state.RemoteIdleDisconnectMinutes > 0) _remoteIdleTimer.Start(); // idle auto-disconnect, if enabled
     }
 
     /// <summary>Re-sync the open shared folder against the owner's live vault (F5): pull new/changed files,
@@ -605,6 +622,7 @@ public sealed partial class MainWindow
     private void CleanupRemoteBrowse()
     {
         _remoteSyncTimer.Stop();
+        _remoteIdleTimer.Stop();
         NoteRemoteView(null); // close out any in-viewer access first
         var rb = _remoteBrowse;
         _remoteBrowse = null;
