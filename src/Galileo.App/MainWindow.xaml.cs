@@ -557,6 +557,7 @@ public sealed partial class MainWindow : Window
         SettingsOverlay.Visibility = Visibility.Collapsed;
         InfoPanel.Visibility = Visibility.Collapsed;
         ExplorerView.Visibility = Visibility.Visible;
+        ModeLabel.Text = ""; // the title-bar label is always visible — clear the viewed file's name on the way out
         _chromeTimer.Stop();
         // Re-assert the icon-grid cell size: when the explorer is re-shown after the viewer, the
         // ItemsWrapGrid can come back without ItemWidth/Height and render a thumbnail at full size.
@@ -2818,8 +2819,12 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Re-encodes the selected images to <paramref name="targetExt"/> (.png/.jpg) next to the
-    /// originals, leaving the source files untouched. EXIF orientation is baked in (the new container may
-    /// not carry it). JPEG has no alpha, so transparent areas flatten against the premultiplied background.</summary>
+    /// originals. EXIF orientation is baked in (the new container may not carry it). JPEG has no alpha, so
+    /// transparent areas flatten against the premultiplied background. Reads/writes via plain FileStream
+    /// (not StorageFile) so it also works inside a vault's hidden working folder. When the user opts to
+    /// remove the original: a normal file goes to the Recycle Bin (recoverable); a file inside the open
+    /// vault is securely wiped in place instead — moving it to the global bin would leak its plaintext
+    /// outside the vault.</summary>
     private async Task ConvertImagesAsync(IReadOnlyList<ExplorerItem> items, string targetExt)
     {
         var jpeg = targetExt is ".jpg" or ".jpeg";
@@ -2835,29 +2840,46 @@ public sealed partial class MainWindow : Window
                 (e == targetExt || (jpeg && e is ".jpg" or ".jpeg"))) { skipped++; continue; }
             try
             {
-                var src = await StorageFile.GetFileFromPathAsync(it.Path);
-                using var inStream = await src.OpenAsync(FileAccessMode.Read);
-                var decoder = await BitmapDecoder.CreateAsync(inStream);
-                var pixels = await decoder.GetPixelDataAsync(
-                    BitmapPixelFormat.Bgra8, alpha, new BitmapTransform(),
-                    ExifOrientationMode.RespectExifOrientation, ColorManagementMode.DoNotColorManage);
+                byte[] pix; uint ow, oh; double dx, dy;
+                using (var inFs = new FileStream(it.Path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var inRas = inFs.AsRandomAccessStream())
+                {
+                    var decoder = await BitmapDecoder.CreateAsync(inRas);
+                    var provider = await decoder.GetPixelDataAsync(
+                        BitmapPixelFormat.Bgra8, alpha, new BitmapTransform(),
+                        ExifOrientationMode.RespectExifOrientation, ColorManagementMode.DoNotColorManage);
+                    pix = provider.DetachPixelData();
+                    ow = decoder.OrientedPixelWidth; oh = decoder.OrientedPixelHeight;
+                    dx = decoder.DpiX > 0 ? decoder.DpiX : 96; dy = decoder.DpiY > 0 ? decoder.DpiY : 96;
+                }
 
                 var dir = System.IO.Path.GetDirectoryName(it.Path)!;
                 var baseName = System.IO.Path.GetFileNameWithoutExtension(it.Path);
                 var dest = UniquePath(System.IO.Path.Combine(dir, baseName + targetExt), isDir: false);
 
-                var folder = await StorageFolder.GetFolderFromPathAsync(dir);
-                var destFile = await folder.CreateFileAsync(System.IO.Path.GetFileName(dest), CreationCollisionOption.ReplaceExisting);
-                using (var outStream = await destFile.OpenAsync(FileAccessMode.ReadWrite))
+                using (var outFs = new FileStream(dest, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+                using (var outRas = outFs.AsRandomAccessStream())
                 {
-                    var encoder = await BitmapEncoder.CreateAsync(encoderId, outStream);
-                    encoder.SetPixelData(BitmapPixelFormat.Bgra8, alpha,
-                        decoder.OrientedPixelWidth, decoder.OrientedPixelHeight,
-                        decoder.DpiX > 0 ? decoder.DpiX : 96, decoder.DpiY > 0 ? decoder.DpiY : 96,
-                        pixels.DetachPixelData());
+                    var encoder = await BitmapEncoder.CreateAsync(encoderId, outRas);
+                    encoder.SetPixelData(BitmapPixelFormat.Bgra8, alpha, ow, oh, dx, dy, pix);
                     await encoder.FlushAsync();
                 }
-                ok++; lastPath = destFile.Path;
+                ok++; lastPath = dest;
+
+                if (_state.ConvertRemovesOriginal)
+                {
+                    try
+                    {
+                        if (IsInCurrentVault(it.Path))
+                        {
+                            // Keep vault plaintext from escaping to the global Recycle Bin: shred in place.
+                            var m = SecureWipe.Parse(_state.WipeMethod);
+                            await SecureWipe.WipePathAsync(it.Path, m == WipeMethod.None ? WipeMethod.Random : m);
+                        }
+                        else _bin.MoveToBin(it.Path);
+                    }
+                    catch (Exception ex) { App.Log("Convert", ex); }
+                }
             }
             catch (Exception ex) { lastError = ex.Message; App.Log("Convert", ex); }
         }
@@ -4684,6 +4706,13 @@ public sealed partial class MainWindow : Window
         _state.Save();
     }
 
+    private void ConvertRemovesOriginalSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.ConvertRemovesOriginal = ConvertRemovesOriginalSwitch.IsOn;
+        _state.Save();
+    }
+
     private async void BackupScheduleCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingSettings) return;
@@ -4851,6 +4880,7 @@ public sealed partial class MainWindow : Window
             _ => 1, // Random
         };
         SecureEmptySwitch.IsOn = _state.SecureDeleteOnEmpty;
+        ConvertRemovesOriginalSwitch.IsOn = _state.ConvertRemovesOriginal;
         CollageLayoutCombo.SelectedIndex = (int)_collagePreset;
         BackupScheduleCombo.SelectedIndex = _state.BackupSchedule switch { "Daily" => 1, "Weekly" => 2, _ => 0 };
         RelayUrlBox.Text = _state.SecureRelayUrl;

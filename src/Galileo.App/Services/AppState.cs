@@ -117,6 +117,9 @@ public sealed class AppState
     /// <summary>Overwrite (secure-wipe) files when emptying the Recycle Bin, instead of a plain delete (off by default).</summary>
     public bool SecureDeleteOnEmpty { get; set; }
 
+    /// <summary>After converting an image to another format, move the original to the Recycle Bin (on by default).</summary>
+    public bool ConvertRemovesOriginal { get; set; } = true;
+
     // Slideshow settings
     public int SlideshowSeconds { get; set; } = 4;
     public bool SlideshowShuffle { get; set; }
@@ -246,6 +249,7 @@ public sealed class AppState
         TerminalShell = o.TerminalShell;
         WipeMethod = o.WipeMethod;
         SecureDeleteOnEmpty = o.SecureDeleteOnEmpty;
+        ConvertRemovesOriginal = o.ConvertRemovesOriginal;
         BackupSchedule = o.BackupSchedule;
         SecureRelayUrl = o.SecureRelayUrl;
         RunInBackground = o.RunInBackground;
