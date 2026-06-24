@@ -2728,6 +2728,22 @@ public sealed partial class MainWindow : Window
             if (item.IsImage)
             {
                 menu.Items.Add(new MenuFlyoutSeparator());
+                var srcExt = System.IO.Path.GetExtension(item.Path).ToLowerInvariant();
+                MenuFlyoutItem Conv(string label, string targetExt)
+                {
+                    var mi = new MenuFlyoutItem { Text = label };
+                    mi.Click += async (_, _) =>
+                    {
+                        var sel = SelectedExplorerItems();
+                        if (sel.All(s => s != item)) sel = new List<ExplorerItem> { item };
+                        await ConvertImagesAsync(sel, targetExt);
+                    };
+                    return mi;
+                }
+                var convert = new MenuFlyoutSubItem { Text = "Convert" };
+                if (srcExt is ".jpg" or ".jpeg") convert.Items.Add(Conv("JPG to PNG", ".png"));
+                else if (srcExt == ".png") convert.Items.Add(Conv("PNG to JPG", ".jpg"));
+                if (convert.Items.Count > 0) menu.Items.Add(convert);
                 menu.Items.Add(SMI("Set as desktop background", null, (_, _) => SetWallpaperPath(item.Path)));
                 menu.Items.Add(SMI("Set as lock screen", null, async (_, _) => await SetLockScreenAsync(item.Path)));
                 menu.Items.Add(SMI("Set as Thumbnail", Symbol.Pictures, (_, _) => SetFolderThumbnail(item.Path)));
@@ -2799,6 +2815,62 @@ public sealed partial class MainWindow : Window
     {
         try { ShellOps.OpenWith(path); }
         catch (Exception ex) { StatusText.Text = ex.Message; }
+    }
+
+    /// <summary>Re-encodes the selected images to <paramref name="targetExt"/> (.png/.jpg) next to the
+    /// originals, leaving the source files untouched. EXIF orientation is baked in (the new container may
+    /// not carry it). JPEG has no alpha, so transparent areas flatten against the premultiplied background.</summary>
+    private async Task ConvertImagesAsync(IReadOnlyList<ExplorerItem> items, string targetExt)
+    {
+        var jpeg = targetExt is ".jpg" or ".jpeg";
+        var encoderId = jpeg ? BitmapEncoder.JpegEncoderId : BitmapEncoder.PngEncoderId;
+        var alpha = jpeg ? BitmapAlphaMode.Ignore : BitmapAlphaMode.Premultiplied;
+
+        int ok = 0, skipped = 0; string? lastPath = null; string? lastError = null;
+        foreach (var it in items)
+        {
+            if (it.IsFolder || !it.IsImage) continue;
+            // Don't pointlessly re-encode a file that's already in the target format.
+            if (System.IO.Path.GetExtension(it.Path).ToLowerInvariant() is var e &&
+                (e == targetExt || (jpeg && e is ".jpg" or ".jpeg"))) { skipped++; continue; }
+            try
+            {
+                var src = await StorageFile.GetFileFromPathAsync(it.Path);
+                using var inStream = await src.OpenAsync(FileAccessMode.Read);
+                var decoder = await BitmapDecoder.CreateAsync(inStream);
+                var pixels = await decoder.GetPixelDataAsync(
+                    BitmapPixelFormat.Bgra8, alpha, new BitmapTransform(),
+                    ExifOrientationMode.RespectExifOrientation, ColorManagementMode.DoNotColorManage);
+
+                var dir = System.IO.Path.GetDirectoryName(it.Path)!;
+                var baseName = System.IO.Path.GetFileNameWithoutExtension(it.Path);
+                var dest = UniquePath(System.IO.Path.Combine(dir, baseName + targetExt), isDir: false);
+
+                var folder = await StorageFolder.GetFolderFromPathAsync(dir);
+                var destFile = await folder.CreateFileAsync(System.IO.Path.GetFileName(dest), CreationCollisionOption.ReplaceExisting);
+                using (var outStream = await destFile.OpenAsync(FileAccessMode.ReadWrite))
+                {
+                    var encoder = await BitmapEncoder.CreateAsync(encoderId, outStream);
+                    encoder.SetPixelData(BitmapPixelFormat.Bgra8, alpha,
+                        decoder.OrientedPixelWidth, decoder.OrientedPixelHeight,
+                        decoder.DpiX > 0 ? decoder.DpiX : 96, decoder.DpiY > 0 ? decoder.DpiY : 96,
+                        pixels.DetachPixelData());
+                    await encoder.FlushAsync();
+                }
+                ok++; lastPath = destFile.Path;
+            }
+            catch (Exception ex) { lastError = ex.Message; App.Log("Convert", ex); }
+        }
+
+        if (ok > 0) LoadCurrentFolder();
+        StatusText.Text = ok switch
+        {
+            0 when lastError is not null => $"Convert failed: {lastError}",
+            0 when skipped > 0 => "Already in that format.",
+            0 => "Nothing to convert.",
+            1 => $"Converted to {System.IO.Path.GetFileName(lastPath)}",
+            _ => $"Converted {ok} images to {targetExt.TrimStart('.').ToUpperInvariant()}",
+        };
     }
 
     private async System.Threading.Tasks.Task CopyFileToClipboardAsync(string path)
