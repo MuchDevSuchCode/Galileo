@@ -1464,6 +1464,21 @@
                                 </Border>
                             </StackPanel>
 
+                            <!-- Images -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="IMAGES" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="Move the original to the Recycle Bin after converting" />
+                                            <TextBlock Text="When you convert an image (e.g. JPG to PNG), send the source file to the Recycle Bin instead of leaving both copies."
+                                                       Style="{StaticResource SettingDesc}" />
+                                        </StackPanel>
+                                        <ToggleSwitch Grid.Column="1" x:Name="ConvertRemovesOriginalSwitch" Toggled="ConvertRemovesOriginalSwitch_Toggled" />
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+
                             <!-- Backup -->
                             <StackPanel Spacing="8">
                                 <TextBlock Text="BACKUP" Style="{StaticResource SettingSectionHeader}" />
