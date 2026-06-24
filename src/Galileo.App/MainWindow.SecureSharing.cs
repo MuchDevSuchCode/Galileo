@@ -818,9 +818,16 @@ public sealed partial class MainWindow
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
-        dlg.Content = scroller;
+        var search = new TextBox { PlaceholderText = "Filter the log (name, friend, date…)", MinWidth = 700 };
+        var root = new StackPanel { Spacing = 8 };
+        root.Children.Add(search);
+        root.Children.Add(scroller);
+        dlg.Content = root;
 
+        // allRows = everything from the relay; currentRows = what's currently shown (after the filter), used by Export.
+        var allRows = new List<(DateTimeOffset t, string title, string detail, string? path)>();
         var currentRows = new List<(DateTimeOffset t, string title, string detail, string? path)>();
+        var filter = "";
 
         void Populate(List<(DateTimeOffset t, string title, string detail, string? path)> rows)
         {
@@ -828,7 +835,11 @@ public sealed partial class MainWindow
             list.Children.Clear();
             if (rows.Count == 0)
             {
-                list.Children.Add(new TextBlock { Text = "No file access recorded yet.", Opacity = 0.7 });
+                list.Children.Add(new TextBlock
+                {
+                    Text = string.IsNullOrWhiteSpace(filter) ? "No file access recorded yet." : "No entries match your filter.",
+                    Opacity = 0.7,
+                });
                 return;
             }
             foreach (var (_, title, detail, path) in rows)
@@ -852,6 +863,20 @@ public sealed partial class MainWindow
             }
         }
 
+        // Apply the current filter to allRows and repaint. A blank filter shows everything; otherwise we
+        // match the search text (case-insensitive) against each row's title and detail line.
+        void Render()
+        {
+            var f = filter.Trim();
+            var rows = string.IsNullOrEmpty(f)
+                ? allRows
+                : allRows.Where(r => r.title.Contains(f, StringComparison.OrdinalIgnoreCase)
+                                     || r.detail.Contains(f, StringComparison.OrdinalIgnoreCase)).ToList();
+            Populate(rows);
+        }
+
+        search.TextChanged += (_, _) => { filter = search.Text; Render(); };
+
         // Re-query the relay and refresh the list in place; auto-scroll to the top (newest) when new
         // entries have arrived, so the log "tails" live while it's open.
         var refreshing = false;
@@ -863,7 +888,8 @@ public sealed partial class MainWindow
             try
             {
                 var records = await _sharing!.QueryAuditAsync(url);
-                Populate(BuildRows(records));
+                allRows = BuildRows(records);
+                Render();
                 if (records.Count != lastCount)
                 {
                     var grew = records.Count > lastCount && lastCount >= 0;
