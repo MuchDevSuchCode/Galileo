@@ -120,6 +120,14 @@ public sealed class AppState
     /// <summary>After converting an image to another format, move the original to the Recycle Bin (on by default).</summary>
     public bool ConvertRemovesOriginal { get; set; } = true;
 
+    /// <summary>Re-hide app-hidden folders whenever Galileo loses focus / goes to the background; reveal them
+    /// again with the Show app-hidden toggle. Off by default.</summary>
+    public bool HideOnBackground { get; set; }
+
+    /// <summary>When browsing a friend's shared vault, auto-disconnect after this many minutes with no
+    /// interaction (0 = never). Off by default.</summary>
+    public int RemoteIdleDisconnectMinutes { get; set; }
+
     // Slideshow settings
     public int SlideshowSeconds { get; set; } = 4;
     public bool SlideshowShuffle { get; set; }
@@ -250,6 +258,8 @@ public sealed class AppState
         WipeMethod = o.WipeMethod;
         SecureDeleteOnEmpty = o.SecureDeleteOnEmpty;
         ConvertRemovesOriginal = o.ConvertRemovesOriginal;
+        HideOnBackground = o.HideOnBackground;
+        RemoteIdleDisconnectMinutes = o.RemoteIdleDisconnectMinutes;
         BackupSchedule = o.BackupSchedule;
         SecureRelayUrl = o.SecureRelayUrl;
         RunInBackground = o.RunInBackground;

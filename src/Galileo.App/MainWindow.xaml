@@ -1371,14 +1371,24 @@
                             <StackPanel Spacing="8">
                                 <TextBlock Text="PRIVACY" Style="{StaticResource SettingSectionHeader}" />
                                 <Border Style="{StaticResource SettingCard}">
-                                    <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
-                                        <StackPanel VerticalAlignment="Center">
-                                            <TextBlock Text="Lock Hidden album" />
-                                            <TextBlock Text="Require Windows Hello / PIN to reveal hidden photos and folders."
-                                                       Style="{StaticResource SettingDesc}" />
-                                        </StackPanel>
-                                        <ToggleSwitch Grid.Column="1" x:Name="LockHiddenSwitch" Toggled="LockHiddenSwitch_Toggled" />
-                                    </Grid>
+                                    <StackPanel Spacing="16">
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Lock Hidden album" />
+                                                <TextBlock Text="Require Windows Hello / PIN to reveal hidden photos and folders."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="LockHiddenSwitch" Toggled="LockHiddenSwitch_Toggled" />
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Hide folders when in the background" />
+                                                <TextBlock Text="Whenever Galileo loses focus, app-hidden folders collapse to empty again. Click Show app-hidden to reveal them when you return."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="HideOnBackgroundSwitch" Toggled="HideOnBackgroundSwitch_Toggled" />
+                                        </Grid>
+                                    </StackPanel>
                                 </Border>
                             </StackPanel>
 
@@ -1528,6 +1538,21 @@
                                             <TextBlock Text="Address of the rendezvous relay. Files are end-to-end encrypted and never stored on it."
                                                        Style="{StaticResource SettingDesc}" />
                                         </StackPanel>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Disconnect when idle" />
+                                                <TextBlock Text="While browsing a friend's shared vault, automatically disconnect after this long with no activity."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ComboBox Grid.Column="1" x:Name="RemoteIdleCombo" Style="{StaticResource SettingControl}"
+                                                      SelectionChanged="RemoteIdleCombo_SelectionChanged">
+                                                <ComboBoxItem Content="Never" />
+                                                <ComboBoxItem Content="5 minutes" />
+                                                <ComboBoxItem Content="15 minutes" />
+                                                <ComboBoxItem Content="30 minutes" />
+                                                <ComboBoxItem Content="60 minutes" />
+                                            </ComboBox>
+                                        </Grid>
                                         <Button x:Name="ManageSharingBtn" Content="Manage secure sharing…" Click="ManageSharing_Click" />
                                     </StackPanel>
                                 </Border>

@@ -220,6 +220,14 @@ public sealed partial class MainWindow : Window
         _vaultFlushTimer.Tick += (_, _) => FlushVaultSoon();
         _vaultFlushDebounce.Tick += (_, _) => { _vaultFlushDebounce.Stop(); FlushVaultSoon(); };
         _remoteSyncTimer.Tick += (_, _) => RemoteSyncTick();
+        _remoteIdleTimer.Tick += (_, _) => RemoteIdleTick();
+
+        // Privacy: collapse app-hidden folders the moment Galileo loses focus (opt-in).
+        Activated += (_, e) => { if (e.WindowActivationState == WindowActivationState.Deactivated) ReHideOnBackground(); };
+        // Idle tracking for remote-browse auto-disconnect: any pointer/key activity counts as "not idle".
+        RootGrid.PointerMoved += (_, _) => { if (_remoteBrowse is not null) _lastRemoteActivity = DateTimeOffset.Now; };
+        RootGrid.AddHandler(UIElement.KeyDownEvent,
+            new KeyEventHandler((_, _) => { if (_remoteBrowse is not null) _lastRemoteActivity = DateTimeOffset.Now; }), handledEventsToo: true);
 
         // When the clipboard changes from OUTSIDE Galileo (another app, or a text/image copy), drop our
         // in-app file clip so a later paste uses the new content — not a stale earlier file copy.
@@ -2585,6 +2593,17 @@ public sealed partial class MainWindow : Window
         LoadCurrentFolder();
     }
 
+    /// <summary>Privacy (opt-in): when Galileo goes to the background, collapse any revealed app-hidden folders
+    /// so they look empty again. The user re-reveals them with the Show app-hidden toggle (Hello/passphrase
+    /// gated) once they return. Setting IsChecked here doesn't raise Click, so it won't re-prompt.</summary>
+    private void ReHideOnBackground()
+    {
+        if (!_state.HideOnBackground || !_showAppHidden) return;
+        _showAppHidden = false;
+        if (ShowHiddenToggle.IsChecked == true) ShowHiddenToggle.IsChecked = false;
+        if (ExplorerView.Visibility == Visibility.Visible) LoadCurrentFolder();
+    }
+
     /// <summary>Toggles showing Windows-hidden (OS hidden-attribute) items. Session-only: not saved,
     /// so it reverts to off on the next launch.</summary>
     private void ShowWindowsHidden_Click(object sender, RoutedEventArgs e)
@@ -4862,6 +4881,8 @@ public sealed partial class MainWindow : Window
         AlwaysNewWindowSwitch.IsOn = _state.AlwaysOpenMediaInNewWindow;
         CloseToBackSwitch.IsOn = _state.CloseToViewerBack;
         LockHiddenSwitch.IsOn = _state.LockHiddenAlbum;
+        HideOnBackgroundSwitch.IsOn = _state.HideOnBackground;
+        RemoteIdleCombo.SelectedIndex = _state.RemoteIdleDisconnectMinutes switch { 5 => 1, 15 => 2, 30 => 3, 60 => 4, _ => 0 };
         var vaultIdleMin = Math.Clamp(_state.VaultIdleSeconds / 60, 0, 60);
         VaultIdleSlider.Value = vaultIdleMin;
         VaultIdleValue.Text = vaultIdleMin == 0 ? "Never" : $"{vaultIdleMin} min";
@@ -4928,6 +4949,26 @@ public sealed partial class MainWindow : Window
         _state.LockHiddenAlbum = LockHiddenSwitch.IsOn;
         if (!_state.LockHiddenAlbum) _helloUnlocked = false; // re-arm the gate when turned off
         _state.Save();
+    }
+
+    private void HideOnBackgroundSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.HideOnBackground = HideOnBackgroundSwitch.IsOn;
+        _state.Save();
+    }
+
+    private void RemoteIdleCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.RemoteIdleDisconnectMinutes = RemoteIdleCombo.SelectedIndex switch { 1 => 5, 2 => 15, 3 => 30, 4 => 60, _ => 0 };
+        _state.Save();
+        // Apply immediately to a browse already in progress.
+        if (_remoteBrowse is not null)
+        {
+            if (_state.RemoteIdleDisconnectMinutes > 0) { _lastRemoteActivity = DateTimeOffset.Now; _remoteIdleTimer.Start(); }
+            else _remoteIdleTimer.Stop();
+        }
     }
 
     private void ThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
