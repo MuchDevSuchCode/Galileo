@@ -926,7 +926,7 @@ public sealed partial class MainWindow
     /// doesn't read every file. Used for image links in the access log.</summary>
     private void AttachImageHoverPreview(FrameworkElement target, string path)
     {
-        var img = new Image { Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, MaxWidth = 360, MaxHeight = 360 };
+        var img = new Image { Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, MaxWidth = 720, MaxHeight = 720 };
         var tip = new ToolTip
         {
             Padding = new Thickness(4),
@@ -938,7 +938,7 @@ public sealed partial class MainWindow
             try
             {
                 using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                var bmp = new BitmapImage { DecodePixelType = DecodePixelType.Logical, DecodePixelWidth = 360 };
+                var bmp = new BitmapImage { DecodePixelType = DecodePixelType.Logical, DecodePixelWidth = 720 };
                 await bmp.SetSourceAsync(fs.AsRandomAccessStream());
                 img.Source = bmp;
             }
