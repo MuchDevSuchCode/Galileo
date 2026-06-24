@@ -7,8 +7,6 @@ A small rendezvous + end-to-end relay that lets two Galileo clients discover eac
   Galileo clients with a key the relay can't derive (authenticated X25519 ECDH → AES-256-GCM).
 - File contents stay on the **host's** disk. The viewer streams chunks live over the relay; nothing is
   persisted server-side.
-- It keeps an **audit log** of accesses (who viewed what, when) using **opaque object IDs** — a host-side
-  hash of the file path, never the real name or contents.
 
 ## What it does
 
@@ -17,7 +15,6 @@ A small rendezvous + end-to-end relay that lets two Galileo clients discover eac
 | `POST /register` | Register/refresh a peer's UUID ↔ public keys (Ed25519 sign + X25519 agree). Signed. |
 | `GET /lookup/{uuid}` | Discover a peer's public keys + online status by UUID. |
 | `WS /connect` | Authenticated WebSocket; relays opaque `{to, from, payload}` envelopes between online peers. |
-| `POST /audit/query` | A host fetches its own access log (must sign the request). |
 | `GET /healthz` | Liveness + count of connected peers. |
 
 All signed requests carry a fresh `ts` (±5 min) to blunt replay. Signatures are Ed25519 over a fixed
@@ -57,5 +54,5 @@ payloads regardless, but TLS hides metadata (which UUIDs talk) from the network.
 
 - The relay is **untrusted** for confidentiality: it can see *that* two UUIDs communicate and the size/timing
   of traffic, but not file names or contents.
-- The relay is **trusted** for availability and for the integrity of the audit log it keeps.
+- The relay is **trusted** for availability.
 - Peers authenticate each other end-to-end by their Ed25519 keys + out-of-band fingerprint ("safety number").
