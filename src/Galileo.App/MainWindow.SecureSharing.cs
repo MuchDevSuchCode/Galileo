@@ -3,13 +3,16 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Galileo.Services;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage.Pickers;
 using Windows.System;
 
 namespace Galileo;
@@ -732,10 +735,13 @@ public sealed partial class MainWindow
         if (_sharing is null) return;
         var url = _state.SecureRelayUrl;
         if (string.IsNullOrWhiteSpace(url)) { await MessageAsync("Access log", "Set a relay server URL in Settings first."); return; }
-        try
-        {
-            var records = await _sharing.QueryAuditAsync(url);
 
+        const string TimeFmt = "yyyy-MM-dd HH:mm:ss";
+
+        // Turn a fresh batch of audit records into display rows. Names/paths are re-resolved on every call
+        // so the log tracks whichever vault is currently unlocked. Newest-first.
+        List<(DateTimeOffset t, string title, string detail, string? path)> BuildRows(IReadOnlyList<RelayClient.AuditRecord> records)
+        {
             var names = new Dictionary<string, string>();
             if (_vaults.Current is not null)
                 foreach (var en in _vaults.Current.ShareEntries()) names[en.BlobId] = en.RelPath;
@@ -746,8 +752,6 @@ public sealed partial class MainWindow
                 return string.IsNullOrWhiteSpace(n) ? v.ToString()[..8] : n!;
             }
             string FileName(string id) => names.TryGetValue(id, out var f) ? f : "(item no longer shared)";
-
-            // Resolve an opaque object id to the real file on disk (only while its vault is unlocked).
             string? PathFor(string objectId)
             {
                 var wd = _vaults.Current?.WorkingDir;
@@ -756,11 +760,9 @@ public sealed partial class MainWindow
                 return File.Exists(p) ? p : null;
             }
 
-            const string TimeFmt = "yyyy-MM-dd HH:mm:ss";
             var asc = records.OrderBy(r => r.Time).ToList();
             var openAt = new Dictionary<string, DateTimeOffset>();
-            // (sortTime, objectId for link, title, detail line)
-            var rows = new List<(DateTimeOffset t, string objectId, string title, string detail)>();
+            var rows = new List<(DateTimeOffset t, string title, string detail, string? path)>();
             foreach (var r in asc)
             {
                 var who = PeerName(r.Viewer);
@@ -768,20 +770,20 @@ public sealed partial class MainWindow
                 switch (r.Action)
                 {
                     case "list":
-                        rows.Add((r.Time, "", "Opened your shared vault", $"by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}"));
+                        rows.Add((r.Time, "Opened your shared vault", $"by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", null));
                         break;
                     case "browse_end":
-                        rows.Add((r.Time, "", "Closed your shared vault", $"by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}"));
+                        rows.Add((r.Time, "Closed your shared vault", $"by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", null));
                         break;
                     case "fetch":
-                        rows.Add((r.Time, r.ObjectId, FileName(r.ObjectId), $"downloaded by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}"));
+                        rows.Add((r.Time, FileName(r.ObjectId), $"downloaded by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", PathFor(r.ObjectId)));
                         break;
                     case "open":
                         openAt[key] = r.Time;
                         break;
                     case "close" when openAt.TryGetValue(key, out var t):
-                        rows.Add((t, r.ObjectId, FileName(r.ObjectId),
-                            $"viewed by {who}   ·   {t.LocalDateTime.ToString(TimeFmt)} → {r.Time.LocalDateTime:HH:mm:ss}  ({FormatDuration(r.Time - t)})"));
+                        rows.Add((t, FileName(r.ObjectId),
+                            $"viewed by {who}   ·   {t.LocalDateTime.ToString(TimeFmt)} → {r.Time.LocalDateTime:HH:mm:ss}  ({FormatDuration(r.Time - t)})", PathFor(r.ObjectId)));
                         openAt.Remove(key);
                         break;
                 }
@@ -790,53 +792,159 @@ public sealed partial class MainWindow
             {
                 var parts = kv.Key.Split('|', 2);
                 Guid.TryParse(parts[0], out var v);
-                rows.Add((kv.Value, parts[1], FileName(parts[1]), $"viewing by {PeerName(v)}   ·   {kv.Value.LocalDateTime.ToString(TimeFmt)}  (still open)"));
+                rows.Add((kv.Value, FileName(parts[1]), $"viewing by {PeerName(v)}   ·   {kv.Value.LocalDateTime.ToString(TimeFmt)}  (still open)", PathFor(parts[1])));
             }
             rows.Sort((a, b) => b.t.CompareTo(a.t)); // newest first
+            return rows;
+        }
 
-            var dlg = new ContentDialog { Title = "Access log", CloseButtonText = "Close", XamlRoot = RootGrid.XamlRoot };
-            if (records.Count > 0)
-            {
-                dlg.PrimaryButtonText = "Clear log";
-                dlg.PrimaryButtonClick += async (_, args) =>
-                {
-                    var def = args.GetDeferral();
-                    try { await _sharing!.ClearAuditAsync(url); } catch { }
-                    def.Complete();
-                };
-            }
-            object content;
+        var dlg = new ContentDialog
+        {
+            Title = "Access log",
+            CloseButtonText = "Close",
+            PrimaryButtonText = "Clear log",
+            SecondaryButtonText = "Export…",
+            XamlRoot = RootGrid.XamlRoot,
+        };
+        dlg.Resources["ContentDialogMaxWidth"] = 1200.0; // default cap (~548) is far too narrow for the log
+
+        var list = new StackPanel { Spacing = 12, MinWidth = 680 };
+        var scroller = new ScrollViewer
+        {
+            Content = list,
+            MinWidth = 700,
+            MaxHeight = 620,
+            HorizontalScrollMode = ScrollMode.Disabled,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        };
+        dlg.Content = scroller;
+
+        var currentRows = new List<(DateTimeOffset t, string title, string detail, string? path)>();
+
+        void Populate(List<(DateTimeOffset t, string title, string detail, string? path)> rows)
+        {
+            currentRows = rows;
+            list.Children.Clear();
             if (rows.Count == 0)
             {
-                content = new TextBlock { Text = "No file access recorded yet." };
+                list.Children.Add(new TextBlock { Text = "No file access recorded yet.", Opacity = 0.7 });
+                return;
             }
-            else
+            foreach (var (_, title, detail, path) in rows)
             {
-                var list = new StackPanel { Spacing = 12, Width = 460 };
-                foreach (var (_, objectId, title, detail) in rows)
+                var card = new StackPanel { Spacing = 1 };
+                if (path is not null)
                 {
-                    var card = new StackPanel { Spacing = 1 };
-                    var path = objectId.Length > 0 ? PathFor(objectId) : null;
-                    if (path is not null)
-                    {
-                        // Clickable link: open the file in this window (its vault is unlocked) — closes the log.
-                        var link = new HyperlinkButton { Content = title, Padding = new Thickness(0), FontWeight = FontWeights.SemiBold };
-                        link.Click += (_, _) => { dlg.Hide(); _ = OpenLocalFileInViewerAsync(path); };
-                        card.Children.Add(link);
-                    }
-                    else
-                    {
-                        card.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-                    }
-                    card.Children.Add(new TextBlock { Text = detail, Opacity = 0.7, FontSize = 12, TextWrapping = TextWrapping.Wrap });
-                    list.Children.Add(card);
+                    // Clickable link: open the file in this window (its vault is unlocked) — closes the log.
+                    var link = new HyperlinkButton { Content = title, Padding = new Thickness(0), FontWeight = FontWeights.SemiBold };
+                    var p = path;
+                    link.Click += (_, _) => { dlg.Hide(); _ = OpenLocalFileInViewerAsync(p); };
+                    if (PhotoLibrary.IsSupported(p)) AttachImageHoverPreview(link, p); // hover thumbnail for images
+                    card.Children.Add(link);
                 }
-                content = new ScrollViewer { Content = list, MaxHeight = 460, HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+                else
+                {
+                    card.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+                }
+                card.Children.Add(new TextBlock { Text = detail, Opacity = 0.7, FontSize = 12, TextWrapping = TextWrapping.Wrap });
+                list.Children.Add(card);
             }
-            dlg.Content = content;
-            await dlg.ShowAsync();
         }
-        catch (Exception ex) { await MessageAsync("Access log", "Couldn't fetch the log: " + ex.Message); }
+
+        // Re-query the relay and refresh the list in place; auto-scroll to the top (newest) when new
+        // entries have arrived, so the log "tails" live while it's open.
+        var refreshing = false;
+        var lastCount = -1;
+        async Task RefreshAsync()
+        {
+            if (refreshing) return;
+            refreshing = true;
+            try
+            {
+                var records = await _sharing!.QueryAuditAsync(url);
+                Populate(BuildRows(records));
+                if (records.Count != lastCount)
+                {
+                    var grew = records.Count > lastCount && lastCount >= 0;
+                    lastCount = records.Count;
+                    if (grew) { scroller.UpdateLayout(); scroller.ChangeView(null, 0, null, true); }
+                }
+            }
+            catch { /* transient relay hiccup — keep the last view, try again next tick */ }
+            finally { refreshing = false; }
+        }
+
+        async Task ExportAsync()
+        {
+            try
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine($"Galileo access log — exported {DateTimeOffset.Now.LocalDateTime:yyyy-MM-dd HH:mm:ss}");
+                sb.AppendLine();
+                if (currentRows.Count == 0) sb.AppendLine("No file access recorded yet.");
+                foreach (var (_, title, detail, _) in currentRows) { sb.AppendLine(title); sb.AppendLine("    " + detail); sb.AppendLine(); }
+
+                var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary, SuggestedFileName = "galileo-access-log" };
+                picker.FileTypeChoices.Add("Text file", new List<string> { ".txt" });
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+                var file = await picker.PickSaveFileAsync();
+                if (file is null) return;
+                await File.WriteAllTextAsync(file.Path, sb.ToString());
+                StatusText.Text = $"Access log exported to {file.Path}";
+            }
+            catch (Exception ex) { StatusText.Text = "Access log export failed: " + ex.Message; }
+        }
+
+        dlg.PrimaryButtonClick += async (_, args) =>
+        {
+            args.Cancel = true; // clear, then keep the (now-empty) log open and live
+            var def = args.GetDeferral();
+            try { await _sharing!.ClearAuditAsync(url); lastCount = -1; await RefreshAsync(); } catch { }
+            def.Complete();
+        };
+        dlg.SecondaryButtonClick += async (_, args) =>
+        {
+            args.Cancel = true; // exporting must not close the log
+            var def = args.GetDeferral();
+            try { await ExportAsync(); } finally { def.Complete(); }
+        };
+
+        // Initial load, then poll the relay every few seconds for live updates while the dialog is open.
+        await RefreshAsync();
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(4);
+        timer.Tick += (_, _) => _ = RefreshAsync();
+        timer.Start();
+        dlg.Closing += (_, _) => timer.Stop();
+
+        await dlg.ShowAsync();
+    }
+
+    /// <summary>Shows a small image thumbnail in a tooltip when the pointer hovers over <paramref name="target"/>.
+    /// The bitmap is loaded lazily (only when the tooltip first opens) and decoded small, so building a long log
+    /// doesn't read every file. Used for image links in the access log.</summary>
+    private void AttachImageHoverPreview(FrameworkElement target, string path)
+    {
+        var img = new Image { Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, MaxWidth = 360, MaxHeight = 360 };
+        var tip = new ToolTip
+        {
+            Padding = new Thickness(4),
+            Content = new Border { CornerRadius = new CornerRadius(6), Child = img },
+        };
+        tip.Opened += async (_, _) =>
+        {
+            if (img.Source is not null) return; // load once
+            try
+            {
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                var bmp = new BitmapImage { DecodePixelType = DecodePixelType.Logical, DecodePixelWidth = 360 };
+                await bmp.SetSourceAsync(fs.AsRandomAccessStream());
+                img.Source = bmp;
+            }
+            catch { /* unreadable / unsupported — leave the tooltip empty */ }
+        };
+        ToolTipService.SetToolTip(target, tip);
     }
 
     /// <summary>Opens a local file in THIS window (image → viewer, video/audio → player, else default app).
