@@ -1126,30 +1126,48 @@ public sealed partial class MainWindow
         win.Activate();
     }
 
-    /// <summary>Shows a small image thumbnail in a tooltip when the pointer hovers over <paramref name="target"/>.
-    /// The bitmap is loaded lazily (only when the tooltip first opens) and decoded small, so building a long log
-    /// doesn't read every file. Used for image links in the access log.</summary>
+    /// <summary>Shows a large image thumbnail near the pointer while it hovers over <paramref name="target"/>.
+    /// Uses a Popup anchored to the element's own XamlRoot (a plain ToolTip doesn't position correctly in a
+    /// secondary window). The bitmap is decoded once, lazily, so a long log doesn't read every file up front.</summary>
     private void AttachImageHoverPreview(FrameworkElement target, string path)
     {
         var img = new Image { Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, MaxWidth = 720, MaxHeight = 720 };
-        var tip = new ToolTip
+        var border = new Border
         {
+            CornerRadius = new CornerRadius(8),
+            Background = (Brush)Application.Current.Resources["SolidBackgroundFillColorBaseBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["SurfaceStrokeColorDefaultBrush"],
+            BorderThickness = new Thickness(1),
             Padding = new Thickness(4),
-            Content = new Border { CornerRadius = new CornerRadius(6), Child = img },
+            Child = img,
+            IsHitTestVisible = false, // never steal the hover from the link
         };
-        tip.Opened += async (_, _) =>
+        var popup = new Microsoft.UI.Xaml.Controls.Primitives.Popup { Child = border, IsLightDismissEnabled = false };
+        var loaded = false;
+
+        target.PointerEntered += async (_, e) =>
         {
-            if (img.Source is not null) return; // load once
-            try
+            if (target.XamlRoot is null) return;
+            popup.XamlRoot = target.XamlRoot;
+            var p = e.GetCurrentPoint(null).Position;       // relative to the window's XamlRoot
+            var size = target.XamlRoot.Size;
+            popup.HorizontalOffset = Math.Min(p.X + 16, Math.Max(0, size.Width - 744));
+            popup.VerticalOffset = Math.Min(p.Y + 16, Math.Max(0, size.Height - 744));
+            popup.IsOpen = true;
+            if (!loaded)
             {
-                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                var bmp = new BitmapImage { DecodePixelType = DecodePixelType.Logical, DecodePixelWidth = 720 };
-                await bmp.SetSourceAsync(fs.AsRandomAccessStream());
-                img.Source = bmp;
+                loaded = true;
+                try
+                {
+                    using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    var bmp = new BitmapImage { DecodePixelType = DecodePixelType.Logical, DecodePixelWidth = 720 };
+                    await bmp.SetSourceAsync(fs.AsRandomAccessStream());
+                    img.Source = bmp;
+                }
+                catch { popup.IsOpen = false; } // unreadable / unsupported
             }
-            catch { /* unreadable / unsupported — leave the tooltip empty */ }
         };
-        ToolTipService.SetToolTip(target, tip);
+        target.PointerExited += (_, _) => popup.IsOpen = false;
     }
 
     /// <summary>Opens a local file in THIS window (image → viewer, video/audio → player, else default app).
