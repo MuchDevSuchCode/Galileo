@@ -5758,9 +5758,10 @@ public sealed partial class MainWindow : Window
             _vaultList.Add(new Models.VaultInfo(v.Id, v.Name, _vaults.Current?.Id == v.Id));
 
         // The vault list only appears once something is unlocked; otherwise a single discreet entry.
+        // When "Hide vault from the sidebar" is on, NOTHING is shown — not even the currently-open vault;
+        // the user reaches it with Ctrl+Alt+V (the command-strip Lock button still works to lock it).
         var open = _vaults.IsAnyUnlocked;
-        VaultsSection.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
-        // When hidden for deniability, the locked entry never shows — open a vault with Ctrl+Alt+V.
+        VaultsSection.Visibility = (open && !_state.HideVaultEntry) ? Visibility.Visible : Visibility.Collapsed;
         VaultsLockedEntry.Visibility = (open || _state.HideVaultEntry) ? Visibility.Collapsed : Visibility.Visible;
         UpdateVaultLockButton();
     }
