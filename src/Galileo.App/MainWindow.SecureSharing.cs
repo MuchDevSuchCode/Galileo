@@ -133,6 +133,17 @@ public sealed partial class MainWindow
                 CleanupRemoteBrowse();
             StatusText.Text = "The owner stopped sharing — the shared files were removed.";
         });
+        // Push: the owner we're browsing changed their vault → re-list now instead of waiting for the poll.
+        _sharing.VaultChangedByOwner += peer => RootGrid.DispatcherQueue.TryEnqueue(() => OnRemoteVaultChanged(peer));
+    }
+
+    /// <summary>A friend we're actively browsing pushed a "vault changed" signal — sync their share at once.</summary>
+    private void OnRemoteVaultChanged(Guid peer)
+    {
+        var rb = _remoteBrowse;
+        if (rb is null || rb.Session.PeerUuid != peer) return;
+        if (rb.Gate.CurrentCount == 0) return; // a sync is already running; it'll pick up the change
+        _ = Task.Run(() => SyncRemoteBrowseAsync(rb, null));
     }
 
     // First-run: create or recover --------------------------------------------

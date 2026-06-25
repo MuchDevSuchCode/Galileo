@@ -61,6 +61,9 @@ public sealed class SecureSharing : IDisposable
     /// <summary>Raised (on a background thread) when a friend tells us they've stopped sharing (locked /
     /// revoked) — the viewer should tear down any live browse of that peer.</summary>
     public event Action<Guid>? ShareRevokedByOwner;
+    /// <summary>Raised (on a background thread) when an owner we're browsing reports their shared vault
+    /// changed — the viewer should re-list immediately instead of waiting for its periodic poll.</summary>
+    public event Action<Guid>? VaultChangedByOwner;
 
     // Peers we're currently serving (have a live serve session with), so we can notify them on lock.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _activeViewers = new();
@@ -303,6 +306,18 @@ public sealed class SecureSharing : IDisposable
         }
     }
 
+    /// <summary>Push: tell everyone currently browsing our share that the vault changed, so their viewer
+    /// re-lists at once instead of waiting for its periodic poll. Sent over the mailbox channel (separate
+    /// from the serve session) and only to peers with a live browse session, so it can't accumulate.</summary>
+    public async Task NotifyVaultChangedAsync(CancellationToken ct = default)
+    {
+        if (_relay is null) return;
+        foreach (var peer in _activeViewers.Keys.ToList())
+        {
+            try { await SendMailAsync(peer, "vault_changed", await SealEmptyAsync(peer, ct), ct); } catch { }
+        }
+    }
+
     private async Task MailLoopAsync(CancellationToken ct)
     {
         var relay = _relay!;
@@ -360,6 +375,9 @@ public sealed class SecureSharing : IDisposable
                 break;
             case "share_revoked":
                 ShareRevokedByOwner?.Invoke(m.From);
+                break;
+            case "vault_changed":
+                VaultChangedByOwner?.Invoke(m.From);
                 break;
         }
     }
