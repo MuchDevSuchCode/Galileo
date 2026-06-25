@@ -49,48 +49,35 @@ public sealed partial class MainWindow
         catch (Exception ex) { await MessageAsync("Secure sharing", ex.Message); App.Log("Sharing", ex); }
     }
 
-    /// <summary>Ctrl+Alt+V: jump to a hidden-but-open vault, open a local vault, or browse friends' shares.</summary>
+    /// <summary>Ctrl+Alt+V: resume an already-open vault, open a local vault, or browse friends' shares.</summary>
     private async void OpenVaultShortcutAsync()
     {
         try
         {
-            // When the sidebar entry is hidden, this is the only way back into a vault that's already unlocked.
-            var openVaultDir = (_state.HideVaultEntry && _vaults.Current?.WorkingDir is { } wd && Directory.Exists(wd)) ? wd : null;
-
-            if (!SecureSharing.Exists())
+            // If a vault is already unlocked, just resume it — jump straight back in with no dialog and no
+            // re-auth. This is the only way back when the sidebar entry is hidden, and it never touches the
+            // sharing connection (so pressing Ctrl+Alt+V can't drop an online session or force a re-login).
+            if (_vaults.Current?.WorkingDir is { } wd && Directory.Exists(wd))
             {
-                // No sharing identity — Ctrl+Alt+V is purely the vault shortcut.
-                if (openVaultDir is not null) NavigateTo(openVaultDir);
-                else await ShowVaultPickerAsync();
+                NavigateTo(wd);
                 return;
             }
 
+            // No vault is open: offer to unlock one, or browse what friends are sharing.
+            if (!SecureSharing.Exists()) { await ShowVaultPickerAsync(); return; }
             var dlg = new ContentDialog
             {
                 Title = "Open",
+                Content = new TextBlock { Text = "Open one of your local vaults, or browse what friends are sharing with you.", TextWrapping = TextWrapping.Wrap },
+                PrimaryButtonText = "Shared with me",
+                SecondaryButtonText = "Local vault",
                 CloseButtonText = "Cancel",
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = RootGrid.XamlRoot,
             };
-            if (openVaultDir is not null)
-            {
-                // A vault is unlocked and hidden — offer jumping straight into it (or browsing shares).
-                dlg.Content = new TextBlock { Text = "Go to your open vault, or browse what friends are sharing with you.", TextWrapping = TextWrapping.Wrap };
-                dlg.PrimaryButtonText = "Open vault";
-                dlg.SecondaryButtonText = "Shared with me";
-                var r = await dlg.ShowAsync();
-                if (r == ContentDialogResult.Primary) NavigateTo(openVaultDir);
-                else if (r == ContentDialogResult.Secondary) await OpenSharesAsync();
-            }
-            else
-            {
-                dlg.Content = new TextBlock { Text = "Open one of your local vaults, or browse what friends are sharing with you.", TextWrapping = TextWrapping.Wrap };
-                dlg.PrimaryButtonText = "Shared with me";
-                dlg.SecondaryButtonText = "Local vault";
-                var r = await dlg.ShowAsync();
-                if (r == ContentDialogResult.Primary) await OpenSharesAsync();
-                else if (r == ContentDialogResult.Secondary) await ShowVaultPickerAsync();
-            }
+            var r = await dlg.ShowAsync();
+            if (r == ContentDialogResult.Primary) await OpenSharesAsync();
+            else if (r == ContentDialogResult.Secondary) await ShowVaultPickerAsync();
         }
         catch (Exception ex) { await MessageAsync("Secure sharing", ex.Message); App.Log("Sharing", ex); }
     }
