@@ -7,9 +7,12 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Galileo.Services;
+using Microsoft.UI;
 using Microsoft.UI.Text;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage.Pickers;
@@ -28,6 +31,7 @@ public sealed partial class MainWindow
     private SecureSharing? _sharing;
     private bool _accessLogRevealed;          // access-log entry hidden until Ctrl+Alt+L
     private bool _sharingEventsAttached;
+    private Window? _auditWindow;             // the access log opens in its own resizable window (single instance)
 
     private void RelayUrlBox_TextChanged(object sender, TextChangedEventArgs e)
     {
@@ -837,31 +841,50 @@ public sealed partial class MainWindow
             return rows;
         }
 
-        var dlg = new ContentDialog
-        {
-            Title = "Access log",
-            CloseButtonText = "Close",
-            PrimaryButtonText = "Clear log",
-            SecondaryButtonText = "Export…",
-            XamlRoot = RootGrid.XamlRoot,
-        };
-        dlg.Resources["ContentDialogMaxWidth"] = 1200.0; // default cap (~548) is far too narrow for the log
+        // Open in its own resizable window (not a height-capped dialog), so the full log scrolls and the
+        // window can be moved / resized / maximized / minimized like any other. One instance only.
+        if (_auditWindow is not null) { try { _auditWindow.Activate(); } catch { } return; }
 
-        var list = new StackPanel { Spacing = 12, MinWidth = 680 };
+        var list = new StackPanel { Spacing = 12 };
         var scroller = new ScrollViewer
         {
             Content = list,
-            MinWidth = 700,
-            MaxHeight = 620,
+            Padding = new Thickness(20, 12, 20, 16),
             HorizontalScrollMode = ScrollMode.Disabled,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
-        var search = new TextBox { PlaceholderText = "Filter the log (name, friend, date…)", MinWidth = 700 };
-        var root = new StackPanel { Spacing = 8 };
-        root.Children.Add(search);
+        Grid.SetRow(scroller, 1);
+
+        var search = new TextBox { PlaceholderText = "Filter the log (file, friend, action, date…)", HorizontalAlignment = HorizontalAlignment.Stretch };
+        var exportBtn = new Button { Content = "Export…" };
+        var clearBtn = new Button { Content = "Clear log" };
+        var bar = new Grid { Padding = new Thickness(20, 14, 20, 10), ColumnSpacing = 10 };
+        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(search, 0); Grid.SetColumn(exportBtn, 1); Grid.SetColumn(clearBtn, 2);
+        bar.Children.Add(search); bar.Children.Add(exportBtn); bar.Children.Add(clearBtn);
+        Grid.SetRow(bar, 0);
+
+        var root = new Grid { Background = (Brush)Application.Current.Resources["ApplicationPageBackgroundThemeBrush"] };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.Children.Add(bar);
         root.Children.Add(scroller);
-        dlg.Content = root;
+        if ((this.Content as FrameworkElement)?.RequestedTheme is { } th) root.RequestedTheme = th; // match the app's theme
+
+        var win = new Window { Content = root };
+        _auditWindow = win;
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(win);
+            var appWin = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd));
+            appWin.Title = "Galileo — Access log";
+            try { appWin.SetIcon(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "galileo.ico")); } catch { }
+            try { appWin.Resize(new Windows.Graphics.SizeInt32(980, 760)); } catch { }
+        }
+        catch (Exception ex) { App.Log("AccessLogWindow", ex); }
 
         // allRows = everything from the relay; currentRows = what's currently shown (after the filter), used by Export.
         var allRows = new List<(DateTimeOffset t, string title, string detail, string? path)>();
@@ -886,10 +909,11 @@ public sealed partial class MainWindow
                 var card = new StackPanel { Spacing = 1 };
                 if (path is not null)
                 {
-                    // Clickable link: open the file in this window (its vault is unlocked) — closes the log.
+                    // Clickable link: open the file in the main window's viewer (its vault is unlocked) and
+                    // bring that window forward; the log window stays open.
                     var link = new HyperlinkButton { Content = title, Padding = new Thickness(0), FontWeight = FontWeights.SemiBold };
                     var p = path;
-                    link.Click += (_, _) => { dlg.Hide(); _ = OpenLocalFileInViewerAsync(p); };
+                    link.Click += (_, _) => { _ = OpenLocalFileInViewerAsync(p); try { this.Activate(); } catch { } };
                     if (PhotoLibrary.IsSupported(p)) AttachImageHoverPreview(link, p); // hover thumbnail for images
                     card.Children.Add(link);
                 }
@@ -961,29 +985,21 @@ public sealed partial class MainWindow
             catch (Exception ex) { StatusText.Text = "Access log export failed: " + ex.Message; }
         }
 
-        dlg.PrimaryButtonClick += async (_, args) =>
+        clearBtn.Click += async (_, _) =>
         {
-            args.Cancel = true; // clear, then keep the (now-empty) log open and live
-            var def = args.GetDeferral();
             try { await _sharing!.ClearAuditAsync(url); lastCount = -1; await RefreshAsync(); } catch { }
-            def.Complete();
         };
-        dlg.SecondaryButtonClick += async (_, args) =>
-        {
-            args.Cancel = true; // exporting must not close the log
-            var def = args.GetDeferral();
-            try { await ExportAsync(); } finally { def.Complete(); }
-        };
+        exportBtn.Click += async (_, _) => await ExportAsync();
 
-        // Initial load, then poll the relay every few seconds for live updates while the dialog is open.
+        // Initial load, then poll the relay every few seconds for live updates while the window is open.
         await RefreshAsync();
         var timer = DispatcherQueue.CreateTimer();
         timer.Interval = TimeSpan.FromSeconds(4);
         timer.Tick += (_, _) => _ = RefreshAsync();
         timer.Start();
-        dlg.Closing += (_, _) => timer.Stop();
+        win.Closed += (_, _) => { timer.Stop(); _auditWindow = null; };
 
-        await dlg.ShowAsync();
+        win.Activate();
     }
 
     /// <summary>Shows a small image thumbnail in a tooltip when the pointer hovers over <paramref name="target"/>.

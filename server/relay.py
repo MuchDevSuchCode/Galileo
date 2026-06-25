@@ -154,7 +154,7 @@ def audit_query(q: AuditQuery):
             raise HTTPException(401, "bad signature")
         rows = conn.execute(
             "SELECT viewer_uuid, object_id, action, bytes, ts FROM audit "
-            "WHERE host_uuid=? ORDER BY ts DESC LIMIT 1000",
+            "WHERE host_uuid=? ORDER BY ts DESC LIMIT 50000",
             (q.uuid,),
         ).fetchall()
     return {"records": [dict(r) for r in rows]}
