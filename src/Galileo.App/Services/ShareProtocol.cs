@@ -124,6 +124,15 @@ public static class ShareProtocol
                                 await relay.SendAuditAsync(session.PeerUuid, id, "close", 0, ct);
                             break;
                         }
+                        case "favorite":
+                        {
+                            // Viewer (un)favorited a shared file — record it in the owner's access log.
+                            // Fire-and-forget (no response), so it never affects request/response framing.
+                            var id = root.GetProperty("id").GetString() ?? "";
+                            var fav = root.TryGetProperty("fav", out var fv) && fv.GetBoolean();
+                            await relay.SendAuditAsync(session.PeerUuid, id, fav ? "favorite" : "unfavorite", 0, ct);
+                            break;
+                        }
                         default:
                             await SendAsync(relay, session, new { op = "error", msg = "unknown op" }, ct);
                             break;
@@ -245,6 +254,11 @@ public static class ShareProtocol
     /// <summary>Tells the host the viewer has finished viewing an entry (fire-and-forget; no response).</summary>
     public static Task CloseAsync(RelayClient relay, SecureSession session, string id, CancellationToken ct = default)
         => SendAsync(relay, session, new { op = "close", id }, ct);
+
+    /// <summary>Tells the host the viewer (un)favorited a shared entry (fire-and-forget; no response). The
+    /// host records it in its access log so the owner sees what the viewer favorited.</summary>
+    public static Task FavoriteAsync(RelayClient relay, SecureSession session, string id, bool fav, CancellationToken ct = default)
+        => SendAsync(relay, session, new { op = "favorite", id, fav }, ct);
 
     /// <summary>Convenience: fetch an entire entry into a byte array (for viewing small media in memory).</summary>
     public static async Task<byte[]> FetchAllAsync(RelayClient relay, SecureSession session, string id, long size, CancellationToken ct)

@@ -3516,9 +3516,19 @@ public sealed partial class MainWindow : Window
     private void FavoriteItem(PhotoItem item)
     {
         item.IsFavorite = !item.IsFavorite;
-        if (item.IsFavorite) _state.FavoritePaths.Add(item.Path);
-        else _state.FavoritePaths.Remove(item.Path);
-        _state.Save();
+        // A file you're browsing from a friend's share lives in a temp folder that's wiped when you leave, so
+        // don't persist its path. Instead, tell the owner so it shows in their access log.
+        var remote = _remoteBrowse is { } rb && rb.PathToId.ContainsKey(item.Path);
+        if (remote)
+        {
+            NoteRemoteFavorite(item.Path, item.IsFavorite);
+        }
+        else
+        {
+            if (item.IsFavorite) _state.FavoritePaths.Add(item.Path);
+            else _state.FavoritePaths.Remove(item.Path);
+            _state.Save();
+        }
         if (ReferenceEquals(item, Current)) UpdateFavoriteIcon();
         if (_favoritesOnly) RefreshView();
     }

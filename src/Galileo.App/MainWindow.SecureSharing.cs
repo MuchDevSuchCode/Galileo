@@ -700,6 +700,24 @@ public sealed partial class MainWindow
         catch { /* best effort */ }
     }
 
+    /// <summary>The viewer (un)favorited a file from the share — tell the owner so it lands in their access
+    /// log. Fire-and-forget; only fires for files that belong to the current remote browse.</summary>
+    private void NoteRemoteFavorite(string path, bool fav)
+    {
+        var rb = _remoteBrowse;
+        if (rb is null || _sharing is null || !rb.PathToId.TryGetValue(path, out var id)) return;
+        var session = rb.Session;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await ShareProtocol.FavoriteAsync(_sharing.Relay, session, id, fav, cts.Token);
+            }
+            catch { /* best effort */ }
+        });
+    }
+
     // Online + regenerate ----------------------------------------------------
 
     private bool _sharingOnlineDeclined; // skip re-prompting after the user cancels once this session
@@ -820,6 +838,12 @@ public sealed partial class MainWindow
                         break;
                     case "fetch":
                         rows.Add((r.Time, FileName(r.ObjectId), $"downloaded by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", PathFor(r.ObjectId)));
+                        break;
+                    case "favorite":
+                        rows.Add((r.Time, FileName(r.ObjectId), $"★ favorited by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", PathFor(r.ObjectId)));
+                        break;
+                    case "unfavorite":
+                        rows.Add((r.Time, FileName(r.ObjectId), $"☆ unfavorited by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", PathFor(r.ObjectId)));
                         break;
                     case "open":
                         openAt[key] = r.Time;
