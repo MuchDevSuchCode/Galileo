@@ -1145,6 +1145,14 @@
             </Border>
         </Grid>
 
+        <!-- Secure-sharing reachability in the explorer footer (green = online, red = offline). Placed before
+             the overlays below so the viewer / settings render over it. -->
+        <StackPanel x:Name="NetIndicator" Visibility="Collapsed" Orientation="Horizontal" Spacing="7"
+                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,16,8" IsHitTestVisible="False">
+            <Ellipse x:Name="NetOrb" Width="9" Height="9" VerticalAlignment="Center" Fill="Gray" />
+            <TextBlock x:Name="NetText" Text="Offline" FontSize="12" Opacity="0.7" VerticalAlignment="Center" />
+        </StackPanel>
+
         <!-- ===================== Settings overlay ===================== -->
         <Grid x:Name="SettingsOverlay" Visibility="Collapsed" Background="#AA000000"
               Tapped="SettingsScrim_Tapped">
@@ -1707,13 +1715,6 @@
                    HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="16,0,16,8"
                    MaxWidth="460" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
                    IsHitTestVisible="False" />
-
-        <!-- Secure-sharing reachability, shown only while you're inside a vault (red = offline, green = online). -->
-        <StackPanel x:Name="VaultNetIndicator" Visibility="Collapsed" Orientation="Horizontal" Spacing="7"
-                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,16,8" IsHitTestVisible="False">
-            <Ellipse x:Name="VaultNetOrb" Width="9" Height="9" VerticalAlignment="Center" Fill="Gray" />
-            <TextBlock x:Name="VaultNetText" Text="Offline" FontSize="12" Opacity="0.7" VerticalAlignment="Center" />
-        </StackPanel>
 
         <!-- ===================== File-transfer progress (Apple-style floating card) ===================== -->
         <Border x:Name="TransferPanel" Visibility="Collapsed" Opacity="0"
