@@ -546,6 +546,88 @@ public sealed class Vault : IShareSource
         return File.OpenRead(path);
     }
 
+    // ---------- Secure P2P sharing — writes (a friend with a read+write grant) ----------
+
+    /// <summary>Whether a remote viewer's writes can be applied right now (vault unlocked with a working folder).</summary>
+    public bool CanWrite => _dek is not null && WorkingDir is not null && Directory.Exists(WorkingDir);
+
+    private readonly Dictionary<string, (string part, FileStream fs)> _uploads = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Resolve a vault-relative path to a full path, rejecting anything that escapes the working
+    /// folder (defends against "../" traversal from a remote peer).</summary>
+    private string SafeFull(string rel)
+    {
+        if (WorkingDir is null) throw new InvalidOperationException("Vault is locked.");
+        rel = (rel ?? "").Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar)
+                          .TrimStart(Path.DirectorySeparatorChar);
+        var root = Path.GetFullPath(WorkingDir);
+        var full = Path.GetFullPath(Path.Combine(root, rel));
+        if (!full.Equals(root, StringComparison.OrdinalIgnoreCase)
+            && !full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new UnauthorizedAccessException("Path escapes the vault.");
+        return full;
+    }
+
+    private static string UniqueFsPath(string path)
+    {
+        if (!File.Exists(path) && !Directory.Exists(path)) return path;
+        var dir = Path.GetDirectoryName(path)!;
+        var name = Path.GetFileNameWithoutExtension(path);
+        var ext = Path.GetExtension(path);
+        for (var i = 2; ; i++)
+        {
+            var p = Path.Combine(dir, $"{name} ({i}){ext}");
+            if (!File.Exists(p) && !Directory.Exists(p)) return p;
+        }
+    }
+
+    public void CreateFolder(string rel)
+    {
+        if (!CanWrite) throw new InvalidOperationException("Vault is locked.");
+        Directory.CreateDirectory(UniqueFsPath(SafeFull(rel)));
+    }
+
+    /// <summary>Begin an upload to <paramref name="rel"/>: returns a writable stream over a hidden temp file
+    /// inside the working folder. The host writes bytes, then calls CommitUpload (or AbortUpload).</summary>
+    public Stream BeginUpload(string rel)
+    {
+        if (!CanWrite) throw new InvalidOperationException("Vault is locked.");
+        var full = SafeFull(rel);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        var part = full + ".uploadpart";
+        var fs = File.Create(part);
+        try { File.SetAttributes(part, FileAttributes.Hidden); } catch { }
+        _uploads[rel] = (part, fs);
+        return fs;
+    }
+
+    public void CommitUpload(string rel)
+    {
+        if (!_uploads.Remove(rel, out var u)) return;
+        try { u.fs.Flush(true); } catch { }
+        try { u.fs.Dispose(); } catch { }
+        var dest = UniqueFsPath(SafeFull(rel));
+        try { File.SetAttributes(u.part, FileAttributes.Normal); } catch { }
+        File.Move(u.part, dest);
+    }
+
+    public void AbortUpload(string rel)
+    {
+        if (!_uploads.Remove(rel, out var u)) return;
+        try { u.fs.Dispose(); } catch { }
+        try { File.Delete(u.part); } catch { }
+    }
+
+    public void DeleteEntry(string id)
+    {
+        if (!CanWrite) throw new InvalidOperationException("Vault is locked.");
+        if (!_shareMap.TryGetValue(id, out var path)) { ShareEntries(); _shareMap.TryGetValue(id, out path); }
+        if (path is null) return;
+        var full = SafeFull(Path.GetRelativePath(WorkingDir!, path));
+        if (File.Exists(full)) { try { File.SetAttributes(full, FileAttributes.Normal); } catch { } File.Delete(full); }
+        else if (Directory.Exists(full)) Directory.Delete(full, recursive: true);
+    }
+
     // ---------- Helpers ----------
 
     private string UniqueRel(string rel)

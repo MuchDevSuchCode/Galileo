@@ -372,14 +372,18 @@ public sealed partial class MainWindow
         {
             var row = new Grid { ColumnDefinitions = { new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }, new ColumnDefinition { Width = GridLength.Auto } } };
             var name = new TextBlock { Text = string.IsNullOrWhiteSpace(f.Alias) ? f.Uuid[..8] : f.Alias, VerticalAlignment = VerticalAlignment.Center };
-            var toggle = new ToggleSwitch { IsOn = _sharing.IsGranted(vaultId, Guid.Parse(f.Uuid)) };
-            Grid.SetColumn(toggle, 1);
             var fid = Guid.Parse(f.Uuid);
-            toggle.Toggled += (_, _) => { try { _sharing!.SetGrant(vaultId, fid, toggle.IsOn); } catch { } };
-            row.Children.Add(name); row.Children.Add(toggle);
+            var combo = new ComboBox { MinWidth = 150, VerticalAlignment = VerticalAlignment.Center };
+            combo.Items.Add(new ComboBoxItem { Content = "No access" });
+            combo.Items.Add(new ComboBoxItem { Content = "Read only" });
+            combo.Items.Add(new ComboBoxItem { Content = "Read & write" });
+            combo.SelectedIndex = (int)_sharing.AccessFor(vaultId, fid); // None=0, Read=1, Write=2
+            combo.SelectionChanged += (_, _) => { try { _sharing!.SetGrant(vaultId, fid, (ShareAccess)combo.SelectedIndex); } catch { } };
+            Grid.SetColumn(combo, 1);
+            row.Children.Add(name); row.Children.Add(combo);
             panel.Children.Add(row);
         }
-        panel.Children.Add(new TextBlock { Text = "Friends can browse it live while this vault is unlocked and you're online. Revoke any time.", Opacity = 0.6, FontSize = 12, TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(new TextBlock { Text = "Friends can browse a share live while this vault is unlocked and you're online. Read & write also lets them add files and folders into the vault. Revoke any time.", Opacity = 0.6, FontSize = 12, TextWrapping = TextWrapping.Wrap });
         await new ContentDialog { Title = "Share vault", Content = panel, CloseButtonText = "Done", XamlRoot = RootGrid.XamlRoot }.ShowAsync();
     }
 
@@ -700,6 +704,101 @@ public sealed partial class MainWindow
         catch { /* best effort */ }
     }
 
+    // ---- viewer write actions (need a read+write grant on the owner; the owner enforces it) ------------
+
+    private static string RemoteRel(RemoteBrowse rb, string folder)
+    {
+        if (string.Equals(folder, rb.Dir, StringComparison.OrdinalIgnoreCase)) return "";
+        var rel = Path.GetRelativePath(rb.Dir, folder).Replace(Path.DirectorySeparatorChar, '/');
+        return rel is "." ? "" : rel;
+    }
+
+    private static string JoinRel(string a, string b) => string.IsNullOrEmpty(a) ? b : a + "/" + b;
+
+    private static string FriendlyWriteError(Exception ex) =>
+        ex.Message.Contains("not permitted", StringComparison.OrdinalIgnoreCase)
+            ? "you have read-only access to this share." : ex.Message;
+
+    /// <summary>Create a folder in the shared vault we're browsing. Throws on rejection (e.g. read-only).</summary>
+    private async Task RemoteCreateFolderAsync(string parentFolder, string name)
+    {
+        var rb = _remoteBrowse ?? throw new InvalidOperationException("Not browsing a share.");
+        if (_sharing is null) throw new InvalidOperationException("You're offline.");
+        var path = JoinRel(RemoteRel(rb, parentFolder), name);
+        await rb.Gate.WaitAsync();
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await ShareProtocol.CreateFolderAsync(_sharing.Relay, rb.Session, path, cts.Token);
+        }
+        finally { rb.Gate.Release(); }
+    }
+
+    /// <summary>Upload local files/folders into the current remote-browse folder (recurses folders; the owner
+    /// auto-creates intermediate directories). Refreshes the view when done.</summary>
+    private async Task RemoteUploadItemsAsync(string parentFolder, IReadOnlyList<string> localPaths)
+    {
+        var rb = _remoteBrowse; if (rb is null || _sharing is null) return;
+        var parentRel = RemoteRel(rb, parentFolder);
+        var work = new List<(string vaultPath, string local)>();
+        foreach (var p in localPaths)
+        {
+            if (File.Exists(p)) work.Add((JoinRel(parentRel, Path.GetFileName(p)), p));
+            else if (Directory.Exists(p))
+            {
+                var baseName = Path.GetFileName(p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                foreach (var f in Directory.EnumerateFiles(p, "*", SearchOption.AllDirectories))
+                {
+                    var within = Path.GetRelativePath(p, f).Replace(Path.DirectorySeparatorChar, '/');
+                    work.Add((JoinRel(parentRel, baseName + "/" + within), f));
+                }
+            }
+        }
+        if (work.Count == 0) return;
+
+        await rb.Gate.WaitAsync();
+        var ok = false;
+        try
+        {
+            var n = 0;
+            foreach (var (vp, lf) in work)
+            {
+                StatusText.Text = $"Uploading {Path.GetFileName(lf)} ({++n}/{work.Count})…";
+                using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(30));
+                using var fs = File.OpenRead(lf);
+                await ShareProtocol.UploadAsync(_sharing.Relay, rb.Session, vp, fs, null, cts.Token);
+            }
+            ok = true;
+            StatusText.Text = work.Count == 1 ? "Uploaded 1 file to the share." : $"Uploaded {work.Count} files to the share.";
+        }
+        catch (Exception ex) { StatusText.Text = "Upload failed: " + FriendlyWriteError(ex); }
+        finally { rb.Gate.Release(); }
+        if (ok) RefreshRemoteBrowse();
+    }
+
+    /// <summary>Delete shared entries (by their full temp paths) from the owner's vault, then refresh.</summary>
+    private async Task RemoteDeleteAsync(IReadOnlyList<string> fullPaths)
+    {
+        var rb = _remoteBrowse; if (rb is null || _sharing is null) return;
+        var ids = fullPaths.Select(p => rb.PathToId.TryGetValue(p, out var id) ? id : null).Where(id => id is not null).ToList();
+        if (ids.Count == 0) return;
+        await rb.Gate.WaitAsync();
+        var ok = false;
+        try
+        {
+            foreach (var id in ids)
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                await ShareProtocol.DeleteRemoteAsync(_sharing.Relay, rb.Session, id!, cts.Token);
+            }
+            ok = true;
+            StatusText.Text = ids.Count == 1 ? "Deleted 1 item from the share." : $"Deleted {ids.Count} items from the share.";
+        }
+        catch (Exception ex) { StatusText.Text = "Delete failed: " + FriendlyWriteError(ex); }
+        finally { rb.Gate.Release(); }
+        if (ok) RefreshRemoteBrowse();
+    }
+
     /// <summary>The viewer (un)favorited a file from the share — tell the owner so it lands in their access
     /// log. Fire-and-forget; only fires for files that belong to the current remote browse.</summary>
     private void NoteRemoteFavorite(string path, bool fav)
@@ -753,6 +852,7 @@ public sealed partial class MainWindow
         Func<Guid, IShareSource?> shareForPeer = peer =>
             new GrantGatedSource(
                 () => _vaults.Current is not null && _sharing is not null && _sharing.IsGranted(_vaults.Current.Id, peer),
+                () => _vaults.Current is not null && _sharing is not null && _sharing.CanWrite(_vaults.Current.Id, peer),
                 new LiveCurrentVaultSource(this));
         App.LogInfo($"sharing: going online to {url}");
         try { await _sharing.GoOnlineAsync(url, shareForPeer); App.LogInfo("sharing: online"); }
@@ -1148,5 +1248,12 @@ public sealed partial class MainWindow
         public IReadOnlyList<VaultEntry> ShareEntries() => _mw._vaults.Current?.ShareEntries() ?? Array.Empty<VaultEntry>();
         public Stream OpenSharedEntry(string blobId) =>
             _mw._vaults.Current?.OpenSharedEntry(blobId) ?? throw new FileNotFoundException("Not shared.");
+
+        public bool CanWrite => _mw._vaults.Current?.CanWrite ?? false;
+        public void CreateFolder(string relPath) => (_mw._vaults.Current ?? throw new InvalidOperationException("No vault.")).CreateFolder(relPath);
+        public Stream BeginUpload(string relPath) => (_mw._vaults.Current ?? throw new InvalidOperationException("No vault.")).BeginUpload(relPath);
+        public void CommitUpload(string relPath) => _mw._vaults.Current?.CommitUpload(relPath);
+        public void AbortUpload(string relPath) => _mw._vaults.Current?.AbortUpload(relPath);
+        public void DeleteEntry(string id) => (_mw._vaults.Current ?? throw new InvalidOperationException("No vault.")).DeleteEntry(id);
     }
 }

@@ -2669,6 +2669,7 @@ public sealed partial class MainWindow : Window
     private async void NewFolder_Click(object sender, RoutedEventArgs e)
     {
         if (_currentFolder is null) { StatusText.Text = "Pick a folder first."; return; }
+        if (InRemoteBrowse(_currentFolder)) { await NewRemoteFolderAsync(_currentFolder); return; }
         try
         {
             var name = "New folder";
@@ -2683,6 +2684,30 @@ public sealed partial class MainWindow : Window
             if (item is not null) await RenameExplorerAsync(item);
         }
         catch (Exception ex) { StatusText.Text = $"Couldn't create folder: {ex.Message}"; }
+    }
+
+    /// <summary>New folder inside a friend's shared vault: ask the owner to create it (needs write access),
+    /// then mirror it locally so it shows right away.</summary>
+    private async Task NewRemoteFolderAsync(string parentFolder)
+    {
+        var box = new TextBox { Text = "New folder" };
+        box.Loaded += (_, _) => { box.Focus(FocusState.Programmatic); box.SelectAll(); };
+        var dlg = new ContentDialog
+        {
+            Title = "New folder", Content = box, PrimaryButtonText = "Create", CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary, XamlRoot = RootGrid.XamlRoot,
+        };
+        if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
+        var name = box.Text.Trim();
+        if (string.IsNullOrEmpty(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { StatusText.Text = "Invalid folder name."; return; }
+        try
+        {
+            await RemoteCreateFolderAsync(parentFolder, name);
+            try { Directory.CreateDirectory(Path.Combine(parentFolder, name)); } catch { } // mirror locally so it appears now
+            LoadCurrentFolder();
+            StatusText.Text = $"Created “{name}” in the share.";
+        }
+        catch (Exception ex) { StatusText.Text = "Couldn't create folder: " + FriendlyWriteError(ex); }
     }
 
     private void ExplorerSlideshow_Click(object sender, RoutedEventArgs e)
@@ -2998,6 +3023,9 @@ public sealed partial class MainWindow : Window
             var missing = paths.Count - existing.Count;
             if (existing.Count == 0) { StatusText.Text = "Nothing to paste."; return; }
 
+            // Pasting into a friend's shared folder uploads into their vault (needs write access).
+            if (InRemoteBrowse(_currentFolder)) { await RemoteUploadItemsAsync(_currentFolder, existing); return; }
+
             var result = await RunTransferWithUiAsync(_currentFolder, existing, move);
             if (move && !result.Canceled && result.Errors == 0) _fileClip = null; // a cut is consumed only on a clean paste
             LoadCurrentFolder();
@@ -3233,6 +3261,9 @@ public sealed partial class MainWindow : Window
         // In the bin view, "delete" means permanently shred that entry.
         if (_currentFolder == RecycleBin.Location) { await ShredBinEntriesAsync(new() { item }); return; }
 
+        // Inside a friend's share: ask the owner to delete it from their vault (needs write access).
+        if (InRemoteBrowse(_currentFolder)) { await ConfirmRemoteDeleteAsync(new List<string> { item.Path }, item.Name); return; }
+
         var permanent = IsShiftDown();
         var dialog = new ContentDialog
         {
@@ -3269,6 +3300,14 @@ public sealed partial class MainWindow : Window
         // In the bin view, "delete" means permanently shred the selected entries.
         if (_currentFolder == RecycleBin.Location) { await ShredBinEntriesAsync(selection); return; }
 
+        // Inside a friend's share: ask the owner to delete from their vault (needs write access).
+        if (InRemoteBrowse(_currentFolder))
+        {
+            await ConfirmRemoteDeleteAsync(selection.Select(i => i.Path).ToList(),
+                selection.Count == 1 ? selection[0].Name : $"{selection.Count} items");
+            return;
+        }
+
         var permanent = IsShiftDown();
         var dialog = new ContentDialog
         {
@@ -3299,6 +3338,22 @@ public sealed partial class MainWindow : Window
             StatusText.Text = $"Moved {selection.Count} item(s) to the Recycle Bin.";
         }
         LoadCurrentFolder();
+    }
+
+    /// <summary>Confirm, then delete the given shared items from the friend's vault (owner-side).</summary>
+    private async System.Threading.Tasks.Task ConfirmRemoteDeleteAsync(IReadOnlyList<string> paths, string label)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Delete from share",
+            Content = $"Delete {label} from the owner's vault? This removes it for everyone.",
+            PrimaryButtonText = "Delete",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = RootGrid.XamlRoot,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        await RemoteDeleteAsync(paths);
     }
 
     /// <summary>Permanently shreds bin entries (secure overwrite), used by the bin view's Delete.</summary>
@@ -3991,6 +4046,9 @@ public sealed partial class MainWindow : Window
 
         paths = paths.Where(p => File.Exists(p) || Directory.Exists(p)).ToList(); // only transfer what's actually there
         if (paths.Count == 0) return;
+        // Dropping onto a friend's shared folder uploads into their vault (needs write access) instead of a
+        // local move/copy — the temp browse folder isn't a real destination.
+        if (InRemoteBrowse(target)) { await RemoteUploadItemsAsync(target, paths); return; }
         try
         {
             var result = await RunTransferWithUiAsync(target, paths, move);
