@@ -136,6 +136,11 @@ public static class ShareProtocol
                             // Viewer left the shared folder — log it so the owner sees the browse ended.
                             await relay.SendAuditAsync(session.PeerUuid, "(index)", "browse_end", 0, ct);
                             break;
+                        case "client":
+                            // Viewer announced which app it is (e.g. the Android client) — record it so the
+                            // owner's access log can call it out. Fire-and-forget (no response).
+                            await relay.SendAuditAsync(session.PeerUuid, root.TryGetProperty("name", out var cn) ? (cn.GetString() ?? "app") : "app", "client", 0, ct);
+                            break;
                         case "open":
                             // Pure chunk transfer (for thumbnails / fetching) — not audited; only an
                             // actual viewer "view" counts as access.

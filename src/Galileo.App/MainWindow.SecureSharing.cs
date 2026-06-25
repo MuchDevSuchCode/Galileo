@@ -936,6 +936,12 @@ public sealed partial class MainWindow
                     case "browse_end":
                         rows.Add((r.Time, "Closed your shared vault", $"by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", null));
                         break;
+                    case "client":
+                    {
+                        var app = r.ObjectId.Length > 0 ? char.ToUpperInvariant(r.ObjectId[0]) + r.ObjectId[1..] : "an app";
+                        rows.Add((r.Time, $"Connected from the {app} app", $"by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", null));
+                        break;
+                    }
                     case "fetch":
                         rows.Add((r.Time, FileName(r.ObjectId), $"downloaded by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", PathFor(r.ObjectId)));
                         break;
