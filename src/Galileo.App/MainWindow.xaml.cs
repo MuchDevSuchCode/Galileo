@@ -6257,13 +6257,19 @@ public sealed partial class MainWindow : Window
     /// photo/video viewer. A light poll keeps it current as the relay drops/reconnects.</summary>
     private void RefreshNetIndicator()
     {
-        var configured = _sharing is not null || SecureSharing.Exists();
-        var show = configured && ExplorerView.Visibility == Visibility.Visible;
-        NetIndicator.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        if (!show) return;
-        var online = _sharing?.IsOnline == true;
-        NetText.Text = online ? "Online" : "Offline";
-        NetOrb.Fill = online ? _orbOnline : _orbOffline;
+        // Driven by an always-on 4s timer, so it must never throw (e.g. touching elements during window
+        // teardown) — an unhandled exception here would crash the app.
+        try
+        {
+            var configured = _sharing is not null || SecureSharing.Exists();
+            var show = configured && ExplorerView.Visibility == Visibility.Visible;
+            NetIndicator.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            if (!show) return;
+            var online = _sharing?.IsOnline == true;
+            NetText.Text = online ? "Online" : "Offline";
+            NetOrb.Fill = online ? _orbOnline : _orbOffline;
+        }
+        catch (Exception ex) { App.Log("NetIndicator", ex); }
     }
 
     // ---- Idle auto-lock ----
