@@ -968,7 +968,8 @@
                 <!-- CanvasControl + markup are drawn in code-behind (Win2D/Ink controls in XAML crash the markup compiler) -->
                 <Canvas x:Name="OverlayCanvas" Background="Transparent" IsHitTestVisible="False"
                         PointerPressed="Overlay_PointerPressed" PointerMoved="Overlay_PointerMoved"
-                        PointerReleased="Overlay_PointerReleased" DoubleTapped="Overlay_DoubleTapped" />
+                        PointerReleased="Overlay_PointerReleased" PointerCaptureLost="Overlay_PointerCaptureLost"
+                        DoubleTapped="Overlay_DoubleTapped" />
             </Grid>
 
             <!-- Tools rail -->

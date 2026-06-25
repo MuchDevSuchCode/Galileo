@@ -50,6 +50,16 @@ public sealed partial class MainWindow
     private Rect _viewSrc;          // oriented-space region currently shown on the canvas
     private MarkupItem? _pendingShape;
 
+    // Cached render of the (expensive) color+orientation pipeline. Crop/markup dragging blits this instead
+    // of re-running the full-resolution effect graph every pointer frame — without it, dragging a crop on a
+    // large photo re-renders the whole image dozens of times a second and the tool appears to freeze.
+    private CanvasRenderTarget? _editCache;
+    private bool _editCacheDirty = true;
+
+    /// <summary>A pixel-affecting edit (adjust/filter/rotate/flip/straighten/undo/reset) changed — drop the
+    /// cached render and repaint. Crop and markup don't change pixels, so they must NOT call this.</summary>
+    private void InvalidateEditImage() { _editCacheDirty = true; _editCanvas?.Invalidate(); }
+
     // ---- enter / exit ----
 
     private async void Edit_Click(object sender, RoutedEventArgs e) => await EnterEditModeAsync();
@@ -72,6 +82,7 @@ public sealed partial class MainWindow
         _orientedW = _orientedH = 0; _editFitScale = 1; _editFitRect = default; _viewSrc = default;
         _dragging = false; _pendingCrop = null; _cropDrag = ""; _cropAtDragStart = default; _pendingShape = null;
         _cropAspect = 0;
+        try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true; // fresh image → fresh cache
         ResetEditSliders();
         _editLoading = true;
         if (CropAspectCombo.Items.Count > 0) CropAspectCombo.SelectedIndex = 0;
@@ -113,6 +124,7 @@ public sealed partial class MainWindow
     {
         EditorView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Visible;
+        try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true;
         if (reloadViewer) _ = LoadCurrentAsync();
     }
 
@@ -143,7 +155,36 @@ public sealed partial class MainWindow
         _editFitRect = new Rect(ox, oy, dw, dh);
         _editFitScale = scale;
 
-        ds.DrawImage(oriented, new Rect(ox, oy, dw, dh), src);
+        // While interactively cropping or marking up (lots of pointer-driven redraws), draw from a cached
+        // render of the pipeline so each frame is a cheap bitmap blit, not a full effect re-render. During
+        // adjustments (no interaction loop) draw the effect graph directly so the live preview is exact.
+        ICanvasImage shown = oriented;
+        if (_cropMode || _markupTool.Length > 0)
+        {
+            var sizeOk = _editCache is not null
+                         && Math.Abs(_editCache.Size.Width - ow) < 0.5 && Math.Abs(_editCache.Size.Height - oh) < 0.5;
+            if (_editCacheDirty || !sizeOk)
+            {
+                try
+                {
+                    if (!sizeOk) { _editCache?.Dispose(); _editCache = new CanvasRenderTarget(sender.Device, (float)ow, (float)oh, 96); }
+                    using (var cds = _editCache!.CreateDrawingSession())
+                    {
+                        cds.Clear(Microsoft.UI.Colors.Transparent);
+                        cds.DrawImage(oriented);
+                    }
+                    _editCacheDirty = false;
+                }
+                catch (Exception ex) { App.Log("EditCache", ex); _editCache = null; }
+            }
+            if (_editCache is not null) shown = _editCache;
+        }
+        else
+        {
+            _editCacheDirty = true; // adjustments happen here; force a rebuild next time we crop/mark up
+        }
+
+        ds.DrawImage(shown, new Rect(ox, oy, dw, dh), src);
 
         // Crop overlay (dim outside + bright border) — only while actively cropping the whole image.
         if (_cropMode && (_pendingCrop ?? _edit.Crop) is Rect c && c.Width > 0 && c.Height > 0)
@@ -208,6 +249,9 @@ public sealed partial class MainWindow
     {
         _cropMode = mode == "crop";
         if (mode != "shape") _markupTool = "";
+        // Clear any half-finished drag so a previously stuck pointer state can't break the new mode
+        // (e.g. a lost pointer-capture that never fired PointerReleased).
+        _dragging = false; _pendingCrop = null; _pendingShape = null; _cropDrag = "";
         OverlayCanvas.IsHitTestVisible = mode is "crop" or "shape";
     }
 
@@ -272,9 +316,18 @@ public sealed partial class MainWindow
 
     private void Overlay_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        try { OverlayCanvas.ReleasePointerCapture(e.Pointer); } catch { }
+        FinishOverlayDrag();
+    }
+
+    // If the pointer capture is lost (pointer leaves the window, another control steals it), PointerReleased
+    // may never fire — finalize here too so the drag can't get stuck and force a close/reopen.
+    private void Overlay_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e) => FinishOverlayDrag();
+
+    private void FinishOverlayDrag()
+    {
         if (!_dragging) return;
         _dragging = false;
-        OverlayCanvas.ReleasePointerCapture(e.Pointer);
         if (_cropMode)
         {
             if (_pendingCrop is Rect c && c.Width > 8 && c.Height > 8) { PushUndo(); _edit.Crop = c; }
@@ -358,7 +411,7 @@ public sealed partial class MainWindow
 
     private void Overlay_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
-        if (_cropMode && _edit.Crop is not null) CropApply_Click(sender, e);
+        if (_cropMode) CropApply_Click(sender, e);
     }
 
     private async Task AddTextAsync(Point at)
@@ -394,10 +447,10 @@ public sealed partial class MainWindow
 
     // ---- transform handlers ----
 
-    private void RotateCw_Click(object sender, RoutedEventArgs e) { PushUndo(); _edit.Quarter = (_edit.Quarter + 1) % 4; _edit.Crop = null; _editCanvas?.Invalidate(); }
-    private void RotateCcw_Click(object sender, RoutedEventArgs e) { PushUndo(); _edit.Quarter = (_edit.Quarter + 3) % 4; _edit.Crop = null; _editCanvas?.Invalidate(); }
-    private void FlipH_Click(object sender, RoutedEventArgs e) { PushUndo(); _edit.FlipH = !_edit.FlipH; _edit.Crop = null; _editCanvas?.Invalidate(); }
-    private void FlipV_Click(object sender, RoutedEventArgs e) { PushUndo(); _edit.FlipV = !_edit.FlipV; _edit.Crop = null; _editCanvas?.Invalidate(); }
+    private void RotateCw_Click(object sender, RoutedEventArgs e) { PushUndo(); _edit.Quarter = (_edit.Quarter + 1) % 4; _edit.Crop = null; InvalidateEditImage(); }
+    private void RotateCcw_Click(object sender, RoutedEventArgs e) { PushUndo(); _edit.Quarter = (_edit.Quarter + 3) % 4; _edit.Crop = null; InvalidateEditImage(); }
+    private void FlipH_Click(object sender, RoutedEventArgs e) { PushUndo(); _edit.FlipH = !_edit.FlipH; _edit.Crop = null; InvalidateEditImage(); }
+    private void FlipV_Click(object sender, RoutedEventArgs e) { PushUndo(); _edit.FlipV = !_edit.FlipV; _edit.Crop = null; InvalidateEditImage(); }
 
     private void Straighten_Changed(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
@@ -405,7 +458,7 @@ public sealed partial class MainWindow
         DebounceUndo();
         _edit.StraightenDeg = StraightenSlider.Value;
         _edit.Crop = null;
-        _editCanvas?.Invalidate();
+        InvalidateEditImage();
     }
 
     private void CropAspect_Changed(object sender, SelectionChangedEventArgs e)
@@ -437,7 +490,10 @@ public sealed partial class MainWindow
     private void CropApply_Click(object sender, RoutedEventArgs e)
     {
         if (_editCanvas is null) return;
-        if (_edit.Crop is null) { StatusText.Text = "Draw a crop first."; return; }
+        // Commit a still-in-progress selection so Apply works even if the pointer is mid-drag / never released.
+        if (_pendingCrop is Rect pc && pc.Width > 8 && pc.Height > 8) { PushUndo(); _edit.Crop = pc; }
+        _pendingCrop = null; _cropDrag = ""; _dragging = false;
+        if (_edit.Crop is null) { StatusText.Text = "Drag a box on the image first, then Apply."; return; }
         SetCanvasMode("none");
         _editCanvas.Invalidate();
         StatusText.Text = "Crop applied (preview). Use Crop to adjust, Reset to clear.";
@@ -456,7 +512,7 @@ public sealed partial class MainWindow
         _edit.Temperature = TemperatureSlider.Value / 100.0;
         _edit.Tint = TintSlider.Value / 100.0;
         _edit.Sharpness = SharpnessSlider.Value / 100.0;
-        _editCanvas?.Invalidate();
+        InvalidateEditImage();
     }
 
     private void Filter_Click(object sender, RoutedEventArgs e)
@@ -465,7 +521,7 @@ public sealed partial class MainWindow
         {
             PushUndo();
             _edit.Filter = f;
-            _editCanvas?.Invalidate();
+            InvalidateEditImage();
         }
     }
 
@@ -524,7 +580,7 @@ public sealed partial class MainWindow
         _editRedo.Push(_edit.Clone());
         _edit = _editUndo.Pop();
         SyncSlidersFromState();
-        _editCanvas?.Invalidate();
+        InvalidateEditImage();
     }
 
     private void EditRedo_Click(object sender, RoutedEventArgs e)
@@ -533,7 +589,7 @@ public sealed partial class MainWindow
         _editUndo.Push(_edit.Clone());
         _edit = _editRedo.Pop();
         SyncSlidersFromState();
-        _editCanvas?.Invalidate();
+        InvalidateEditImage();
     }
 
     private void EditReset_Click(object sender, RoutedEventArgs e)
@@ -543,7 +599,7 @@ public sealed partial class MainWindow
         _markup.Clear();
         ResetEditSliders();
         SetCanvasMode("none");
-        _editCanvas?.Invalidate();
+        InvalidateEditImage();
     }
 
     // ---- save ----
