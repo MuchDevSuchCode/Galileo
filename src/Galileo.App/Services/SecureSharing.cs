@@ -27,8 +27,12 @@ internal sealed class ShareVaultData
     public string Alias { get; set; } = "";                                   // this user's display name
     public string Seed { get; set; } = "";                                    // BIP39 identity seed
     public List<Friend> Friends { get; set; } = new();
-    public Dictionary<string, List<string>> Grants { get; set; } = new();      // vaultId -> friend uuids we share it with
+    public Dictionary<string, List<string>> Grants { get; set; } = new();      // vaultId -> friends with (at least) read
+    public Dictionary<string, List<string>> GrantsWrite { get; set; } = new(); // vaultId -> friends with write (a subset of Grants)
 }
+
+/// <summary>Per-friend, per-vault access level. Write implies read.</summary>
+public enum ShareAccess { None = 0, Read = 1, Write = 2 }
 
 /// <summary>
 /// Coordinator for secure peer-to-peer sharing. Owns the local identity (from a BIP39 seed), a display
@@ -194,23 +198,36 @@ public sealed class SecureSharing : IDisposable
     {
         _data.Friends.RemoveAll(f => f.Uuid == uuid.ToString());
         foreach (var list in _data.Grants.Values) list.RemoveAll(u => u == uuid.ToString());
+        foreach (var list in _data.GrantsWrite.Values) list.RemoveAll(u => u == uuid.ToString());
     }
 
     // ---- per-vault share grants ----
 
-    public bool IsGranted(string vaultId, Guid friend) =>
-        _data.Grants.TryGetValue(vaultId, out var l) && l.Contains(friend.ToString());
+    /// <summary>The access level a friend has to a vault. (Backward compatible: an old store with only the
+    /// read grant list reads back as Read; no write grant ⇒ read-only, the safe default.)</summary>
+    public ShareAccess AccessFor(string vaultId, Guid friend)
+    {
+        var id = friend.ToString();
+        if (_data.GrantsWrite.TryGetValue(vaultId, out var w) && w.Contains(id)) return ShareAccess.Write;
+        if (_data.Grants.TryGetValue(vaultId, out var r) && r.Contains(id)) return ShareAccess.Read;
+        return ShareAccess.None;
+    }
+
+    public bool IsGranted(string vaultId, Guid friend) => AccessFor(vaultId, friend) != ShareAccess.None;
+    public bool CanWrite(string vaultId, Guid friend) => AccessFor(vaultId, friend) == ShareAccess.Write;
 
     public IReadOnlyList<string> GrantedFriendIds(string vaultId) =>
         _data.Grants.TryGetValue(vaultId, out var l) ? l : (IReadOnlyList<string>)Array.Empty<string>();
 
-    public void SetGrant(string vaultId, Guid friend, bool shared)
+    public void SetGrant(string vaultId, Guid friend, ShareAccess level)
     {
         if (!IsLinkedFriend(friend)) throw new InvalidOperationException("Not a linked friend.");
-        var list = _data.Grants.TryGetValue(vaultId, out var l) ? l : (_data.Grants[vaultId] = new List<string>());
         var id = friend.ToString();
-        if (shared && !list.Contains(id)) list.Add(id);
-        else if (!shared) list.Remove(id);
+        var read = _data.Grants.TryGetValue(vaultId, out var rl) ? rl : (_data.Grants[vaultId] = new List<string>());
+        var write = _data.GrantsWrite.TryGetValue(vaultId, out var wl) ? wl : (_data.GrantsWrite[vaultId] = new List<string>());
+        read.Remove(id); write.Remove(id);
+        if (level >= ShareAccess.Read) read.Add(id);
+        if (level == ShareAccess.Write) write.Add(id);
         Save();
         Changed?.Invoke();
     }

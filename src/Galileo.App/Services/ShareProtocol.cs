@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -16,6 +17,19 @@ public interface IShareSource
     string ShareName { get; }
     IReadOnlyList<VaultEntry> ShareEntries();
     Stream OpenSharedEntry(string blobId);
+
+    // ---- write (only honored when CanWrite is true; the host checks this before every mutating op) ----
+    /// <summary>Whether the connected viewer may modify this share (create folders, upload, delete).</summary>
+    bool CanWrite { get; }
+    /// <summary>Create a folder at a vault-relative path. Implementations must reject paths that escape the share.</summary>
+    void CreateFolder(string relPath);
+    /// <summary>Open a writable stream for an incoming upload to a vault-relative path; the host writes the
+    /// bytes then calls <see cref="CommitUpload"/> (or <see cref="AbortUpload"/>) keyed by the same path.</summary>
+    Stream BeginUpload(string relPath);
+    void CommitUpload(string relPath);
+    void AbortUpload(string relPath);
+    /// <summary>Delete the shared file (or folder) referenced by an opaque id.</summary>
+    void DeleteEntry(string id);
 }
 
 /// <summary>Serves nothing — used when a friend has no current grant or the owner has no vault open.</summary>
@@ -25,19 +39,36 @@ public sealed class EmptyShareSource : IShareSource
     public string ShareName => "";
     public IReadOnlyList<VaultEntry> ShareEntries() => Array.Empty<VaultEntry>();
     public Stream OpenSharedEntry(string blobId) => throw new FileNotFoundException("Not shared.");
+    public bool CanWrite => false;
+    public void CreateFolder(string relPath) => throw new InvalidOperationException("Read-only.");
+    public Stream BeginUpload(string relPath) => throw new InvalidOperationException("Read-only.");
+    public void CommitUpload(string relPath) { }
+    public void AbortUpload(string relPath) { }
+    public void DeleteEntry(string id) => throw new InvalidOperationException("Read-only.");
 }
 
-/// <summary>Wraps a source so it only exposes anything while <paramref name="isGranted"/> returns true —
-/// lets share/revoke take effect live, per request, without tearing down the connection.</summary>
+/// <summary>Wraps a source so it only exposes anything while <paramref name="isGranted"/> returns true, and
+/// only permits writes while <paramref name="canWrite"/> returns true — so share level / revoke take effect
+/// live, per request, without tearing down the connection.</summary>
 public sealed class GrantGatedSource : IShareSource
 {
     private readonly Func<bool> _isGranted;
+    private readonly Func<bool> _canWrite;
     private readonly IShareSource _inner;
-    public GrantGatedSource(Func<bool> isGranted, IShareSource inner) { _isGranted = isGranted; _inner = inner; }
+    public GrantGatedSource(Func<bool> isGranted, Func<bool> canWrite, IShareSource inner)
+    { _isGranted = isGranted; _canWrite = canWrite; _inner = inner; }
     public string ShareName => _isGranted() ? _inner.ShareName : "";
     public IReadOnlyList<VaultEntry> ShareEntries() => _isGranted() ? _inner.ShareEntries() : Array.Empty<VaultEntry>();
     public Stream OpenSharedEntry(string blobId) =>
         _isGranted() ? _inner.OpenSharedEntry(blobId) : throw new FileNotFoundException("Not shared.");
+
+    public bool CanWrite => _canWrite() && _inner.CanWrite;
+    private void Require() { if (!CanWrite) throw new InvalidOperationException("Write access not permitted."); }
+    public void CreateFolder(string relPath) { Require(); _inner.CreateFolder(relPath); }
+    public Stream BeginUpload(string relPath) { Require(); return _inner.BeginUpload(relPath); }
+    public void CommitUpload(string relPath) { _inner.CommitUpload(relPath); }
+    public void AbortUpload(string relPath) { _inner.AbortUpload(relPath); }
+    public void DeleteEntry(string id) { Require(); _inner.DeleteEntry(id); }
 }
 
 /// <summary>A host's shared vault as the viewer sees it: the vault name plus its entries.</summary>
@@ -81,6 +112,7 @@ public static class ShareProtocol
         // Track which files this viewer currently has open in their viewer, so we can audit a "close" for
         // anything still open if the session ends (disconnect/crash) — no permanently-stale "still open".
         var openIds = new HashSet<string>();
+        var uploadStreams = new Dictionary<string, Stream>(StringComparer.OrdinalIgnoreCase); // in-progress writes from the viewer
         var listed = false; // audit "browse" once per session, not on every (auto-)refresh
         try
         {
@@ -133,6 +165,49 @@ public static class ShareProtocol
                             await relay.SendAuditAsync(session.PeerUuid, id, fav ? "favorite" : "unfavorite", 0, ct);
                             break;
                         }
+                        case "mkdir":
+                        {
+                            if (!vault.CanWrite) { await SendAsync(relay, session, new { op = "error", msg = "Write access not permitted." }, ct); break; }
+                            var p = root.GetProperty("path").GetString() ?? "";
+                            vault.CreateFolder(p);
+                            await relay.SendAuditAsync(session.PeerUuid, "(index)", "mkdir", 0, ct);
+                            await SendAsync(relay, session, new { op = "ok" }, ct);
+                            break;
+                        }
+                        case "put":
+                        {
+                            if (!vault.CanWrite) { await SendAsync(relay, session, new { op = "error", msg = "Write access not permitted." }, ct); break; }
+                            var p = root.GetProperty("path").GetString() ?? "";
+                            var offset = root.GetProperty("offset").GetInt64();
+                            var data = Convert.FromBase64String(root.GetProperty("data").GetString() ?? "");
+                            var eof = root.GetProperty("eof").GetBoolean();
+                            if (offset == 0)
+                            {
+                                if (uploadStreams.Remove(p, out var prior)) { try { prior.Dispose(); } catch { } vault.AbortUpload(p); }
+                                uploadStreams[p] = vault.BeginUpload(p);
+                            }
+                            if (uploadStreams.TryGetValue(p, out var us))
+                            {
+                                if (data.Length > 0) await us.WriteAsync(data, ct);
+                                if (eof)
+                                {
+                                    uploadStreams.Remove(p);
+                                    vault.CommitUpload(p);
+                                    await relay.SendAuditAsync(session.PeerUuid, "(index)", "upload", offset + data.Length, ct);
+                                }
+                            }
+                            await SendAsync(relay, session, new { op = "ok", eof }, ct);
+                            break;
+                        }
+                        case "del":
+                        {
+                            if (!vault.CanWrite) { await SendAsync(relay, session, new { op = "error", msg = "Write access not permitted." }, ct); break; }
+                            var id = root.GetProperty("id").GetString() ?? "";
+                            vault.DeleteEntry(id);
+                            await relay.SendAuditAsync(session.PeerUuid, id, "delete", 0, ct);
+                            await SendAsync(relay, session, new { op = "ok" }, ct);
+                            break;
+                        }
                         default:
                             await SendAsync(relay, session, new { op = "error", msg = "unknown op" }, ct);
                             break;
@@ -149,6 +224,9 @@ public static class ShareProtocol
             // Session ended — close out anything the viewer left open so the log isn't stuck "still open".
             foreach (var id in openIds)
                 try { await relay.SendAuditAsync(session.PeerUuid, id, "close", 0, CancellationToken.None); } catch { }
+            // Discard any half-finished uploads so partial files don't linger in the vault.
+            foreach (var p in uploadStreams.Keys.ToList())
+                try { uploadStreams[p].Dispose(); vault.AbortUpload(p); } catch { }
         }
     }
 
@@ -259,6 +337,43 @@ public static class ShareProtocol
     /// host records it in its access log so the owner sees what the viewer favorited.</summary>
     public static Task FavoriteAsync(RelayClient relay, SecureSession session, string id, bool fav, CancellationToken ct = default)
         => SendAsync(relay, session, new { op = "favorite", id, fav }, ct);
+
+    // ---- write requests (require a read+write grant on the host; each waits for an "ok"/"error" reply) ----
+
+    private static async Task RequireOkAsync(RelayClient relay, SecureSession session, object msg, CancellationToken ct)
+    {
+        await SendAsync(relay, session, msg, ct);
+        using var doc = JsonDocument.Parse(await session.ReceiveAsync(relay, ct));
+        var root = doc.RootElement;
+        if (root.GetProperty("op").GetString() == "error")
+            throw new InvalidOperationException(root.TryGetProperty("msg", out var m) ? m.GetString() : "Rejected by owner.");
+    }
+
+    /// <summary>Asks the host to create a folder at a vault-relative path.</summary>
+    public static Task CreateFolderAsync(RelayClient relay, SecureSession session, string path, CancellationToken ct = default)
+        => RequireOkAsync(relay, session, new { op = "mkdir", path }, ct);
+
+    /// <summary>Asks the host to delete a shared entry by its opaque id.</summary>
+    public static Task DeleteRemoteAsync(RelayClient relay, SecureSession session, string id, CancellationToken ct = default)
+        => RequireOkAsync(relay, session, new { op = "del", id }, ct);
+
+    /// <summary>Uploads a local file's bytes into the host's vault at a vault-relative path (chunked).</summary>
+    public static async Task UploadAsync(RelayClient relay, SecureSession session, string path, Stream src,
+        IProgress<long>? progress, CancellationToken ct = default)
+    {
+        var buf = new byte[ChunkSize];
+        long offset = 0;
+        while (true)
+        {
+            var read = await ReadFullyAsync(src, buf, ct);
+            var eof = read < buf.Length; // a short read means we've hit the end
+            await RequireOkAsync(relay, session,
+                new { op = "put", path, offset, data = Convert.ToBase64String(buf, 0, read), eof }, ct);
+            offset += read;
+            progress?.Report(offset);
+            if (eof) break;
+        }
+    }
 
     /// <summary>Convenience: fetch an entire entry into a byte array (for viewing small media in memory).</summary>
     public static async Task<byte[]> FetchAllAsync(RelayClient relay, SecureSession session, string id, long size, CancellationToken ct)
