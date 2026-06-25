@@ -106,8 +106,9 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _backupTimer = new() { Interval = TimeSpan.FromMinutes(30) };
     private readonly ObservableCollection<Models.VaultInfo> _vaultList = new();
     private readonly DispatcherTimer _vaultIdleTimer = new();
-    // Footer online/offline orb (shown only inside a vault); a light poll keeps it current as the relay drops/reconnects.
-    private readonly DispatcherTimer _vaultNetTimer = new() { Interval = TimeSpan.FromSeconds(4) };
+    // Footer online/offline orb (shown in the explorer once secure sharing is set up); a light poll keeps it
+    // current as the relay drops/reconnects.
+    private readonly DispatcherTimer _netTimer = new() { Interval = TimeSpan.FromSeconds(4) };
     private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _orbOnline = new(Microsoft.UI.Colors.LimeGreen);
     private readonly Microsoft.UI.Xaml.Media.SolidColorBrush _orbOffline = new(Microsoft.UI.Colors.IndianRed);
     // Commit the unlocked vault's working folder to its encrypted store continuously, so a non-graceful
@@ -225,7 +226,8 @@ public sealed partial class MainWindow : Window
         _vaultFlushDebounce.Tick += (_, _) => { _vaultFlushDebounce.Stop(); FlushVaultSoon(); };
         _remoteSyncTimer.Tick += (_, _) => RemoteSyncTick();
         _remoteIdleTimer.Tick += (_, _) => RemoteIdleTick();
-        _vaultNetTimer.Tick += (_, _) => RefreshVaultNetIndicator();
+        _netTimer.Tick += (_, _) => RefreshNetIndicator();
+        _netTimer.Start(); // always running; the orb shows/hides itself based on context
 
         // Privacy: collapse app-hidden folders the moment Galileo loses focus (opt-in).
         Activated += (_, e) => { if (e.WindowActivationState == WindowActivationState.Deactivated) ReHideOnBackground(); };
@@ -555,7 +557,7 @@ public sealed partial class MainWindow : Window
         GalleryView.Visibility = Visibility.Collapsed;
         CollageView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Visible;
-        RefreshVaultNetIndicator(); // hide the footer orb behind the viewer
+        RefreshNetIndicator(); // hide the footer orb behind the viewer
         ShowChrome();
     }
 
@@ -572,7 +574,7 @@ public sealed partial class MainWindow : Window
         InfoPanel.Visibility = Visibility.Collapsed;
         ExplorerView.Visibility = Visibility.Visible;
         ModeLabel.Text = ""; // the title-bar label is always visible — clear the viewed file's name on the way out
-        RefreshVaultNetIndicator(); // restore the footer orb if we're back inside a vault
+        RefreshNetIndicator(); // restore the footer orb when back in the explorer
         _chromeTimer.Stop();
         // Re-assert the icon-grid cell size: when the explorer is re-shown after the viewer, the
         // ItemsWrapGrid can come back without ItemWidth/Height and render a thumbnail at full size.
@@ -1458,7 +1460,7 @@ public sealed partial class MainWindow : Window
     {
         HiddenFolderPlaceholder.Visibility = Visibility.Collapsed;
         ExplorerEmpty.Visibility = Visibility.Collapsed;
-        RefreshVaultNetIndicator(); // show/hide the footer online orb based on whether we're inside a vault
+        RefreshNetIndicator(); // refresh the footer online orb for this view
         UpdateFolderWatch();
         LoadSortPrefsForCurrentFolder(); // apply this folder's remembered sort/group
 
@@ -6168,21 +6170,21 @@ public sealed partial class MainWindow : Window
         VaultLockBtn.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         VaultShareBtn.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         VaultLockText.Text = open && _vaults.Current is not null ? $"Lock “{_vaults.Current.Name}”" : "Lock vault";
-        RefreshVaultNetIndicator();
+        RefreshNetIndicator();
     }
 
-    /// <summary>Footer orb: only while you're inside a vault, show whether secure sharing is reachable
-    /// (green = online, red = offline). A light poll keeps it current as the relay drops/reconnects.</summary>
-    private void RefreshVaultNetIndicator()
+    /// <summary>Footer orb: once secure sharing is set up, show whether it's reachable on the relay
+    /// (green = online, red = offline). Visible across the explorer (not just the vault); hidden behind the
+    /// photo/video viewer. A light poll keeps it current as the relay drops/reconnects.</summary>
+    private void RefreshNetIndicator()
     {
-        // Only over the explorer footer while inside a vault — never floating over the photo/video viewer.
-        var show = IsInCurrentVault(_currentFolder) && ExplorerView.Visibility == Visibility.Visible;
-        VaultNetIndicator.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        if (!show) { _vaultNetTimer.Stop(); return; }
+        var configured = _sharing is not null || SecureSharing.Exists();
+        var show = configured && ExplorerView.Visibility == Visibility.Visible;
+        NetIndicator.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (!show) return;
         var online = _sharing?.IsOnline == true;
-        VaultNetText.Text = online ? "Online" : "Offline";
-        VaultNetOrb.Fill = online ? _orbOnline : _orbOffline;
-        if (!_vaultNetTimer.IsEnabled) _vaultNetTimer.Start();
+        NetText.Text = online ? "Online" : "Offline";
+        NetOrb.Fill = online ? _orbOnline : _orbOffline;
     }
 
     // ---- Idle auto-lock ----
