@@ -527,6 +527,12 @@ public sealed partial class MainWindow
 
         ShowExplorer();
         NavigateTo(dir);
+        // Tell the owner this is the Windows client so their access log calls it out (fire-and-forget).
+        _ = Task.Run(async () =>
+        {
+            try { using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10)); await ShareProtocol.ClientHelloAsync(_sharing!.Relay, session, "windows", cts.Token); }
+            catch { }
+        });
         _ = Task.Run(() => SyncRemoteBrowseAsync(_remoteBrowse, listing));
         _remoteSyncTimer.Start(); // keep it live: auto-sync the owner's adds/deletes every few seconds
         _lastRemoteActivity = DateTimeOffset.Now;
@@ -973,7 +979,7 @@ public sealed partial class MainWindow
 
         // Open in its own resizable window (not a height-capped dialog), so the full log scrolls and the
         // window can be moved / resized / maximized / minimized like any other. One instance only.
-        if (_auditWindow is not null) { try { _auditWindow.Activate(); } catch { } return; }
+        if (_auditWindow is not null) { try { _auditWindow.Activate(); return; } catch { _auditWindow = null; } } // stale/dead → reopen
 
         var list = new StackPanel { Spacing = 12 };
         var scroller = new ScrollViewer
@@ -1151,29 +1157,31 @@ public sealed partial class MainWindow
         var popup = new Microsoft.UI.Xaml.Controls.Primitives.Popup { Child = border, IsLightDismissEnabled = false };
         var loaded = false;
 
+        // async void event handler — wrap the WHOLE body so a throw (e.g. the window is mid-close) can't
+        // bubble out as an unhandled exception and crash the app.
         target.PointerEntered += async (_, e) =>
         {
-            if (target.XamlRoot is null) return;
-            popup.XamlRoot = target.XamlRoot;
-            var p = e.GetCurrentPoint(null).Position;       // relative to the window's XamlRoot
-            var size = target.XamlRoot.Size;
-            popup.HorizontalOffset = Math.Min(p.X + 16, Math.Max(0, size.Width - 744));
-            popup.VerticalOffset = Math.Min(p.Y + 16, Math.Max(0, size.Height - 744));
-            popup.IsOpen = true;
-            if (!loaded)
+            try
             {
-                loaded = true;
-                try
+                if (target.XamlRoot is null) return;
+                popup.XamlRoot = target.XamlRoot;
+                var p = e.GetCurrentPoint(null).Position;       // relative to the window's XamlRoot
+                var size = target.XamlRoot.Size;
+                popup.HorizontalOffset = Math.Min(p.X + 16, Math.Max(0, size.Width - 744));
+                popup.VerticalOffset = Math.Min(p.Y + 16, Math.Max(0, size.Height - 744));
+                popup.IsOpen = true;
+                if (!loaded)
                 {
+                    loaded = true;
                     using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
                     var bmp = new BitmapImage { DecodePixelType = DecodePixelType.Logical, DecodePixelWidth = 720 };
                     await bmp.SetSourceAsync(fs.AsRandomAccessStream());
                     img.Source = bmp;
                 }
-                catch { popup.IsOpen = false; } // unreadable / unsupported
             }
+            catch { try { popup.IsOpen = false; } catch { } }
         };
-        target.PointerExited += (_, _) => popup.IsOpen = false;
+        target.PointerExited += (_, _) => { try { popup.IsOpen = false; } catch { } };
     }
 
     /// <summary>Opens a local file in THIS window (image → viewer, video/audio → player, else default app).

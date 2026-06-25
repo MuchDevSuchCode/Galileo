@@ -338,6 +338,11 @@ public static class ShareProtocol
     public static Task CloseAsync(RelayClient relay, SecureSession session, string id, CancellationToken ct = default)
         => SendAsync(relay, session, new { op = "close", id }, ct);
 
+    /// <summary>Announces which client this is (e.g. "windows") so the owner's access log can call it out
+    /// (fire-and-forget; no response).</summary>
+    public static Task ClientHelloAsync(RelayClient relay, SecureSession session, string name, CancellationToken ct = default)
+        => SendAsync(relay, session, new { op = "client", name }, ct);
+
     /// <summary>Tells the host the viewer (un)favorited a shared entry (fire-and-forget; no response). The
     /// host records it in its access log so the owner sees what the viewer favorited.</summary>
     public static Task FavoriteAsync(RelayClient relay, SecureSession session, string id, bool fav, CancellationToken ct = default)
