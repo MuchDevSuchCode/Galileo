@@ -4882,7 +4882,7 @@ public sealed partial class MainWindow : Window
         CloseToBackSwitch.IsOn = _state.CloseToViewerBack;
         LockHiddenSwitch.IsOn = _state.LockHiddenAlbum;
         HideOnBackgroundSwitch.IsOn = _state.HideOnBackground;
-        RemoteIdleCombo.SelectedIndex = _state.RemoteIdleDisconnectMinutes switch { 5 => 1, 15 => 2, 30 => 3, 60 => 4, _ => 0 };
+        RemoteIdleCombo.SelectedIndex = _state.RemoteIdleDisconnectMinutes switch { 5 => 0, 15 => 1, 30 => 2, 60 => 3, _ => 4 };
         VaultIdleCombo.SelectedIndex = _state.VaultIdleSeconds <= 0 ? 5
             : _state.VaultIdleSeconds <= 300 ? 0
             : _state.VaultIdleSeconds <= 600 ? 1
@@ -4964,7 +4964,7 @@ public sealed partial class MainWindow : Window
     private void RemoteIdleCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingSettings) return;
-        _state.RemoteIdleDisconnectMinutes = RemoteIdleCombo.SelectedIndex switch { 1 => 5, 2 => 15, 3 => 30, 4 => 60, _ => 0 };
+        _state.RemoteIdleDisconnectMinutes = RemoteIdleCombo.SelectedIndex switch { 0 => 5, 1 => 15, 2 => 30, 3 => 60, _ => 0 };
         _state.Save();
         // Apply immediately to a browse already in progress.
         if (_remoteBrowse is not null)
