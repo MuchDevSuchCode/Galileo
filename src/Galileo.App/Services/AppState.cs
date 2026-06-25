@@ -128,6 +128,10 @@ public sealed class AppState
     /// interaction (0 = never). Off by default.</summary>
     public int RemoteIdleDisconnectMinutes { get; set; }
 
+    /// <summary>Host (side A): keep the vault unlocked the whole time secure sharing is online, suppressing
+    /// the idle auto-lock so friends can keep browsing. It still locks once sharing goes offline. Off by default.</summary>
+    public bool NeverLockWhileSharing { get; set; }
+
     // Slideshow settings
     public int SlideshowSeconds { get; set; } = 4;
     public bool SlideshowShuffle { get; set; }
@@ -260,6 +264,7 @@ public sealed class AppState
         ConvertRemovesOriginal = o.ConvertRemovesOriginal;
         HideOnBackground = o.HideOnBackground;
         RemoteIdleDisconnectMinutes = o.RemoteIdleDisconnectMinutes;
+        NeverLockWhileSharing = o.NeverLockWhileSharing;
         BackupSchedule = o.BackupSchedule;
         SecureRelayUrl = o.SecureRelayUrl;
         RunInBackground = o.RunInBackground;
