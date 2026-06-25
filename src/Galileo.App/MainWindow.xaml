@@ -1446,7 +1446,7 @@
                                         <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
                                             <StackPanel VerticalAlignment="Center">
                                                 <TextBlock Text="Hide vault from the sidebar" />
-                                                <TextBlock Text="No vault entry is shown anywhere. Open a vault with Ctrl+Alt+V instead."
+                                                <TextBlock Text="No vault entry is shown anywhere — not even a currently-unlocked vault. Press Ctrl+Alt+V to open or return to a vault (the Lock button still appears while you're inside one)."
                                                            Style="{StaticResource SettingDesc}" />
                                             </StackPanel>
                                             <ToggleSwitch Grid.Column="1" x:Name="HideVaultSwitch" Toggled="HideVaultSwitch_Toggled" />
