@@ -27,8 +27,9 @@
             <!-- Section header used by the Settings panel and the video editor (app-level so both see it). -->
             <Style x:Key="SettingSectionHeader" TargetType="TextBlock">
                 <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="FontSize" Value="13" />
-                <Setter Property="Opacity" Value="0.7" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="Opacity" Value="0.6" />
+                <Setter Property="CharacterSpacing" Value="80" />
                 <Setter Property="Margin" Value="2,0,0,0" />
             </Style>
 

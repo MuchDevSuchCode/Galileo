@@ -1230,7 +1230,7 @@
                                         <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
                                             <StackPanel VerticalAlignment="Center">
                                                 <TextBlock Text="Folder content previews" />
-                                                <TextBlock Text="Paint a preview of the first image inside a folder onto its icon."
+                                                <TextBlock Text="Show a preview of the first image inside a folder on its icon."
                                                            Style="{StaticResource SettingDesc}" />
                                             </StackPanel>
                                             <ToggleSwitch Grid.Column="1" x:Name="FolderPreviewSwitch" Toggled="FolderPreviewSwitch_Toggled" />
@@ -1267,7 +1267,7 @@
                                         <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
                                             <StackPanel VerticalAlignment="Center">
                                                 <TextBlock Text="Reuse one window" />
-                                                <TextBlock Text="Open files from the shell in this window instead of a new one."
+                                                <TextBlock Text="Open files launched from outside Galileo in this window instead of a new one."
                                                            Style="{StaticResource SettingDesc}" />
                                             </StackPanel>
                                             <ToggleSwitch Grid.Column="1" x:Name="SingleInstanceSwitch" Toggled="SingleInstanceSwitch_Toggled" />
@@ -1367,6 +1367,21 @@
                                 </Border>
                             </StackPanel>
 
+                            <!-- Images -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="IMAGES" Style="{StaticResource SettingSectionHeader}" />
+                                <Border Style="{StaticResource SettingCard}">
+                                    <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="Move the original to the Recycle Bin after converting" />
+                                            <TextBlock Text="When you convert an image (e.g. JPG to PNG), send the source file to the Recycle Bin instead of leaving both copies."
+                                                       Style="{StaticResource SettingDesc}" />
+                                        </StackPanel>
+                                        <ToggleSwitch Grid.Column="1" x:Name="ConvertRemovesOriginalSwitch" Toggled="ConvertRemovesOriginalSwitch_Toggled" />
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+
                             <!-- Privacy -->
                             <StackPanel Spacing="8">
                                 <TextBlock Text="PRIVACY" Style="{StaticResource SettingSectionHeader}" />
@@ -1438,7 +1453,7 @@
                                             <ToggleSwitch Grid.Column="1" x:Name="VaultWipeSwitch" Toggled="VaultWipeSwitch_Toggled" />
                                         </Grid>
                                         <Grid x:Name="VaultWipeCountRow" Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto" Visibility="Collapsed">
-                                            <TextBlock Text="Wipe after this many attempts" VerticalAlignment="Center" />
+                                            <TextBlock Text="Wipe after this many attempts" VerticalAlignment="Center" Margin="12,0,0,0" Opacity="0.85" />
                                             <NumberBox Grid.Column="1" x:Name="VaultWipeCountBox" Minimum="1" Maximum="50"
                                                        SpinButtonPlacementMode="Inline" Width="120" VerticalAlignment="Center"
                                                        ValueChanged="VaultWipeCount_ValueChanged" />
@@ -1459,7 +1474,7 @@
                             <StackPanel Spacing="8">
                                 <TextBlock Text="SECURE DELETE" Style="{StaticResource SettingSectionHeader}" />
                                 <Border Style="{StaticResource SettingCard}">
-                                    <StackPanel Spacing="14">
+                                    <StackPanel Spacing="16">
                                         <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
                                             <StackPanel VerticalAlignment="Center">
                                                 <TextBlock Text="Secure-delete when emptying the Recycle Bin" />
@@ -1489,26 +1504,11 @@
                                 </Border>
                             </StackPanel>
 
-                            <!-- Images -->
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="IMAGES" Style="{StaticResource SettingSectionHeader}" />
-                                <Border Style="{StaticResource SettingCard}">
-                                    <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
-                                        <StackPanel VerticalAlignment="Center">
-                                            <TextBlock Text="Move the original to the Recycle Bin after converting" />
-                                            <TextBlock Text="When you convert an image (e.g. JPG to PNG), send the source file to the Recycle Bin instead of leaving both copies."
-                                                       Style="{StaticResource SettingDesc}" />
-                                        </StackPanel>
-                                        <ToggleSwitch Grid.Column="1" x:Name="ConvertRemovesOriginalSwitch" Toggled="ConvertRemovesOriginalSwitch_Toggled" />
-                                    </Grid>
-                                </Border>
-                            </StackPanel>
-
                             <!-- Backup -->
                             <StackPanel Spacing="8">
                                 <TextBlock Text="BACKUP" Style="{StaticResource SettingSectionHeader}" />
                                 <Border Style="{StaticResource SettingCard}">
-                                    <StackPanel Spacing="14">
+                                    <StackPanel Spacing="16">
                                         <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
                                             <StackPanel VerticalAlignment="Center">
                                                 <TextBlock Text="Google Drive" />
@@ -1545,7 +1545,7 @@
                             <StackPanel Spacing="8">
                                 <TextBlock Text="SECURE SHARING" Style="{StaticResource SettingSectionHeader}" />
                                 <Border Style="{StaticResource SettingCard}">
-                                    <StackPanel Spacing="14">
+                                    <StackPanel Spacing="16">
                                         <StackPanel Spacing="6">
                                             <TextBlock Text="Relay server" />
                                             <TextBox x:Name="RelayUrlBox" PlaceholderText="wss://your-relay.example.com"
@@ -1561,11 +1561,11 @@
                                             </StackPanel>
                                             <ComboBox Grid.Column="1" x:Name="RemoteIdleCombo" Style="{StaticResource SettingControl}"
                                                       SelectionChanged="RemoteIdleCombo_SelectionChanged">
-                                                <ComboBoxItem Content="Never" />
                                                 <ComboBoxItem Content="5 minutes" />
                                                 <ComboBoxItem Content="15 minutes" />
                                                 <ComboBoxItem Content="30 minutes" />
-                                                <ComboBoxItem Content="60 minutes" />
+                                                <ComboBoxItem Content="1 hour" />
+                                                <ComboBoxItem Content="Never" />
                                             </ComboBox>
                                         </Grid>
                                         <Button x:Name="ManageSharingBtn" Content="Manage secure sharing…" Click="ManageSharing_Click" />
@@ -1577,7 +1577,7 @@
                             <StackPanel Spacing="8">
                                 <TextBlock Text="BACKGROUND" Style="{StaticResource SettingSectionHeader}" />
                                 <Border Style="{StaticResource SettingCard}">
-                                    <StackPanel Spacing="14">
+                                    <StackPanel Spacing="16">
                                         <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
                                             <StackPanel VerticalAlignment="Center">
                                                 <TextBlock Text="Run in the background" />
@@ -1604,8 +1604,8 @@
                                 <Border Style="{StaticResource SettingCard}">
                                     <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
                                         <StackPanel VerticalAlignment="Center">
-                                            <TextBlock Text="Developer Mode" />
-                                            <TextBlock Text="Show an embedded terminal pane (cmd / PowerShell / WSL) beside the explorer."
+                                            <TextBlock Text="Developer mode" />
+                                            <TextBlock Text="Show an embedded terminal pane (Command Prompt / PowerShell / WSL) beside the explorer."
                                                        Style="{StaticResource SettingDesc}" />
                                         </StackPanel>
                                         <ToggleSwitch Grid.Column="1" x:Name="DeveloperModeSwitch" Toggled="DeveloperModeSwitch_Toggled" />
