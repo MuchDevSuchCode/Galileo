@@ -6,13 +6,17 @@ friend's **shared secure vault** over the same end-to-end-encrypted relay protoc
 ## Features
 
 - **Files** — pick a folder (Storage Access Framework) and browse it; tap an image to view it full-screen.
-- **Shared vault** — enter your Galileo **recovery phrase** (Settings) and a friend's **owner ID (UUID)**, connect,
-  and browse what they share with you. Images stream into the app's cache and open in the viewer. The owner's
-  access log records the same events as the desktop client (opened/viewed/downloaded/closed) and additionally
-  calls out that the connection came from **the Android app**.
-- **Settings** — store your recovery phrase (kept in `EncryptedSharedPreferences`, never leaves the device),
-  optional BIP39 passphrase, and the relay URL. Your derived **ID is shown so you can confirm it matches your
-  desktop identity** (it will, if you enter the same phrase).
+  The app looks like (and is) a plain file manager.
+- **Hidden shared vault** — there is no visible vault button. **Triple-tap the "Galileo" title** to reveal it.
+  Inside: enter your Galileo **recovery phrase** + a friend's **owner ID (UUID)**, connect, and browse what they
+  share with you. Images stream into the app's cache and open in the viewer. The owner's access log records the
+  same events as the desktop client (opened/viewed/downloaded/closed) and calls out **the Android app**.
+- **Fingerprint lock** — once a recovery phrase (identity) is set up, revealing the vault requires a
+  **fingerprint / biometric** (where the device has one enrolled; otherwise it opens, since there's nothing to
+  enforce).
+- **Identity** is stored in `EncryptedSharedPreferences` and never leaves the device; the vault screen shows
+  your derived **ID so you can confirm it matches your desktop identity** (it will, with the same phrase).
+- **Launcher icon** is generated from the desktop Galileo logo (adaptive icon, navy background).
 
 ## How the secure-vault viewer interoperates
 
