@@ -1397,15 +1397,30 @@
                                 <TextBlock Text="SECURE VAULT" Style="{StaticResource SettingSectionHeader}" />
                                 <Border Style="{StaticResource SettingCard}">
                                     <StackPanel Spacing="16">
-                                        <StackPanel Spacing="6">
-                                            <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
-                                                <TextBlock Text="Auto-lock when idle" VerticalAlignment="Center" />
-                                                <TextBlock Grid.Column="1" x:Name="VaultIdleValue" Text="5 min" VerticalAlignment="Center" Opacity="0.8" />
-                                            </Grid>
-                                            <Slider x:Name="VaultIdleSlider" Minimum="0" Maximum="60" StepFrequency="1"
-                                                    ValueChanged="VaultIdleSlider_ValueChanged"
-                                                    ToolTipService.ToolTip="Minutes of inactivity before an open vault locks (0 = never)" />
-                                        </StackPanel>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Auto-lock when idle" />
+                                                <TextBlock Text="Lock an open vault after this much inactivity."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ComboBox Grid.Column="1" x:Name="VaultIdleCombo" Style="{StaticResource SettingControl}"
+                                                      SelectionChanged="VaultIdleCombo_SelectionChanged">
+                                                <ComboBoxItem Content="5 minutes" />
+                                                <ComboBoxItem Content="10 minutes" />
+                                                <ComboBoxItem Content="15 minutes" />
+                                                <ComboBoxItem Content="30 minutes" />
+                                                <ComboBoxItem Content="1 hour" />
+                                                <ComboBoxItem Content="Never" />
+                                            </ComboBox>
+                                        </Grid>
+                                        <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Don't auto-lock while sharing" />
+                                                <TextBlock Text="Keep the vault unlocked the whole time secure sharing is online, so friends can keep browsing. It still locks once you stop sharing."
+                                                           Style="{StaticResource SettingDesc}" />
+                                            </StackPanel>
+                                            <ToggleSwitch Grid.Column="1" x:Name="NeverLockWhileSharingSwitch" Toggled="NeverLockWhileSharingSwitch_Toggled" />
+                                        </Grid>
                                         <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
                                             <StackPanel VerticalAlignment="Center">
                                                 <TextBlock Text="Default to Windows Hello" />

@@ -4883,9 +4883,12 @@ public sealed partial class MainWindow : Window
         LockHiddenSwitch.IsOn = _state.LockHiddenAlbum;
         HideOnBackgroundSwitch.IsOn = _state.HideOnBackground;
         RemoteIdleCombo.SelectedIndex = _state.RemoteIdleDisconnectMinutes switch { 5 => 1, 15 => 2, 30 => 3, 60 => 4, _ => 0 };
-        var vaultIdleMin = Math.Clamp(_state.VaultIdleSeconds / 60, 0, 60);
-        VaultIdleSlider.Value = vaultIdleMin;
-        VaultIdleValue.Text = vaultIdleMin == 0 ? "Never" : $"{vaultIdleMin} min";
+        VaultIdleCombo.SelectedIndex = _state.VaultIdleSeconds <= 0 ? 5
+            : _state.VaultIdleSeconds <= 300 ? 0
+            : _state.VaultIdleSeconds <= 600 ? 1
+            : _state.VaultIdleSeconds <= 900 ? 2
+            : _state.VaultIdleSeconds <= 1800 ? 3 : 4;
+        NeverLockWhileSharingSwitch.IsOn = _state.NeverLockWhileSharing;
         VaultHelloSwitch.IsOn = _state.VaultDefaultUseHello;
         VaultWipeSwitch.IsOn = _state.VaultWipeOnFailure;
         VaultWipeCountBox.Value = _state.VaultWipeAfterAttempts;
@@ -5224,14 +5227,20 @@ public sealed partial class MainWindow : Window
         _state.Save();
     }
 
-    private void VaultIdleSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    private void VaultIdleCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        var min = (int)Math.Round(e.NewValue);
-        if (VaultIdleValue is not null) VaultIdleValue.Text = min == 0 ? "Never" : $"{min} min";
         if (_loadingSettings) return;
-        _state.VaultIdleSeconds = min * 60;
+        _state.VaultIdleSeconds = VaultIdleCombo.SelectedIndex switch { 0 => 300, 1 => 600, 2 => 900, 3 => 1800, 4 => 3600, _ => 0 };
         _state.Save();
         ResetVaultIdle(); // apply immediately to an open vault
+    }
+
+    private void NeverLockWhileSharingSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        _state.NeverLockWhileSharing = NeverLockWhileSharingSwitch.IsOn;
+        _state.Save();
+        ResetVaultIdle(); // re-arm so the new policy takes effect right away
     }
 
     private void VaultHelloSwitch_Toggled(object sender, RoutedEventArgs e)
@@ -6189,10 +6198,11 @@ public sealed partial class MainWindow : Window
     {
         _vaultIdleTimer.Stop();
         if (!_vaults.IsAnyUnlocked) return;
-        // Don't lock out from under a friend who's actively browsing the share — locking tears down what the
-        // host serves, dropping their connection. Defer the auto-lock until no one is being served (it'll
-        // fire again within one idle period after the last viewer disconnects).
-        if (_sharing?.HasActiveViewers == true) { ResetVaultIdle(); return; }
+        // Don't lock out from under the share. Always defer while a friend is actively browsing (locking would
+        // drop their connection); and when "Don't auto-lock while sharing" is on, defer the whole time the host
+        // is online. Either way it re-checks within one idle period and locks once the condition clears.
+        var online = _sharing?.IsOnline == true;
+        if ((online && _state.NeverLockWhileSharing) || _sharing?.HasActiveViewers == true) { ResetVaultIdle(); return; }
         _ = LockActiveVaultAsync();
     }
 
