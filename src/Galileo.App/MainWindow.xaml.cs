@@ -116,6 +116,10 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _vaultFlushTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     private readonly DispatcherTimer _vaultFlushDebounce = new() { Interval = TimeSpan.FromMilliseconds(2500) };
     private bool _closingForVaultLock;  // guards the re-entrant AppWindow.Closing lock flow
+    // Push: watch the unlocked vault's working folder so we can tell active viewers the instant it changes
+    // (so they re-list without waiting for their poll). Debounced to coalesce bursts (e.g. multi-file adds).
+    private FileSystemWatcher? _vaultPushWatcher;
+    private readonly DispatcherTimer _vaultPushDebounce = new() { Interval = TimeSpan.FromMilliseconds(700) };
 
     // Polls for mounted/removed drives so the sidebar and This PC view stay current
     // (WinUI 3 doesn't surface WM_DEVICECHANGE directly).
@@ -228,6 +232,11 @@ public sealed partial class MainWindow : Window
         _remoteIdleTimer.Tick += (_, _) => RemoteIdleTick();
         _netTimer.Tick += (_, _) => RefreshNetIndicator();
         _netTimer.Start(); // always running; the orb shows/hides itself based on context
+        _vaultPushDebounce.Tick += (_, _) =>
+        {
+            _vaultPushDebounce.Stop();
+            if (_sharing?.HasActiveViewers == true) _ = _sharing.NotifyVaultChangedAsync();
+        };
 
         // Privacy: collapse app-hidden folders the moment Galileo loses focus (opt-in).
         Activated += (_, e) => { if (e.WindowActivationState == WindowActivationState.Deactivated) ReHideOnBackground(); };
@@ -5984,6 +5993,7 @@ public sealed partial class MainWindow : Window
         RefreshVaults();
         ResetVaultIdle();
         StartVaultFlush(); // commit working-folder changes continuously, not only on lock
+        if (v.WorkingDir is { } wd) StartVaultPushWatch(wd); // push re-list signals to active viewers on change
         ShowExplorer();
         NavigateTo(v.WorkingDir);
         StatusText.Text = $"Vault “{v.Name}” unlocked";
@@ -6143,6 +6153,7 @@ public sealed partial class MainWindow : Window
         var work = _vaults.Current?.WorkingDir;
         StopVaultIdle();
         StopVaultFlush();
+        StopVaultPushWatch();
         try { await _vaults.LockCurrentAsync(); }
         catch (Exception ex)
         {
@@ -6205,6 +6216,36 @@ public sealed partial class MainWindow : Window
     private void StartVaultFlush() => _vaultFlushTimer.Start();
 
     private void StopVaultFlush() { _vaultFlushTimer.Stop(); _vaultFlushDebounce.Stop(); }
+
+    /// <summary>Watch the unlocked vault's working folder so adds/edits/deletes push a "re-list" to any
+    /// friend currently browsing the share (debounced). Flush writes go to the encrypted store, not here,
+    /// so this only fires on genuine content changes.</summary>
+    private void StartVaultPushWatch(string workingDir)
+    {
+        StopVaultPushWatch();
+        try
+        {
+            _vaultPushWatcher = new FileSystemWatcher(workingDir)
+            {
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                EnableRaisingEvents = true,
+            };
+            void Bump() => RootGrid.DispatcherQueue.TryEnqueue(() => { _vaultPushDebounce.Stop(); _vaultPushDebounce.Start(); });
+            _vaultPushWatcher.Created += (_, _) => Bump();
+            _vaultPushWatcher.Deleted += (_, _) => Bump();
+            _vaultPushWatcher.Changed += (_, _) => Bump();
+            _vaultPushWatcher.Renamed += (_, _) => Bump();
+        }
+        catch (Exception ex) { App.Log("VaultPushWatch", ex); }
+    }
+
+    private void StopVaultPushWatch()
+    {
+        _vaultPushDebounce.Stop();
+        try { if (_vaultPushWatcher is not null) { _vaultPushWatcher.EnableRaisingEvents = false; _vaultPushWatcher.Dispose(); } } catch { }
+        _vaultPushWatcher = null;
+    }
 
     /// <summary>Schedule a commit shortly after a working-folder change (coalesces bursts).</summary>
     private void ScheduleVaultFlush() { _vaultFlushDebounce.Stop(); _vaultFlushDebounce.Start(); }
