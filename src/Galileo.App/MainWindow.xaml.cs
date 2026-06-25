@@ -6188,7 +6188,12 @@ public sealed partial class MainWindow : Window
     private void VaultIdle_Tick(object? sender, object e)
     {
         _vaultIdleTimer.Stop();
-        if (_vaults.IsAnyUnlocked) _ = LockActiveVaultAsync();
+        if (!_vaults.IsAnyUnlocked) return;
+        // Don't lock out from under a friend who's actively browsing the share — locking tears down what the
+        // host serves, dropping their connection. Defer the auto-lock until no one is being served (it'll
+        // fire again within one idle period after the last viewer disconnects).
+        if (_sharing?.HasActiveViewers == true) { ResetVaultIdle(); return; }
+        _ = LockActiveVaultAsync();
     }
 
     // ---- App-exit lock (re-encrypt + wipe before the window closes) ----

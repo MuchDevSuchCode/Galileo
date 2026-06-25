@@ -49,6 +49,10 @@ public sealed class SecureSharing : IDisposable
     public IReadOnlyList<Friend> Friends => _data.Friends;
     public bool IsOnline => _relay is not null;
 
+    /// <summary>True while at least one friend has a live serve session open (is browsing our share). Used by
+    /// the host to avoid auto-locking the vault out from under an active viewer.</summary>
+    public bool HasActiveViewers => !_activeViewers.IsEmpty;
+
     /// <summary>Raised (on a background thread) when a new incoming friend request arrives — UI should
     /// marshal to its dispatcher and prompt the user to accept.</summary>
     public event Action<Friend>? FriendRequestReceived;
