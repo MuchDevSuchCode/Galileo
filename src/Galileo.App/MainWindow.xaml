@@ -1373,7 +1373,7 @@
                                 <Border Style="{StaticResource SettingCard}">
                                     <Grid Style="{StaticResource SettingRow}" ColumnDefinitions="*,Auto">
                                         <StackPanel VerticalAlignment="Center">
-                                            <TextBlock Text="Move the original to the Recycle Bin after converting" />
+                                            <TextBlock Text="Recycle the original after converting" TextWrapping="Wrap" />
                                             <TextBlock Text="When you convert an image (e.g. JPG to PNG), send the source file to the Recycle Bin instead of leaving both copies."
                                                        Style="{StaticResource SettingDesc}" />
                                         </StackPanel>
