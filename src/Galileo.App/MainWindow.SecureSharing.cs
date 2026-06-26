@@ -363,28 +363,80 @@ public sealed partial class MainWindow
     private async Task ShareCurrentVaultAsync()
     {
         if (_sharing is null || _vaults.Current is null) { await MessageAsync("Share", "Unlock a vault first."); return; }
-        var linked = _sharing.LinkedFriends.ToList();
-        if (linked.Count == 0) { await MessageAsync("Share", "Add a friend first."); return; }
         var vaultId = _vaults.Current.Id;
-        var panel = new StackPanel { Spacing = 10, MinWidth = 340 };
-        panel.Children.Add(new TextBlock { Text = $"Share \"{_vaults.Current.Name}\" with:", TextWrapping = TextWrapping.Wrap });
-        foreach (var f in linked)
+
+        var panel = new StackPanel { Spacing = 10, MinWidth = 380 };
+        panel.Children.Add(new TextBlock { Text = $"Share “{_vaults.Current.Name}” with:", TextWrapping = TextWrapping.Wrap });
+        var rowsHost = new StackPanel { Spacing = 8 };
+        panel.Children.Add(rowsHost);
+
+        void AddAccessRow(string label, Guid id, bool direct)
         {
             var row = new Grid { ColumnDefinitions = { new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }, new ColumnDefinition { Width = GridLength.Auto } } };
-            var name = new TextBlock { Text = string.IsNullOrWhiteSpace(f.Alias) ? f.Uuid[..8] : f.Alias, VerticalAlignment = VerticalAlignment.Center };
-            var fid = Guid.Parse(f.Uuid);
+            row.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
             var combo = new ComboBox { MinWidth = 150, VerticalAlignment = VerticalAlignment.Center };
             combo.Items.Add(new ComboBoxItem { Content = "No access" });
             combo.Items.Add(new ComboBoxItem { Content = "Read only" });
             combo.Items.Add(new ComboBoxItem { Content = "Read & write" });
-            combo.SelectedIndex = (int)_sharing.AccessFor(vaultId, fid); // None=0, Read=1, Write=2
-            combo.SelectionChanged += (_, _) => { try { _sharing!.SetGrant(vaultId, fid, (ShareAccess)combo.SelectedIndex); } catch { } };
+            combo.SelectedIndex = (int)_sharing!.AccessFor(vaultId, id); // None=0, Read=1, Write=2
+            combo.SelectionChanged += (_, _) =>
+            {
+                try
+                {
+                    if (direct) _sharing!.SetGrantById(vaultId, id, (ShareAccess)combo.SelectedIndex);
+                    else _sharing!.SetGrant(vaultId, id, (ShareAccess)combo.SelectedIndex);
+                }
+                catch { }
+            };
             Grid.SetColumn(combo, 1);
-            row.Children.Add(name); row.Children.Add(combo);
-            panel.Children.Add(row);
+            row.Children.Add(combo);
+            rowsHost.Children.Add(row);
         }
-        panel.Children.Add(new TextBlock { Text = "Friends can browse a share live while this vault is unlocked and you're online. Read & write also lets them add files and folders into the vault. Revoke any time.", Opacity = 0.6, FontSize = 12, TextWrapping = TextWrapping.Wrap });
-        await new ContentDialog { Title = "Share vault", Content = panel, CloseButtonText = "Done", XamlRoot = RootGrid.XamlRoot }.ShowAsync();
+
+        void Rebuild()
+        {
+            rowsHost.Children.Clear();
+            foreach (var f in _sharing!.LinkedFriends)
+                AddAccessRow(string.IsNullOrWhiteSpace(f.Alias) ? f.Uuid[..8] : f.Alias, Guid.Parse(f.Uuid), false);
+            foreach (var idStr in _sharing!.DirectGrantIds(vaultId))
+                if (Guid.TryParse(idStr, out var g)) AddAccessRow($"Device {idStr[..8]}…", g, true);
+            if (rowsHost.Children.Count == 0)
+                rowsHost.Children.Add(new TextBlock { Text = "No one yet — add a friend, or grant a device by ID below.", Opacity = 0.6, FontSize = 12 });
+        }
+        Rebuild();
+
+        // Grant another of your own devices (e.g. your phone) directly by its ID — no friend link needed.
+        panel.Children.Add(new Border { Height = 1, Background = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"], Margin = new Thickness(0, 4, 0, 4) });
+        panel.Children.Add(new TextBlock { Text = "Grant a device by ID:", FontWeight = FontWeights.SemiBold });
+        var idBox = new TextBox { PlaceholderText = "Paste the device's ID (UUID)" };
+        var idCombo = new ComboBox { MinWidth = 150, VerticalAlignment = VerticalAlignment.Center };
+        idCombo.Items.Add(new ComboBoxItem { Content = "Read only" });
+        idCombo.Items.Add(new ComboBoxItem { Content = "Read & write" });
+        idCombo.SelectedIndex = 0;
+        var addErr = new TextBlock { Foreground = new SolidColorBrush(Microsoft.UI.Colors.IndianRed), Visibility = Visibility.Collapsed, FontSize = 12 };
+        var addBtn = new Button { Content = "Grant" };
+        addBtn.Click += (_, _) =>
+        {
+            addErr.Visibility = Visibility.Collapsed;
+            if (!Guid.TryParse(idBox.Text.Trim(), out var g)) { addErr.Text = "Enter a valid device ID."; addErr.Visibility = Visibility.Visible; return; }
+            try
+            {
+                _sharing!.SetGrantById(vaultId, g, idCombo.SelectedIndex == 1 ? ShareAccess.Write : ShareAccess.Read);
+                idBox.Text = "";
+                Rebuild();
+            }
+            catch (Exception ex) { addErr.Text = ex.Message; addErr.Visibility = Visibility.Visible; }
+        };
+        var addRow = new Grid { ColumnDefinitions = { new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }, new ColumnDefinition { Width = GridLength.Auto } }, ColumnSpacing = 8 };
+        Grid.SetColumn(idCombo, 0); Grid.SetColumn(addBtn, 1);
+        addRow.Children.Add(idCombo); addRow.Children.Add(addBtn);
+        panel.Children.Add(idBox);
+        panel.Children.Add(addRow);
+        panel.Children.Add(addErr);
+
+        panel.Children.Add(new TextBlock { Text = "Anyone here can browse this vault live while it's unlocked and you're online. Read & write also lets them add files/folders. Grant-by-ID is for your own devices. Revoke any time (set to No access).", Opacity = 0.6, FontSize = 12, TextWrapping = TextWrapping.Wrap });
+
+        await new ContentDialog { Title = "Share vault", Content = new ScrollViewer { Content = panel, MaxHeight = 560 }, CloseButtonText = "Done", XamlRoot = RootGrid.XamlRoot }.ShowAsync();
     }
 
     // Browsing — present a friend's shared vault in the real file explorer ----

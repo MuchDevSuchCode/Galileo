@@ -222,7 +222,20 @@ public sealed class SecureSharing : IDisposable
     public void SetGrant(string vaultId, Guid friend, ShareAccess level)
     {
         if (!IsLinkedFriend(friend)) throw new InvalidOperationException("Not a linked friend.");
-        var id = friend.ToString();
+        ApplyGrant(vaultId, friend, level);
+    }
+
+    /// <summary>Grant a vault directly to a peer by ID, with no friendship required — for granting your own
+    /// other devices (e.g. the phone). The host serves any peer that holds a grant (see <see cref="HasAnyGrant"/>).</summary>
+    public void SetGrantById(string vaultId, Guid peer, ShareAccess level)
+    {
+        if (peer == Identity.Uuid) throw new ArgumentException("That's this device's own ID.");
+        ApplyGrant(vaultId, peer, level);
+    }
+
+    private void ApplyGrant(string vaultId, Guid peer, ShareAccess level)
+    {
+        var id = peer.ToString();
         var read = _data.Grants.TryGetValue(vaultId, out var rl) ? rl : (_data.Grants[vaultId] = new List<string>());
         var write = _data.GrantsWrite.TryGetValue(vaultId, out var wl) ? wl : (_data.GrantsWrite[vaultId] = new List<string>());
         read.Remove(id); write.Remove(id);
@@ -230,6 +243,22 @@ public sealed class SecureSharing : IDisposable
         if (level == ShareAccess.Write) write.Add(id);
         Save();
         Changed?.Invoke();
+    }
+
+    /// <summary>True if this peer holds a grant to any vault (lets the host serve a directly-granted device
+    /// even when it isn't a linked friend).</summary>
+    public bool HasAnyGrant(Guid peer)
+    {
+        var id = peer.ToString();
+        return _data.Grants.Values.Any(l => l.Contains(id));
+    }
+
+    /// <summary>UUIDs granted to a vault that are NOT linked friends (direct "grant by ID" entries) — so the
+    /// share UI can list and revoke them.</summary>
+    public IReadOnlyList<string> DirectGrantIds(string vaultId)
+    {
+        if (!_data.Grants.TryGetValue(vaultId, out var l)) return Array.Empty<string>();
+        return l.Where(id => Guid.TryParse(id, out var g) && !IsLinkedFriend(g)).ToList();
     }
 
     // ---- relay connection ----
@@ -288,7 +317,8 @@ public sealed class SecureSharing : IDisposable
             while (!ct.IsCancellationRequested)
             {
                 var sess = await relay.NewSessions.ReadAsync(ct);
-                if (!IsLinkedFriend(sess.Peer)) continue;  // only serve linked friends
+                // Serve linked friends, and peers granted directly by ID (your own other devices).
+                if (!IsLinkedFriend(sess.Peer) && !HasAnyGrant(sess.Peer)) continue;
                 _ = Task.Run(() => ServePeerAsync(relay, sess, ct));
             }
         }
