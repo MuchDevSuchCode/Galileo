@@ -505,6 +505,8 @@ public sealed partial class MainWindow
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             session = await _sharing.ConnectToPeerAsync(peer, cts.Token);
+            // Announce we're the Windows client (before the first list) so the owner's access log tags us.
+            await ShareProtocol.ClientHelloAsync(_sharing.Relay, session, "windows", cts.Token);
             var listing = await ShareProtocol.ListAsync(_sharing.Relay, session, cts.Token);
             if (listing.Items.Count == 0) { session.Dispose(); await MessageAsync("Browse", "That friend isn't sharing anything right now."); return; }
             StartRemoteBrowse(session, listing);
@@ -530,6 +532,8 @@ public sealed partial class MainWindow
             {
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
                 var s = await _sharing.ConnectToPeerAsync(fid, cts.Token);
+                // Announce we're the Windows client (before the first list) so the owner's access log tags us.
+                await ShareProtocol.ClientHelloAsync(_sharing.Relay, s, "windows", cts.Token);
                 var l = await ShareProtocol.ListAsync(_sharing.Relay, s, cts.Token);
                 if (l.Items.Count == 0) { s.Dispose(); continue; }
                 found.Add((f, s, l));
@@ -579,12 +583,7 @@ public sealed partial class MainWindow
 
         ShowExplorer();
         NavigateTo(dir);
-        // Tell the owner this is the Windows client so their access log calls it out (fire-and-forget).
-        _ = Task.Run(async () =>
-        {
-            try { using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10)); await ShareProtocol.ClientHelloAsync(_sharing!.Relay, session, "windows", cts.Token); }
-            catch { }
-        });
+        // (The "windows" client hello is sent during connect, before the first list — see BrowsePeerAsync.)
         _ = Task.Run(() => SyncRemoteBrowseAsync(_remoteBrowse, listing));
         _remoteSyncTimer.Start(); // keep it live: auto-sync the owner's adds/deletes every few seconds
         _lastRemoteActivity = DateTimeOffset.Now;
@@ -982,6 +981,10 @@ public sealed partial class MainWindow
             var asc = records.OrderBy(r => r.Time).ToList();
             var openAt = new Dictionary<string, DateTimeOffset>();
             var rows = new List<(DateTimeOffset t, string title, string detail, string? path)>();
+            // Per-viewer client app, learned from the "client" hello sent at the start of each session; every
+            // later row from that viewer is tagged literally with "(Windows)" / "(Android)". Defaults to (Windows).
+            var appByViewer = new Dictionary<Guid, string>();
+            string AppTag(Guid v) => " (" + (appByViewer.TryGetValue(v, out var a) ? a : "Windows") + ")";
             foreach (var r in asc)
             {
                 var who = PeerName(r.Viewer);
@@ -989,32 +992,33 @@ public sealed partial class MainWindow
                 switch (r.Action)
                 {
                     case "list":
-                        rows.Add((r.Time, "Opened your shared vault", $"by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", null));
+                        rows.Add((r.Time, "Opened your shared vault", $"by {who}{AppTag(r.Viewer)}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", null));
                         break;
                     case "browse_end":
-                        rows.Add((r.Time, "Closed your shared vault", $"by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", null));
+                        rows.Add((r.Time, "Closed your shared vault", $"by {who}{AppTag(r.Viewer)}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", null));
                         break;
                     case "client":
                     {
-                        var app = r.ObjectId.Length > 0 ? char.ToUpperInvariant(r.ObjectId[0]) + r.ObjectId[1..] : "an app";
+                        var app = r.ObjectId.Length > 0 ? char.ToUpperInvariant(r.ObjectId[0]) + r.ObjectId[1..] : "Windows";
+                        appByViewer[r.Viewer] = app;
                         rows.Add((r.Time, $"Connected from the {app} app", $"by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", null));
                         break;
                     }
                     case "fetch":
-                        rows.Add((r.Time, FileName(r.ObjectId), $"downloaded by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", PathFor(r.ObjectId)));
+                        rows.Add((r.Time, FileName(r.ObjectId), $"downloaded by {who}{AppTag(r.Viewer)}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", PathFor(r.ObjectId)));
                         break;
                     case "favorite":
-                        rows.Add((r.Time, FileName(r.ObjectId), $"★ favorited by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", PathFor(r.ObjectId)));
+                        rows.Add((r.Time, FileName(r.ObjectId), $"★ favorited by {who}{AppTag(r.Viewer)}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", PathFor(r.ObjectId)));
                         break;
                     case "unfavorite":
-                        rows.Add((r.Time, FileName(r.ObjectId), $"☆ unfavorited by {who}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", PathFor(r.ObjectId)));
+                        rows.Add((r.Time, FileName(r.ObjectId), $"☆ unfavorited by {who}{AppTag(r.Viewer)}   ·   {r.Time.LocalDateTime.ToString(TimeFmt)}", PathFor(r.ObjectId)));
                         break;
                     case "open":
                         openAt[key] = r.Time;
                         break;
                     case "close" when openAt.TryGetValue(key, out var t):
                         rows.Add((t, FileName(r.ObjectId),
-                            $"viewed by {who}   ·   {t.LocalDateTime.ToString(TimeFmt)} → {r.Time.LocalDateTime:HH:mm:ss}  ({FormatDuration(r.Time - t)})", PathFor(r.ObjectId)));
+                            $"viewed by {who}{AppTag(r.Viewer)}   ·   {t.LocalDateTime.ToString(TimeFmt)} → {r.Time.LocalDateTime:HH:mm:ss}  ({FormatDuration(r.Time - t)})", PathFor(r.ObjectId)));
                         openAt.Remove(key);
                         break;
                 }
@@ -1023,7 +1027,7 @@ public sealed partial class MainWindow
             {
                 var parts = kv.Key.Split('|', 2);
                 Guid.TryParse(parts[0], out var v);
-                rows.Add((kv.Value, FileName(parts[1]), $"viewing by {PeerName(v)}   ·   {kv.Value.LocalDateTime.ToString(TimeFmt)}  (still open)", PathFor(parts[1])));
+                rows.Add((kv.Value, FileName(parts[1]), $"viewing by {PeerName(v)}{AppTag(v)}   ·   {kv.Value.LocalDateTime.ToString(TimeFmt)}  (still open)", PathFor(parts[1])));
             }
             rows.Sort((a, b) => b.t.CompareTo(a.t)); // newest first
             return rows;
