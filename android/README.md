@@ -5,17 +5,23 @@ friend's **shared secure vault** over the same end-to-end-encrypted relay protoc
 
 ## Features
 
-- **Files** — pick a folder (Storage Access Framework) and browse it; tap an image to view it full-screen.
+- **Files** — a real file manager: requests **All-files access** (Android 11+ `MANAGE_EXTERNAL_STORAGE`;
+  `READ_EXTERNAL_STORAGE` on older), then auto-lists internal storage from the root, navigates folders, and
+  shows image thumbnails. Toggle **list ⇄ gallery (grid)** view. Tap an image to open the full-screen viewer.
   The app looks like (and is) a plain file manager.
-- **Hidden shared vault** — there is no visible vault button. **Triple-tap the "Galileo" title** to reveal it.
-  Inside: enter your Galileo **recovery phrase** + a friend's **owner ID (UUID)**, connect, and browse what they
-  share with you. Images stream into the app's cache and open in the viewer. The owner's access log records the
-  same events as the desktop client (opened/viewed/downloaded/closed) and calls out **the Android app**.
-- **Fingerprint lock** — once a recovery phrase (identity) is set up, revealing the vault requires a
-  **fingerprint / biometric** (where the device has one enrolled; otherwise it opens, since there's nothing to
-  enforce).
-- **Identity** is stored in `EncryptedSharedPreferences` and never leaves the device; the vault screen shows
-  your derived **ID so you can confirm it matches your desktop identity** (it will, with the same phrase).
+- **Photo viewer** — **swipe left/right** between photos, **pinch to zoom** + drag to pan + double-tap to
+  zoom, **landscape** support, and the screen **stays on** while in the foreground.
+- **Hidden shared vault** — there is no visible vault button. **Five quick taps on the "Galileo" title**
+  reveal it (so it can't be triggered by accident). The landing page is the **shared gallery**: tap a friend
+  to view what they share with you, in list or gallery view with thumbnails. Images stream into the app's cache
+  and open in the swipeable viewer, where you can **favorite** media. The owner's access log records the same
+  events as the desktop (opened/viewed/downloaded/closed/favorited) and calls out **the Android app**.
+- **Settings** (gear icon in the vault) — your **ID** (with copy + change), your **name**, your **friends**
+  (send/accept requests by ID over the relay mailbox), and the **relay URL**.
+- **Auth on every background** — once an identity is set up, the vault locks itself whenever the app is
+  backgrounded, so reopening requires a **fingerprint / biometric** again (where one is enrolled).
+- **On-device identity** — generate a new **BIP39 recovery phrase** here, or enter an existing one. The
+  identity is stored in `EncryptedSharedPreferences` and never leaves the device.
 - **Launcher icon** is generated from the desktop Galileo logo (adaptive icon, navy background).
 
 ## How the secure-vault viewer interoperates
@@ -32,9 +38,9 @@ algorithms so bytes match:
 - Share protocol: `list` / `open` (chunked fetch) / `view` / `close` / `favorite` / `endbrowse` / `client`
   (`net/ShareProtocol.kt`).
 
-To browse a friend's share: that friend must have **linked you and granted your ID** on the desktop app, and
-must be **online with the vault unlocked**. Use the **same recovery phrase** here as your desktop identity so
-your UUID (and therefore the grant) matches.
+To browse a friend's share: that friend must have **linked you and granted your ID** on the desktop app
+(linking alone is not enough — the grant is **per-vault**), and must be **online with that vault unlocked**.
+If the gallery comes back empty, the most common cause is that the open vault isn't granted to your ID.
 
 ## Build & run
 
@@ -50,8 +56,10 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## Notes / limitations
 
-- Viewer is **read-only** for now (no upload/create/delete from Android yet — that's desktop-only).
+- Shared vault is **read-only** for now (no upload/create/delete from Android yet — that's desktop-only).
 - Only **images** open in the in-app viewer from a share; other types are listed but not opened.
+- Shared thumbnails fetch the full image (the host has no separate thumbnail), cached by size, so the first
+  scroll through a large gallery pulls each image once.
 - Empty folders aren't shown (the vault index is file-only — same as desktop).
 - The crypto port is interop-tested by design but if a handshake ever fails, first confirm the **IDs match**
   on both ends (Settings shows yours).
