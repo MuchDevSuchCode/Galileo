@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Remote shared images are cached here (cacheDir/share); local files can be anywhere on storage. -->
+    <cache-path name="cache" path="." />
+    <external-path name="external" path="." />
+    <root-path name="root" path="/" />
+</paths>
