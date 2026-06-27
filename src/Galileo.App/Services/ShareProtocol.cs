@@ -245,7 +245,8 @@ public static class ShareProtocol
         var entries = new List<object>();
         foreach (var e in vault.ShareEntries())
             entries.Add(new { id = e.BlobId, name = e.RelPath, size = e.Size, modified = e.ModifiedUtcTicks });
-        await SendAsync(relay, session, new { op = "list", vault = vault.ShareName, entries }, ct);
+        // Tell the viewer its access level so it can enable write-only features (e.g. exporting/sharing out).
+        await SendAsync(relay, session, new { op = "list", vault = vault.ShareName, write = vault.CanWrite, entries }, ct);
     }
 
     private static async Task HandleOpenAsync(RelayClient relay, IShareSource vault, SecureSession session, JsonElement root, CancellationToken ct)
