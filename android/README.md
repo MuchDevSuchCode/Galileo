@@ -11,6 +11,13 @@ friend's **shared secure vault** over the same end-to-end-encrypted relay protoc
   The app looks like (and is) a plain file manager.
 - **Photo viewer** — **swipe left/right** between photos, **pinch to zoom** + drag to pan + double-tap to
   zoom, **landscape** support, and the screen **stays on** while in the foreground.
+- **Photo editor** (Snapseed-style) — open a local image and tap **Edit**: one-tap **filters** (Vivid, Warm,
+  Cool, Mono, Noir, Faded…), fine **tune** (brightness / contrast / saturation / warmth), **rotate / flip**,
+  and **Save** writes an edited copy next to the original (falls back to `Pictures/Galileo`).
+- **PDF viewer** — open a `.pdf` to read it in-app (Android's built-in `PdfRenderer`): vertically scrolling
+  pages, rendered lazily for big documents, with pinch-to-zoom.
+- **Modern theme** — Material 3 with **Material You** dynamic color on Android 12+ (matches your wallpaper),
+  and a polished indigo brand palette (light/dark) on older devices.
 - **Hidden shared vault** — there is no visible vault button. **Five quick taps on the "Galileo" title**
   reveal it (so it can't be triggered by accident). The landing page is the **shared gallery**: tap a friend
   to view what they share with you, in list or gallery view with thumbnails. Images stream into the app's cache
