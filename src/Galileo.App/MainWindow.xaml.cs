@@ -1216,14 +1216,16 @@ public sealed partial class MainWindow : Window
 
     private void PopulateSidebar()
     {
+        // Quick Access is local profile folders — safe on the UI thread. Drive enumeration is NOT:
+        // DriveInfo.IsReady on a sleeping/disconnected network drive blocks for the SMB timeout
+        // (measured: 21s UI freeze at startup), so all DriveInfo touches happen off-thread and the
+        // sidebar/This PC fill in when the data lands.
         var quick = _fs.GetQuickAccess();
-        var drives = _fs.GetDrives();
         QuickAccessList.ItemsSource = quick;
-        DrivesList.ItemsSource = drives;
-        foreach (var i in quick.Concat(drives)) _ = i.LoadIconAsync(32);
+        foreach (var i in quick) _ = i.LoadIconAsync(32);
         ExplorerIconsView.Loaded += (_, _) => ApplyIconSize();
 
-        _knownDrives = CurrentDriveSignature();
+        _ = RefreshDrivesAsync();
 
         // Ctrl + mouse wheel resizes the thumbnails (handledEventsToo so it fires even though
         // the list scrolls the wheel internally).
@@ -1247,6 +1249,44 @@ public sealed partial class MainWindow : Window
         // Middle-click an image to open it in a new window (both views).
         ExplorerIconsView.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Explorer_MiddleClick), true);
         ExplorerDetailsList.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Explorer_MiddleClick), true);
+    }
+
+    /// <summary>Last known drive list. This PC paints from this instantly (never blocking on DriveInfo)
+    /// while <see cref="RefreshDrivesAsync"/> fetches fresh data in the background.</summary>
+    private List<ExplorerItem> _driveCache = new();
+
+    /// <summary>Enumerates drives off the UI thread (IsReady/size on a network drive can block for the
+    /// SMB timeout), then updates the sidebar, the drive cache, and — if we're on This PC — the listing.</summary>
+    private async Task RefreshDrivesAsync()
+    {
+        List<ExplorerItem> drives;
+        HashSet<string> sig;
+        try
+        {
+            drives = await Task.Run(() => _fs.GetDrives());
+            sig = await Task.Run(CurrentDriveSignature);
+        }
+        catch { return; }
+
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                _driveCache = drives;
+                _knownDrives = sig;
+                DrivesList.ItemsSource = drives;
+                foreach (var i in drives) _ = i.LoadIconAsync(32);
+                if (_currentFolder is null)
+                {
+                    // Keep any async-appended devices that are already in the listing.
+                    var devices = _explorerRaw.Where(x => x.ShellId is not null).ToList();
+                    _explorerRaw = _fs.GetQuickAccess().Concat(drives).Concat(devices).ToList();
+                    ApplySortAndGroup();
+                    ApplyViewMode();
+                }
+            }
+            catch (Exception ex) { App.Log("RefreshDrives", ex); }
+        });
     }
 
     /// <summary>A cheap fingerprint of the current drives (letter + ready state) to detect changes.</summary>
@@ -1286,6 +1326,7 @@ public sealed partial class MainWindow : Window
             try
             {
                 _knownDrives = sig;
+                _driveCache = drives;   // keep the This PC fast-paint cache current
                 DrivesList.ItemsSource = drives;
                 foreach (var i in drives) _ = i.LoadIconAsync(32);
 
@@ -1500,12 +1541,15 @@ public sealed partial class MainWindow : Window
 
         if (_currentFolder is null)
         {
-            // Show drives/folders immediately; portable devices enumerate async (they can stall over USB).
-            _explorerRaw = _fs.GetQuickAccess().Concat(_fs.GetDrives()).ToList();
+            // Paint instantly from the drive cache — DriveInfo (IsReady/size) can block for the SMB
+            // timeout on a sleeping network drive, so it must never run here on the UI thread. The
+            // cache refreshes off-thread and the listing updates in place if anything changed.
+            _explorerRaw = _fs.GetQuickAccess().Concat(_driveCache).ToList();
             ApplySortAndGroup();
             ApplyViewMode();
             UpdateHideFolderButton();
             StatusText.Text = "This PC";
+            _ = RefreshDrivesAsync();
             _ = LoadDevicesAsync(); // appends devices to the list + refreshes the sidebar when ready
             return;
         }
@@ -3789,6 +3833,9 @@ public sealed partial class MainWindow : Window
         ExplorerTabs.TabItems.Add(tvi);
         ExplorerTabs.SelectedItem = tvi;
         _switchingTabs = false;
+        // The TabView raises SelectionChanged for this add asynchronously, after the guard above has
+        // been reset — suppress that one echo so the new tab doesn't load twice.
+        _suppressNextTabSelection = true;
 
         // Fresh navigation state for the new tab, then go.
         _navHistory.Clear();
@@ -3797,6 +3844,8 @@ public sealed partial class MainWindow : Window
         ShowExplorer();
         NavigateTo(path);
     }
+
+    private bool _suppressNextTabSelection;
 
     private void SyncActiveTab()
     {
@@ -3841,6 +3890,7 @@ public sealed partial class MainWindow : Window
     private async void ExplorerTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_switchingTabs) return;
+        if (_suppressNextTabSelection) { _suppressNextTabSelection = false; return; } // NewTab's async echo
         if (ExplorerTabs.SelectedItem is not TabViewItem tvi || tvi.Tag is not ExplorerTab tab) return;
 
         // Returning to an unlocked vault tab: re-materialize the working copy if it went missing/empty
