@@ -308,10 +308,19 @@ Open any image and click **Edit** (the pencil in the viewer toolbar, or right-cl
 - **Transform** — rotate left/right, flip horizontal/vertical, **straighten** (−45…45° slider), and **crop** with aspect presets (Free / Original / 1:1 / 4:3 / 3:2 / 16:9 — drag on the image to set the region).
 - **Adjustments** — Exposure, Brightness, Contrast, Saturation, Temperature, Tint, and Sharpness sliders, applied in real time.
 - **Filters** — one-tap presets: Auto, B&W, Sepia, Vivid, Warm, Cool, Invert.
-- **AI enhance** — **Real-ESRGAN x4** super-resolution running **locally on your GPU** (ONNX Runtime + **DirectML**, so any DX12 card works — NVIDIA/AMD/Intel — with no CUDA install; falls back to CPU). Two actions:
-  - **Enhance** — super-resolves and resamples straight back down, recovering detail and cleaning up noise **at the original size**. Each tile is downsampled as it comes out, so there's no giant 4× intermediate and full-resolution photos work.
+- **AI restoration** — neural models running **locally on your GPU** (ONNX Runtime + **DirectML**, so any DX12 card works — NVIDIA/AMD/Intel — with no CUDA install; falls back to CPU). Models download once on first use and then run entirely offline — **images are never uploaded anywhere**. The status line reports the provider (e.g. `DirectML (GPU)`) and elapsed time.
+  - **✨ Autopilot** — measures the photo (variance-of-Laplacian for softness, deviation-from-local-mean for grain, plus a face count) and applies **only what it actually needs**, scaling denoise strength to the measured noise.
+  - **Enhance** — **Real-ESRGAN x4plus** super-resolves and resamples straight back down, recovering detail **at the original size**. Each tile is downsampled as it comes out, so there's no giant 4× intermediate and full-resolution photos work.
   - **Upscale 4×** — keeps the super-resolved result (input is capped, since the output has 16× the pixels).
-  The image is processed in **overlapping tiles** whose overlap is discarded when stitching, which is what stops tile seams from appearing. The model (~64 MB) downloads once on first use and then runs entirely offline — **images are never uploaded anywhere**. The status line reports the provider (e.g. `DirectML (GPU)`) and elapsed time.
+  - **Denoise** — **Real-ESRGAN general-x4v3**, trained on real-world noise/blur/JPEG damage, with a **strength** dial that blends against the original.
+  - **Faces** — **CodeFormer** blind face restoration. **YuNet** finds each face with 5 landmarks, the face is affine-aligned into the 512×512 FFHQ frame CodeFormer expects, restored, then warped back and **feathered** in so the seam doesn't show. A **fidelity** slider trades staying-true-to-the-original against inventing more detail. Tiny background faces are skipped (the net would just invent one).
+  - **Undo** reverts the last AI action — these models rewrite pixels, so they can't ride the normal (parameter-only) undo stack.
+
+  Images are processed in **overlapping tiles** whose overlap is discarded when stitching, which is what stops tile seams from appearing.
+
+  > Two well-known models were evaluated and **rejected because they don't actually work**: **SCUNet** crashes DirectML outright, and the OpenCV **NAFNet** ONNX is a broken export (garbage output on GPU, crash on CPU). The Real-ESRGAN *general* model covers denoise/sharpen instead. This is a genuine local AI stack, but it is not equivalent to Topaz Photo AI, whose models are proprietary and considerably larger.
+
+- **Compare** — check your work against the original: a **split slider** (drag the divider to wipe), **side by side**, or **original only**. The reference is put through the edit's *geometry only*, so before/after still line up pixel-for-pixel even after a 4× upscale changed the dimensions.
 - **Markup** — annotate with pen/highlighter/eraser (ink), **text**, and **rectangle / ellipse / line / arrow** shapes in your choice of color.
 - **Undo / Redo / Reset**, then **Save** — by default it writes a **copy** next to the original (`<name>-edited.<ext>`) so the source is never touched; the Save dropdown also offers **Save as…** and **Overwrite original**.
 

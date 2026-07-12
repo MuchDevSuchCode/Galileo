@@ -54,7 +54,7 @@
     <PackageReference Include="NBitcoin" Version="7.0.37" />
     <!-- On-device AI upscaling (Real-ESRGAN). DirectML runs on any DX12 GPU (NVIDIA/AMD/Intel) with no
          CUDA/cuDNN install, and the native bits ship inside the self-contained publish. -->
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.20.1" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.22.0" />
   </ItemGroup>
 
 </Project>

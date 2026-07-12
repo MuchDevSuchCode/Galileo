@@ -1044,17 +1044,30 @@
                             </StackPanel>
                         </StackPanel>
 
-                        <!-- AI enhance (Real-ESRGAN x4, GPU via DirectML) -->
+                        <!-- AI restoration (Real-ESRGAN + CodeFormer, GPU via DirectML) -->
                         <StackPanel Spacing="6">
-                            <TextBlock Text="AI ENHANCE" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />
+                            <TextBlock Text="AI" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />
+                            <Button x:Name="AiAutoBtn" Content="✨ Autopilot" Click="AiAuto_Click"
+                                    HorizontalAlignment="Stretch"
+                                    ToolTipService.ToolTip="Analyse the photo and apply what it actually needs" />
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <Button x:Name="AiEnhanceBtn" Content="Enhance" Click="AiEnhance_Click"
-                                        ToolTipService.ToolTip="Recover detail and clean up noise at the same size" />
+                                        ToolTipService.ToolTip="Recover detail at the same size" />
                                 <Button x:Name="AiUpscaleBtn" Content="Upscale 4×" Click="AiUpscale_Click"
                                         ToolTipService.ToolTip="Super-resolve the image to 4× its size" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button x:Name="AiDenoiseBtn" Content="Denoise" Click="AiDenoise_Click"
+                                        ToolTipService.ToolTip="Remove noise and sharpen (Real-ESRGAN general)" />
+                                <Button x:Name="AiFacesBtn" Content="Faces" Click="AiFaces_Click"
+                                        ToolTipService.ToolTip="Restore faces (CodeFormer)" />
                                 <Button x:Name="AiUndoBtn" Content="Undo" Click="AiUndo_Click" IsEnabled="False"
                                         ToolTipService.ToolTip="Revert the last AI action" />
                             </StackPanel>
+                            <TextBlock Text="Denoise strength" Foreground="White" FontSize="12" />
+                            <Slider x:Name="AiStrength" Minimum="0" Maximum="100" Value="80" />
+                            <TextBlock Text="Face fidelity (low = more invented detail)" Foreground="White" FontSize="12" />
+                            <Slider x:Name="AiFidelity" Minimum="0" Maximum="100" Value="70" />
                             <ProgressBar x:Name="AiProgress" Minimum="0" Maximum="1" Value="0" Visibility="Collapsed" />
                             <TextBlock x:Name="AiStatus" Foreground="#99FFFFFF" FontSize="11" TextWrapping="Wrap" />
                         </StackPanel>
