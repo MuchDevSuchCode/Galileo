@@ -1044,6 +1044,19 @@
                             </StackPanel>
                         </StackPanel>
 
+                        <!-- AI enhance (Real-ESRGAN x4, GPU via DirectML) -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="AI ENHANCE" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button x:Name="AiEnhanceBtn" Content="Enhance" Click="AiEnhance_Click"
+                                        ToolTipService.ToolTip="Recover detail and clean up noise at the same size" />
+                                <Button x:Name="AiUpscaleBtn" Content="Upscale 4×" Click="AiUpscale_Click"
+                                        ToolTipService.ToolTip="Super-resolve the image to 4× its size" />
+                            </StackPanel>
+                            <ProgressBar x:Name="AiProgress" Minimum="0" Maximum="1" Value="0" Visibility="Collapsed" />
+                            <TextBlock x:Name="AiStatus" Foreground="#99FFFFFF" FontSize="11" TextWrapping="Wrap" />
+                        </StackPanel>
+
                         <!-- Markup -->
                         <StackPanel Spacing="8">
                             <TextBlock Text="MARKUP" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />

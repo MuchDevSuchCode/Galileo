@@ -47,6 +47,43 @@ public sealed class ImageEditor : IDisposable
         }
     }
 
+    /// <summary>Source pixels as BGRA8, optionally downscaled so the long edge is at most
+    /// <paramref name="maxLongEdge"/> (0 = full size). Used to feed the AI upscaler.</summary>
+    public byte[] GetSourcePixels(int maxLongEdge, out int width, out int height)
+    {
+        int sw = (int)Source!.SizeInPixels.Width, sh = (int)Source.SizeInPixels.Height;
+        var longEdge = Math.Max(sw, sh);
+        if (maxLongEdge <= 0 || longEdge <= maxLongEdge)
+        {
+            width = sw; height = sh;
+            return Source.GetPixelBytes();
+        }
+        var f = (double)maxLongEdge / longEdge;
+        width = Math.Max(1, (int)Math.Round(sw * f));
+        height = Math.Max(1, (int)Math.Round(sh * f));
+        using var rt = new CanvasRenderTarget(_device, width, height, 96);
+        using (var ds = rt.CreateDrawingSession())
+        {
+            ds.Clear(Microsoft.UI.Colors.Transparent);
+            ds.DrawImage(Source, new Rect(0, 0, width, height), new Rect(0, 0, sw, sh), 1f,
+                CanvasImageInterpolation.HighQualityCubic);
+        }
+        return rt.GetPixelBytes();
+    }
+
+    /// <summary>Swap in new source pixels (the AI writes real pixels, so it replaces the image rather than
+    /// being another node in the non-destructive graph). Returns the width scale factor vs. the old source,
+    /// so the caller can rescale a pending crop.</summary>
+    public double ReplaceSource(byte[] bgra, int width, int height)
+    {
+        var oldW = (double)(Source?.SizeInPixels.Width ?? (uint)width);
+        var bmp = CanvasBitmap.CreateFromBytes(_device, bgra, width, height,
+            Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized);
+        Source?.Dispose();
+        Source = bmp;
+        return width / Math.Max(1.0, oldW);
+    }
+
     /// <summary>The full color + orientation effect graph. <paramref name="orientedBounds"/> is the
     /// post-transform image rectangle (origin 0,0); crop coordinates are relative to it.</summary>
     public ICanvasImage BuildOriented(EditState s, out Rect orientedBounds)

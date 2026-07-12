@@ -52,6 +52,9 @@
     <!-- Peer-to-peer secure sharing: Ed25519/X25519 identity keys + BIP39 seed-phrase recovery. -->
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.4.0" />
     <PackageReference Include="NBitcoin" Version="7.0.37" />
+    <!-- On-device AI upscaling (Real-ESRGAN). DirectML runs on any DX12 GPU (NVIDIA/AMD/Intel) with no
+         CUDA/cuDNN install, and the native bits ship inside the self-contained publish. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.20.1" />
   </ItemGroup>
 
 </Project>
