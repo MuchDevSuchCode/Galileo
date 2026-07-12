@@ -21,8 +21,23 @@ public sealed partial class MainWindow
     private bool _aiBusy;
     private CancellationTokenSource? _aiCts;
 
+    /// <summary>One-deep undo for AI actions. The AI rewrites pixels, so it can't live on the EditState undo
+    /// stack (which only snapshots parameters) — we keep the previous pixels instead.</summary>
+    private (byte[] Pixels, int W, int H, Rect? Crop)? _aiUndo;
+
     private async void AiEnhance_Click(object sender, RoutedEventArgs e) => await RunAiAsync(keepUpscale: false);
     private async void AiUpscale_Click(object sender, RoutedEventArgs e) => await RunAiAsync(keepUpscale: true);
+
+    private void AiUndo_Click(object sender, RoutedEventArgs e)
+    {
+        if (_aiBusy || _aiUndo is not { } snap) return;
+        _editor.ReplaceSource(snap.Pixels, snap.W, snap.H);
+        _edit.Crop = snap.Crop;
+        _aiUndo = null;
+        if (AiUndoBtn is not null) AiUndoBtn.IsEnabled = false;
+        AiSay("Reverted the last AI action.");
+        InvalidateEditImage();
+    }
 
     private void SetAiBusy(bool busy)
     {
@@ -96,11 +111,14 @@ public sealed partial class MainWindow
 
         try
         {
+            // Snapshot the current pixels first so this action can be undone.
+            var undoPixels = _editor.GetSourcePixels(0, out var uw, out var uh);
+            _aiUndo = (undoPixels, uw, uh, _edit.Crop);
+
             // Upscaling multiplies the pixel count by 16, so cap the input; enhancing keeps the size and can
             // stream the whole image (each tile is downsampled straight back, so there's no 4x intermediate).
             var cap = keepUpscale ? AiUpscaler.MaxUpscaleInputEdge : 0;
             var pixels = _editor.GetSourcePixels(cap, out var w, out var h);
-            var oldW = (int)_editor.PixelWidth;
 
             AiSay(keepUpscale ? $"Upscaling {w}×{h} → {w * 4}×{h * 4}…" : $"Enhancing {w}×{h}…");
             var progress = new Progress<double>(v => { if (AiProgress is not null) AiProgress.Value = v; });
@@ -116,15 +134,18 @@ public sealed partial class MainWindow
                 _edit.Crop = new Rect(c.X * factor, c.Y * factor, c.Width * factor, c.Height * factor);
 
             sw.Stop();
+            if (AiUndoBtn is not null) AiUndoBtn.IsEnabled = true;
             AiSay($"{(keepUpscale ? "Upscaled" : "Enhanced")} → {outW}×{outH}  ·  {_ai.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");
             InvalidateEditImage();
         }
         catch (OperationCanceledException)
         {
+            _aiUndo = null;
             AiSay("Cancelled.");
         }
         catch (Exception ex)
         {
+            _aiUndo = null;   // nothing changed, so there's nothing to undo
             App.Log("AiEnhance", ex);
             AiSay(null);
             await MessageAsync("AI enhance", "Enhancement failed.\n\n" + ex.Message);

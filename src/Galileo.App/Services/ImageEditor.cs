@@ -23,6 +23,11 @@ public sealed class ImageEditor : IDisposable
     private CanvasDevice _device => _deviceCache ??= CanvasDevice.GetSharedDevice();
 
     public CanvasBitmap? Source { get; private set; }
+
+    /// <summary>The image exactly as it was loaded, kept for before/after comparison. Never modified — the AI
+    /// replaces <see cref="Source"/>, so this stays the pristine reference.</summary>
+    public CanvasBitmap? Before { get; private set; }
+
     public CanvasDevice Device => _device;
     public uint PixelWidth => Source?.SizeInPixels.Width ?? 0;
     public uint PixelHeight => Source?.SizeInPixels.Height ?? 0;
@@ -31,6 +36,8 @@ public sealed class ImageEditor : IDisposable
     {
         Source?.Dispose();
         Source = null;
+        Before?.Dispose();
+        Before = null;
         var file = await StorageFile.GetFileFromPathAsync(path);
         try
         {
@@ -45,6 +52,43 @@ public sealed class ImageEditor : IDisposable
             using var sb = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
             Source = CanvasBitmap.CreateFromSoftwareBitmap(_device, sb);
         }
+
+        // Snapshot the untouched pixels as the "before" reference.
+        Before = CanvasBitmap.CreateFromBytes(_device, Source.GetPixelBytes(),
+            (int)Source.SizeInPixels.Width, (int)Source.SizeInPixels.Height,
+            Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized);
+    }
+
+    /// <summary>The pristine image put through the edit's <em>geometry only</em> (no colour, no AI), scaled to
+    /// the current source size — so a before/after comparison lines up pixel-for-pixel even after an AI
+    /// upscale changed the dimensions.</summary>
+    public ICanvasImage BuildBeforeOriented(EditState s, out Rect orientedBounds)
+    {
+        ICanvasImage img = Before ?? Source!;
+        var bw = (Before ?? Source!).SizeInPixels.Width;
+        var bh = (Before ?? Source!).SizeInPixels.Height;
+        var sw = Source!.SizeInPixels.Width;
+        var sh = Source.SizeInPixels.Height;
+        if (bw != sw || bh != sh)
+        {
+            img = new Transform2DEffect
+            {
+                Source = img,
+                TransformMatrix = Matrix3x2.CreateScale((float)sw / bw, (float)sh / bh),
+                InterpolationMode = CanvasImageInterpolation.HighQualityCubic,
+            };
+        }
+        var geo = new EditState
+        {
+            Quarter = s.Quarter, FlipH = s.FlipH, FlipV = s.FlipV, StraightenDeg = s.StraightenDeg,
+        };
+        var m = OrientMatrix(geo, out orientedBounds);
+        return new Transform2DEffect
+        {
+            Source = img,
+            TransformMatrix = m,
+            InterpolationMode = CanvasImageInterpolation.HighQualityCubic,
+        };
     }
 
     /// <summary>Source pixels as BGRA8, optionally downscaled so the long edge is at most
@@ -211,5 +255,7 @@ public sealed class ImageEditor : IDisposable
     {
         Source?.Dispose();
         Source = null;
+        Before?.Dispose();
+        Before = null;
     }
 }

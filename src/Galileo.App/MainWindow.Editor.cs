@@ -40,6 +40,10 @@ public sealed partial class MainWindow
     private double _orientedW, _orientedH;
 
     private bool _cropMode;
+    // Before/after comparison: "off" | "split" (draggable divider) | "side" | "original".
+    private string _compareMode = "off";
+    private double _compareSplit = 0.5;
+    private bool _compareDragging;
     private string _markupTool = "";
     private double _cropAspect;     // 0 = free
     private bool _dragging;
@@ -82,10 +86,15 @@ public sealed partial class MainWindow
         _orientedW = _orientedH = 0; _editFitScale = 1; _editFitRect = default; _viewSrc = default;
         _dragging = false; _pendingCrop = null; _cropDrag = ""; _cropAtDragStart = default; _pendingShape = null;
         _cropAspect = 0;
+        _compareMode = "off"; _compareSplit = 0.5; _compareDragging = false;
+        _aiUndo = null;
         try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true; // fresh image → fresh cache
         ResetEditSliders();
         _editLoading = true;
         if (CropAspectCombo.Items.Count > 0) CropAspectCombo.SelectedIndex = 0;
+        if (CompareCombo.Items.Count > 0) CompareCombo.SelectedIndex = 0;
+        AiUndoBtn.IsEnabled = false;
+        AiStatus.Text = "";
         _editLoading = false;
         SetCanvasMode("none");
 
@@ -155,6 +164,13 @@ public sealed partial class MainWindow
         _editFitRect = new Rect(ox, oy, dw, dh);
         _editFitScale = scale;
 
+        // ---- Before / after comparison (Topaz-style) ----
+        if (_compareMode != "off")
+        {
+            DrawCompare(ds, oriented, src, ox, oy, dw, dh, cw, ch, scale);
+            return;
+        }
+
         // While interactively cropping or marking up (lots of pointer-driven redraws), draw from a cached
         // render of the pipeline so each frame is a cheap bitmap blit, not a full effect re-render. During
         // adjustments (no interaction loop) draw the effect graph directly so the live preview is exact.
@@ -205,6 +221,69 @@ public sealed partial class MainWindow
         if (_pendingShape is MarkupItem ps) DrawShape(ds, ps, mx, my, scale);
     }
 
+    /// <summary>Draws the pristine image against the edited one. "before" is put through the same geometry
+    /// (and scaled to the current source size) so the two line up even after an AI upscale.</summary>
+    private void DrawCompare(CanvasDrawingSession ds, ICanvasImage after, Rect src,
+        double ox, double oy, double dw, double dh, double cw, double ch, double scale)
+    {
+        ICanvasImage before;
+        try { before = _editor.BuildBeforeOriented(_edit, out _); }
+        catch { ds.DrawImage(after, new Rect(ox, oy, dw, dh), src); return; }
+
+        var label = new CanvasTextFormat { FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+
+        void Tag(string text, double x, double y)
+        {
+            var box = new Rect(x, y, 68, 22);
+            ds.FillRectangle(box, Color.FromArgb(150, 0, 0, 0));
+            ds.DrawText(text, new Vector2((float)(x + 8), (float)(y + 2)), Microsoft.UI.Colors.White, label);
+        }
+
+        switch (_compareMode)
+        {
+            case "original":
+                ds.DrawImage(before, new Rect(ox, oy, dw, dh), src);
+                Tag("Before", ox + 8, oy + 8);
+                break;
+
+            case "side":
+            {
+                var hw = cw / 2;
+                var s2 = Math.Min(hw / src.Width, ch / src.Height);
+                double dw2 = src.Width * s2, dh2 = src.Height * s2;
+                var oy2 = (ch - dh2) / 2;
+                var oxL = (hw - dw2) / 2;
+                var oxR = hw + (hw - dw2) / 2;
+                ds.DrawImage(before, new Rect(oxL, oy2, dw2, dh2), src);
+                ds.DrawImage(after, new Rect(oxR, oy2, dw2, dh2), src);
+                ds.DrawLine((float)hw, 0, (float)hw, (float)ch, Microsoft.UI.Colors.White, 1);
+                Tag("Before", oxL + 8, oy2 + 8);
+                Tag("After", oxR + 8, oy2 + 8);
+                break;
+            }
+
+            default: // "split" — after underneath, before revealed to the left of a draggable divider
+            {
+                ds.DrawImage(after, new Rect(ox, oy, dw, dh), src);
+                var f = Math.Clamp(_compareSplit, 0, 1);
+                if (f > 0.001)
+                {
+                    var destL = new Rect(ox, oy, dw * f, dh);
+                    var srcL = new Rect(src.X, src.Y, src.Width * f, src.Height);
+                    ds.DrawImage(before, destL, srcL);
+                }
+                var lineX = (float)(ox + dw * f);
+                ds.DrawLine(lineX, (float)oy, lineX, (float)(oy + dh), Microsoft.UI.Colors.White, 2);
+                // Grip so it reads as draggable.
+                ds.FillCircle(lineX, (float)(oy + dh / 2), 9, Color.FromArgb(220, 255, 255, 255));
+                ds.FillCircle(lineX, (float)(oy + dh / 2), 7, Color.FromArgb(220, 30, 30, 30));
+                Tag("Before", ox + 8, oy + 8);
+                Tag("After", ox + dw - 76, oy + 8);
+                break;
+            }
+        }
+    }
+
     private static void DrawShape(CanvasDrawingSession ds, MarkupItem m, double offX, double offY, double sc)
     {
         float sx = (float)(offX + m.Start.X * sc), sy = (float)(offY + m.Start.Y * sc);
@@ -252,7 +331,19 @@ public sealed partial class MainWindow
         // Clear any half-finished drag so a previously stuck pointer state can't break the new mode
         // (e.g. a lost pointer-capture that never fired PointerReleased).
         _dragging = false; _pendingCrop = null; _pendingShape = null; _cropDrag = "";
-        OverlayCanvas.IsHitTestVisible = mode is "crop" or "shape";
+        UpdateOverlayHitTest();
+    }
+
+    /// <summary>The overlay only needs pointer events when something is actually draggable: a crop, a markup
+    /// shape, or the before/after split divider.</summary>
+    private void UpdateOverlayHitTest() =>
+        OverlayCanvas.IsHitTestVisible = _cropMode || _markupTool.Length > 0 || _compareMode == "split";
+
+    private void SetSplitFrom(double displayX)
+    {
+        if (_editFitRect.Width <= 0) return;
+        _compareSplit = Math.Clamp((displayX - _editFitRect.X) / _editFitRect.Width, 0, 1);
+        _editCanvas?.Invalidate();
     }
 
     private Point DisplayToOriented(Point p)
@@ -264,6 +355,15 @@ public sealed partial class MainWindow
 
     private void Overlay_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        // Dragging the before/after divider takes precedence over any editing tool.
+        if (_compareMode == "split")
+        {
+            _compareDragging = true;
+            SetSplitFrom(e.GetCurrentPoint(OverlayCanvas).Position.X);
+            OverlayCanvas.CapturePointer(e.Pointer);
+            return;
+        }
+
         var p = DisplayToOriented(e.GetCurrentPoint(OverlayCanvas).Position);
         if (_cropMode)
         {
@@ -294,6 +394,7 @@ public sealed partial class MainWindow
 
     private void Overlay_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        if (_compareDragging) { SetSplitFrom(e.GetCurrentPoint(OverlayCanvas).Position.X); return; }
         if (!_dragging) return;
         var p = DisplayToOriented(e.GetCurrentPoint(OverlayCanvas).Position);
         if (_cropMode)
@@ -317,7 +418,25 @@ public sealed partial class MainWindow
     private void Overlay_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
         try { OverlayCanvas.ReleasePointerCapture(e.Pointer); } catch { }
+        if (_compareDragging) { _compareDragging = false; return; }
         FinishOverlayDrag();
+    }
+
+    /// <summary>Compare-mode picker. Comparing is a view mode, so it drops any active crop/markup tool —
+    /// their pointer mapping doesn't apply while two images are on screen.</summary>
+    private void Compare_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_editLoading || CompareCombo is null) return;
+        _compareMode = (CompareCombo.SelectedIndex switch
+        {
+            1 => "split",
+            2 => "side",
+            3 => "original",
+            _ => "off",
+        });
+        if (_compareMode != "off") SetCanvasMode("none");
+        UpdateOverlayHitTest();
+        _editCanvas?.Invalidate();
     }
 
     // If the pointer capture is lost (pointer leaves the window, another control steals it), PointerReleased

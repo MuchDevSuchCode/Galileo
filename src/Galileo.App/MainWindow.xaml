@@ -1052,9 +1052,25 @@
                                         ToolTipService.ToolTip="Recover detail and clean up noise at the same size" />
                                 <Button x:Name="AiUpscaleBtn" Content="Upscale 4×" Click="AiUpscale_Click"
                                         ToolTipService.ToolTip="Super-resolve the image to 4× its size" />
+                                <Button x:Name="AiUndoBtn" Content="Undo" Click="AiUndo_Click" IsEnabled="False"
+                                        ToolTipService.ToolTip="Revert the last AI action" />
                             </StackPanel>
                             <ProgressBar x:Name="AiProgress" Minimum="0" Maximum="1" Value="0" Visibility="Collapsed" />
                             <TextBlock x:Name="AiStatus" Foreground="#99FFFFFF" FontSize="11" TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <!-- Before / after comparison -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="COMPARE" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />
+                            <ComboBox x:Name="CompareCombo" HorizontalAlignment="Stretch" SelectionChanged="Compare_Changed"
+                                      ToolTipService.ToolTip="Compare the edited image against the original">
+                                <ComboBoxItem Content="Off" IsSelected="True" />
+                                <ComboBoxItem Content="Split slider" />
+                                <ComboBoxItem Content="Side by side" />
+                                <ComboBoxItem Content="Original only" />
+                            </ComboBox>
+                            <TextBlock Text="Drag the divider to wipe between before and after."
+                                       Foreground="#66FFFFFF" FontSize="11" TextWrapping="Wrap" />
                         </StackPanel>
 
                         <!-- Markup -->
