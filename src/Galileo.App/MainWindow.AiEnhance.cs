@@ -19,12 +19,14 @@ namespace Galileo;
 /// </summary>
 public sealed partial class MainWindow
 {
-    private readonly AiEngine _ai = new();
+    /// <summary>Built on first actual use — never just because the editor was opened. Constructing it would
+    /// pull in the ONNX Runtime assembly (and, through it, the native runtime), which has no business being
+    /// loaded for someone who only wants to crop a photo.</summary>
+    private AiEngine? _ai;
+    private AiEngine Ai => _ai ??= new AiEngine();
+
     private bool _aiBusy;
     private CancellationTokenSource? _aiCts;
-
-    /// <summary>One-deep undo for AI actions (the EditState stack only snapshots parameters).</summary>
-    private (byte[] Pixels, int W, int H, Rect? Crop)? _aiUndo;
 
     private double Strength => (AiStrength?.Value ?? 80) / 100.0;
     private double Fidelity => (AiFidelity?.Value ?? 70) / 100.0;
@@ -37,15 +39,13 @@ public sealed partial class MainWindow
 
     private enum AiJob { Enhance, Upscale, Denoise, Faces }
 
+    /// <summary>Same history as the editor's Undo — AI steps live on the one stack, so either button reverses
+    /// the last thing you actually did.</summary>
     private void AiUndo_Click(object sender, RoutedEventArgs e)
     {
-        if (_aiBusy || _aiUndo is not { } snap) return;
-        _editor.ReplaceSource(snap.Pixels, snap.W, snap.H);
-        _edit.Crop = snap.Crop;
-        _aiUndo = null;
-        if (AiUndoBtn is not null) AiUndoBtn.IsEnabled = false;
-        AiSay("Reverted the last AI action.");
-        InvalidateEditImage();
+        if (_aiBusy) return;
+        EditUndo_Click(sender, e);
+        AiSay("Undone.");
     }
 
     private void SetAiBusy(bool busy)
@@ -103,20 +103,15 @@ public sealed partial class MainWindow
         finally { SetAiBusy(false); }
     }
 
-    /// <summary>Snapshots the current pixels so the action can be undone, then swaps in the AI result.</summary>
-    private void ApplyAiResult(byte[] result, int outW, int outH)
+    /// <summary>Pushes the pre-AI pixels onto the shared undo history, then swaps in the result. Pushed only
+    /// on success, so a failed or cancelled run doesn't leave a bogus entry to "undo".</summary>
+    private void ApplyAiResult(byte[] before, int beforeW, int beforeH, byte[] result, int outW, int outH)
     {
+        PushUndo(before, beforeW, beforeH);
         var factor = _editor.ReplaceSource(result, outW, outH);
         if (_edit.Crop is { } c && Math.Abs(factor - 1.0) > 0.001)
             _edit.Crop = new Rect(c.X * factor, c.Y * factor, c.Width * factor, c.Height * factor);
-        if (AiUndoBtn is not null) AiUndoBtn.IsEnabled = true;
         InvalidateEditImage();
-    }
-
-    private void SnapshotForUndo()
-    {
-        var px = _editor.GetSourcePixels(0, out var uw, out var uh);
-        _aiUndo = (px, uw, uh, _edit.Crop);
     }
 
     private static AiModel ModelFor(AiJob job) => job switch
@@ -138,7 +133,8 @@ public sealed partial class MainWindow
 
         try
         {
-            SnapshotForUndo();
+            // Pixels as they are now — pushed onto the undo history only if the run succeeds.
+            var before = _editor.GetSourcePixels(0, out var bw, out var bh);
 
             // Only a kept 4x result needs the input capped (its output has 16x the pixels); the others keep
             // the original size, so they can stream a full-resolution photo.
@@ -158,23 +154,23 @@ public sealed partial class MainWindow
             var strength = Strength;
             var fidelity = Fidelity;
 
+            var engine = Ai;
             int outW = w, outH = h, faces = 0;
             var result = await Task.Run(() => job switch
             {
-                AiJob.Upscale => _ai.Enhance(pixels, w, h, true, out outW, out outH, p, ct),
-                AiJob.Enhance => _ai.Enhance(pixels, w, h, false, out outW, out outH, p, ct),
-                AiJob.Denoise => _ai.Denoise(pixels, w, h, strength, p, ct),
-                _ => FaceRestore.Run(_ai, pixels, w, h, fidelity, out faces, p, ct),
+                AiJob.Upscale => engine.Enhance(pixels, w, h, true, out outW, out outH, p, ct),
+                AiJob.Enhance => engine.Enhance(pixels, w, h, false, out outW, out outH, p, ct),
+                AiJob.Denoise => engine.Denoise(pixels, w, h, strength, p, ct),
+                _ => FaceRestore.Run(engine, pixels, w, h, fidelity, out faces, p, ct),
             }, ct);
 
             if (job == AiJob.Faces && faces == 0)
             {
-                _aiUndo = null;
                 AiSay("No faces found in this image.");
                 return;
             }
 
-            ApplyAiResult(result, outW, outH);
+            ApplyAiResult(before, bw, bh, result, outW, outH);
             sw.Stop();
             AiSay(job switch
             {
@@ -182,12 +178,11 @@ public sealed partial class MainWindow
                 AiJob.Denoise => $"Denoised (strength {strength:P0})",
                 AiJob.Faces => $"Restored {faces} face{(faces == 1 ? "" : "s")}",
                 _ => $"Enhanced → {outW}×{outH}",
-            } + $"  ·  {_ai.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");
+            } + $"  ·  {engine.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");
         }
-        catch (OperationCanceledException) { _aiUndo = null; AiSay("Cancelled."); }
+        catch (OperationCanceledException) { AiSay("Cancelled."); }
         catch (Exception ex)
         {
-            _aiUndo = null;
             App.Log("AiEnhance", ex);
             await MessageAsync("AI", "AI processing failed.\n\n" + ex.Message);
             AiSay(null);
@@ -220,8 +215,9 @@ public sealed partial class MainWindow
             var probe = _editor.GetSourcePixels(0, out var pw, out var ph);
             AiSay("Analysing…");
 
+            var engine = Ai;
             var (blur, noise) = await Task.Run(() => AiEngine.Analyze(probe, pw, ph));
-            var faceCount = await Task.Run(() => FaceRestore.DetectRestorable(_ai, probe, pw, ph, _aiCts.Token).Count);
+            var faceCount = await Task.Run(() => FaceRestore.DetectRestorable(engine, probe, pw, ph, _aiCts.Token).Count);
 
             var wantDenoise = noise > 2.0;
             var wantDetail = blur < 150;
@@ -244,7 +240,6 @@ public sealed partial class MainWindow
             if (wantFaces && !await EnsureModelAsync(AiModel.Face)) return;
 
             SetAiBusy(true);
-            SnapshotForUndo();
             AiSay($"Autopilot: {string.Join(" + ", plan)}…");
 
             var p = AiProgressReporter();
@@ -257,20 +252,19 @@ public sealed partial class MainWindow
             var result = await Task.Run(() =>
             {
                 var cur = probe;
-                if (wantDenoise) cur = _ai.Denoise(cur, pw, ph, denoiseStrength, p, ct);
-                if (wantDetail) cur = _ai.Enhance(cur, pw, ph, false, out outW, out outH, p, ct);
-                if (wantFaces) cur = FaceRestore.Run(_ai, cur, pw, ph, fidelity, out facesDone, p, ct);
+                if (wantDenoise) cur = engine.Denoise(cur, pw, ph, denoiseStrength, p, ct);
+                if (wantDetail) cur = engine.Enhance(cur, pw, ph, false, out outW, out outH, p, ct);
+                if (wantFaces) cur = FaceRestore.Run(engine, cur, pw, ph, fidelity, out facesDone, p, ct);
                 return cur;
             }, ct);
 
-            ApplyAiResult(result, pw, ph);
+            ApplyAiResult(probe, pw, ph, result, pw, ph);
             sw.Stop();
-            AiSay($"Autopilot: {string.Join(" + ", plan)}  ·  {_ai.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");
+            AiSay($"Autopilot: {string.Join(" + ", plan)}  ·  {engine.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");
         }
-        catch (OperationCanceledException) { _aiUndo = null; AiSay("Cancelled."); }
+        catch (OperationCanceledException) { AiSay("Cancelled."); }
         catch (Exception ex)
         {
-            _aiUndo = null;
             App.Log("AiAutopilot", ex);
             await MessageAsync("AI", "Autopilot failed.\n\n" + ex.Message);
             AiSay(null);

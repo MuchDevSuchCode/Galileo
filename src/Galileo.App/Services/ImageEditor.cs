@@ -59,6 +59,15 @@ public sealed class ImageEditor : IDisposable
             Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized);
     }
 
+    /// <summary>Puts the untouched pixels back (undoing any AI, which rewrites the source bitmap rather than
+    /// being another node in the non-destructive graph).</summary>
+    public void RevertToOriginal()
+    {
+        if (Before is null || Source is null) return;
+        ReplaceSource(Before.GetPixelBytes(),
+            (int)Before.SizeInPixels.Width, (int)Before.SizeInPixels.Height);
+    }
+
     /// <summary>The pristine image put through the edit's <em>geometry only</em> (no colour, no AI), scaled to
     /// the current source size — so a before/after comparison lines up pixel-for-pixel even after an AI
     /// upscale changed the dimensions.</summary>

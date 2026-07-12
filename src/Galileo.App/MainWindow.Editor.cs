@@ -26,8 +26,17 @@ public sealed partial class MainWindow
     private CanvasControl? _editCanvas;
     private EditState _edit = new();
     private string? _editPath;
-    private readonly Stack<EditState> _editUndo = new();
-    private readonly Stack<EditState> _editRedo = new();
+    /// <summary>One undo entry. Slider/filter/crop edits only need the parameters; the AI models rewrite
+    /// pixels, so those entries also carry the bitmap that was there before — otherwise Undo would restore
+    /// the old settings onto the new pixels and appear to do nothing.</summary>
+    private sealed record EditSnapshot(EditState State, byte[]? Pixels, int W, int H);
+
+    private readonly List<EditSnapshot> _editUndo = new();   // list, not Stack: we prune old pixel snapshots
+    private readonly List<EditSnapshot> _editRedo = new();
+
+    /// <summary>A full-resolution snapshot is ~4 bytes/px (100 MB+ on a big photo), so only the most recent
+    /// few AI steps keep theirs; older entries degrade to parameters-only rather than pinning gigabytes.</summary>
+    private const int MaxPixelSnapshots = 3;
     private readonly List<MarkupItem> _markup = new();
 
     private bool _editLoading;
@@ -95,7 +104,6 @@ public sealed partial class MainWindow
         _compareMode = "off"; _compareSplit = 0.5; _compareDragging = false;
         _editZoom = 1.0; _editPanX = _editPanY = 0; _editPanning = false;
         if (EditZoomLabel is not null) EditZoomLabel.Content = "Fit";
-        _aiUndo = null;
         try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true; // fresh image → fresh cache
         ResetEditSliders();
         _editLoading = true;
@@ -145,9 +153,10 @@ public sealed partial class MainWindow
 
         // Hand back everything the editor was holding. The AI sessions in particular pin their models and
         // DirectML's arenas (gigabytes after a few operations), which would otherwise sit there for the rest
-        // of the session and make even the viewer feel slow.
-        try { _ai.ReleaseSessions(); } catch { }
-        _aiUndo = null;
+        // of the session and make even the viewer feel slow. `_ai?` — never construct it just to release it.
+        try { _ai?.ReleaseSessions(); } catch { }
+        _editUndo.Clear();   // undo entries can hold full-resolution bitmaps
+        _editRedo.Clear();
         try { _editor.Unload(); } catch { }
         GC.Collect();
         GC.WaitForPendingFinalizers();
@@ -793,7 +802,33 @@ public sealed partial class MainWindow
 
     // ---- undo / redo / reset ----
 
-    private void PushUndo() { _editUndo.Push(_edit.Clone()); _editRedo.Clear(); }
+    private void PushUndo(byte[]? pixels = null, int w = 0, int h = 0)
+    {
+        _editUndo.Add(new EditSnapshot(_edit.Clone(), pixels, w, h));
+        _editRedo.Clear();
+        PrunePixelSnapshots(_editUndo);
+        UpdateUndoButtons();
+    }
+
+    /// <summary>Records the current pixels as well — used before an AI model rewrites them.</summary>
+    private void PushUndoPixels()
+    {
+        if (_editor.Source is null) { PushUndo(); return; }
+        var px = _editor.GetSourcePixels(0, out var w, out var h);
+        PushUndo(px, w, h);
+    }
+
+    /// <summary>Only the newest few entries keep their bitmap; older ones degrade to parameters-only so the
+    /// history can't quietly pin hundreds of megabytes.</summary>
+    private static void PrunePixelSnapshots(List<EditSnapshot> history)
+    {
+        var kept = 0;
+        for (var i = history.Count - 1; i >= 0; i--)
+        {
+            if (history[i].Pixels is null) continue;
+            if (++kept > MaxPixelSnapshots) history[i] = history[i] with { Pixels = null, W = 0, H = 0 };
+        }
+    }
 
     private void DebounceUndo()
     {
@@ -802,27 +837,45 @@ public sealed partial class MainWindow
         _lastEditChangeTick = now;
     }
 
-    private void EditUndo_Click(object sender, RoutedEventArgs e)
+    private void EditUndo_Click(object sender, RoutedEventArgs e) => StepHistory(_editUndo, _editRedo);
+    private void EditRedo_Click(object sender, RoutedEventArgs e) => StepHistory(_editRedo, _editUndo);
+
+    /// <summary>Moves one step between the undo and redo histories. An entry that carries pixels restores the
+    /// bitmap as well as the parameters — that's what makes Undo actually reverse an AI action.</summary>
+    private void StepHistory(List<EditSnapshot> from, List<EditSnapshot> to)
     {
-        if (_editUndo.Count == 0) return;
-        _editRedo.Push(_edit.Clone());
-        _edit = _editUndo.Pop();
+        if (from.Count == 0) return;
+        var entry = from[^1];
+        from.RemoveAt(from.Count - 1);
+
+        // Capture where we are now so the step is reversible. If we're about to restore pixels, the current
+        // pixels have to be recorded too, or stepping back the other way would land on the wrong bitmap.
+        byte[]? nowPixels = null;
+        int nowW = 0, nowH = 0;
+        if (entry.Pixels is not null && _editor.Source is not null)
+            nowPixels = _editor.GetSourcePixels(0, out nowW, out nowH);
+        to.Add(new EditSnapshot(_edit.Clone(), nowPixels, nowW, nowH));
+        PrunePixelSnapshots(to);
+
+        _edit = entry.State;
+        if (entry.Pixels is not null) _editor.ReplaceSource(entry.Pixels, entry.W, entry.H);
+
         SyncSlidersFromState();
+        UpdateUndoButtons();
         InvalidateEditImage();
     }
 
-    private void EditRedo_Click(object sender, RoutedEventArgs e)
+    private void UpdateUndoButtons()
     {
-        if (_editRedo.Count == 0) return;
-        _editUndo.Push(_edit.Clone());
-        _edit = _editRedo.Pop();
-        SyncSlidersFromState();
-        InvalidateEditImage();
+        if (AiUndoBtn is not null) AiUndoBtn.IsEnabled = _editUndo.Count > 0;
     }
 
     private void EditReset_Click(object sender, RoutedEventArgs e)
     {
-        PushUndo();
+        // Reset means "back to the file as it was", so it has to undo AI pixel changes too — not just the
+        // sliders. Snapshot the current pixels first so this is itself undoable.
+        PushUndoPixels();
+        _editor.RevertToOriginal();
         _edit = new EditState();
         _markup.Clear();
         ResetEditSliders();
