@@ -31,6 +31,9 @@ android {
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
 
+    // The ESRGAN model must stay uncompressed so TFLite can memory-map it straight from the APK.
+    androidResources { noCompress += "tflite" }
+
     packaging {
         resources {
             // BouncyCastle ships duplicate license files that clash on packaging.
@@ -62,4 +65,7 @@ dependencies {
 
     // Crypto: same BouncyCastle the desktop client uses (Ed25519 / X25519 / HKDF), so the wire format matches.
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+
+    // On-device AI super-resolution (ESRGAN) for the photo editor's Enhance/Upscale.
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
 }
