@@ -39,15 +39,6 @@ public sealed partial class MainWindow
 
     private enum AiJob { Enhance, Upscale, Denoise, Faces }
 
-    /// <summary>Same history as the editor's Undo — AI steps live on the one stack, so either button reverses
-    /// the last thing you actually did.</summary>
-    private void AiUndo_Click(object sender, RoutedEventArgs e)
-    {
-        if (_aiBusy) return;
-        EditUndo_Click(sender, e);
-        AiSay("Undone.");
-    }
-
     private void SetAiBusy(bool busy)
     {
         _aiBusy = busy;

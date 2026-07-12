@@ -109,8 +109,8 @@ public sealed partial class MainWindow
         _editLoading = true;
         if (CropAspectCombo.Items.Count > 0) CropAspectCombo.SelectedIndex = 0;
         if (CompareCombo.Items.Count > 0) CompareCombo.SelectedIndex = 0;
-        AiUndoBtn.IsEnabled = false;
         AiStatus.Text = "";
+        _lastEditChangeTick = 0;   // a fresh image starts a fresh debounce window
         _editLoading = false;
         SetCanvasMode("none");
 
@@ -807,7 +807,6 @@ public sealed partial class MainWindow
         _editUndo.Add(new EditSnapshot(_edit.Clone(), pixels, w, h));
         _editRedo.Clear();
         PrunePixelSnapshots(_editUndo);
-        UpdateUndoButtons();
     }
 
     /// <summary>Records the current pixels as well — used before an AI model rewrites them.</summary>
@@ -844,6 +843,9 @@ public sealed partial class MainWindow
     /// bitmap as well as the parameters — that's what makes Undo actually reverse an AI action.</summary>
     private void StepHistory(List<EditSnapshot> from, List<EditSnapshot> to)
     {
+        // Stepping history while an AI job is in flight would restore pixels the finishing job then
+        // overwrites — the result would look like undo "didn't work" (or worse, mixed states).
+        if (_aiBusy) return;
         if (from.Count == 0) return;
         var entry = from[^1];
         from.RemoveAt(from.Count - 1);
@@ -861,20 +863,15 @@ public sealed partial class MainWindow
         if (entry.Pixels is not null) _editor.ReplaceSource(entry.Pixels, entry.W, entry.H);
 
         SyncSlidersFromState();
-        UpdateUndoButtons();
         InvalidateEditImage();
-    }
-
-    private void UpdateUndoButtons()
-    {
-        if (AiUndoBtn is not null) AiUndoBtn.IsEnabled = _editUndo.Count > 0;
     }
 
     private void EditReset_Click(object sender, RoutedEventArgs e)
     {
         // Reset means "back to the file as it was", so it has to undo AI pixel changes too — not just the
-        // sliders. Snapshot the current pixels first so this is itself undoable.
-        PushUndoPixels();
+        // sliders. The pixel snapshot (100MB+ on a big photo) is only taken when AI actually rewrote the
+        // source; a plain slider reset stays cheap.
+        if (_editor.SourceModified) PushUndoPixels(); else PushUndo();
         _editor.RevertToOriginal();
         _edit = new EditState();
         _markup.Clear();

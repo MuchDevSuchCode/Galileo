@@ -28,6 +28,10 @@ public sealed class ImageEditor : IDisposable
     /// replaces <see cref="Source"/>, so this stays the pristine reference.</summary>
     public CanvasBitmap? Before { get; private set; }
 
+    /// <summary>True once <see cref="ReplaceSource"/> has rewritten the pixels (i.e. AI ran). Lets callers
+    /// skip expensive pixel snapshots when the source is still exactly the loaded file.</summary>
+    public bool SourceModified { get; private set; }
+
     public CanvasDevice Device => _device;
     public uint PixelWidth => Source?.SizeInPixels.Width ?? 0;
     public uint PixelHeight => Source?.SizeInPixels.Height ?? 0;
@@ -57,15 +61,17 @@ public sealed class ImageEditor : IDisposable
         Before = CanvasBitmap.CreateFromBytes(_device, Source.GetPixelBytes(),
             (int)Source.SizeInPixels.Width, (int)Source.SizeInPixels.Height,
             Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized);
+        SourceModified = false;
     }
 
     /// <summary>Puts the untouched pixels back (undoing any AI, which rewrites the source bitmap rather than
     /// being another node in the non-destructive graph).</summary>
     public void RevertToOriginal()
     {
-        if (Before is null || Source is null) return;
+        if (Before is null || Source is null || !SourceModified) return;
         ReplaceSource(Before.GetPixelBytes(),
             (int)Before.SizeInPixels.Width, (int)Before.SizeInPixels.Height);
+        SourceModified = false;
     }
 
     /// <summary>The pristine image put through the edit's <em>geometry only</em> (no colour, no AI), scaled to
@@ -134,6 +140,7 @@ public sealed class ImageEditor : IDisposable
             Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized);
         Source?.Dispose();
         Source = bmp;
+        SourceModified = true;
         return width / Math.Max(1.0, oldW);
     }
 

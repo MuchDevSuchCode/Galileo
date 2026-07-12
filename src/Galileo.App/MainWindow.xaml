@@ -1075,8 +1075,6 @@
                                         ToolTipService.ToolTip="Remove noise and sharpen (Real-ESRGAN general)" />
                                 <Button x:Name="AiFacesBtn" Content="Faces" Click="AiFaces_Click"
                                         ToolTipService.ToolTip="Restore faces (CodeFormer)" />
-                                <Button x:Name="AiUndoBtn" Content="Undo" Click="AiUndo_Click" IsEnabled="False"
-                                        ToolTipService.ToolTip="Revert the last AI action" />
                             </StackPanel>
                             <TextBlock Text="Denoise strength" Foreground="White" FontSize="12" />
                             <Slider x:Name="AiStrength" Minimum="0" Maximum="100" Value="80" />
@@ -1096,7 +1094,7 @@
                                 <ComboBoxItem Content="Side by side" />
                                 <ComboBoxItem Content="Original only" />
                             </ComboBox>
-                            <TextBlock Text="Drag the divider to wipe between before and after."
+                            <TextBlock Text="Split slider: drag the divider on the image to wipe between before and after."
                                        Foreground="#66FFFFFF" FontSize="11" TextWrapping="Wrap" />
                         </StackPanel>
 

@@ -314,13 +314,15 @@ Open any image and click **Edit** (the pencil in the viewer toolbar, or right-cl
   - **Upscale 4×** — keeps the super-resolved result (input is capped, since the output has 16× the pixels).
   - **Denoise** — **Real-ESRGAN general-x4v3**, trained on real-world noise/blur/JPEG damage, with a **strength** dial that blends against the original.
   - **Faces** — **CodeFormer** blind face restoration. **YuNet** finds each face with 5 landmarks, the face is affine-aligned into the 512×512 FFHQ frame CodeFormer expects, restored, then warped back and **feathered** in so the seam doesn't show. A **fidelity** slider trades staying-true-to-the-original against inventing more detail. Tiny background faces are skipped (the net would just invent one).
-  - **Undo** reverts the last AI action — these models rewrite pixels, so they can't ride the normal (parameter-only) undo stack.
+  - The regular **Undo / Redo** reverse AI steps too: the edit history is one stack, and AI entries carry the pixels that were there before (the newest few keep their bitmap; older entries degrade to parameters-only so history can't pin gigabytes). **Reset** reverts AI pixels as well as the sliders.
+  - The AI runtime is **loaded only when an AI button is actually pressed** — opening the editor to crop a photo never touches ONNX Runtime — and the sessions (and their GPU memory) are **released when the editor closes**.
 
   Images are processed in **overlapping tiles** whose overlap is discarded when stitching, which is what stops tile seams from appearing.
 
   > Two well-known models were evaluated and **rejected because they don't actually work**: **SCUNet** crashes DirectML outright, and the OpenCV **NAFNet** ONNX is a broken export (garbage output on GPU, crash on CPU). The Real-ESRGAN *general* model covers denoise/sharpen instead. This is a genuine local AI stack, but it is not equivalent to Topaz Photo AI, whose models are proprietary and considerably larger.
 
 - **Compare** — check your work against the original: a **split slider** (drag the divider to wipe), **side by side**, or **original only**. The reference is put through the edit's *geometry only*, so before/after still line up pixel-for-pixel even after a 4× upscale changed the dimensions.
+- **Preview zoom** — the **scroll wheel zooms about the cursor** (what's under the pointer stays put), **− / +** buttons zoom about the centre, the readout doubles as a **Fit** reset, and you **drag to pan** once zoomed in. Crop, markup and the compare divider all keep working while zoomed.
 - **Markup** — annotate with pen/highlighter/eraser (ink), **text**, and **rectangle / ellipse / line / arrow** shapes in your choice of color.
 - **Undo / Redo / Reset**, then **Save** — by default it writes a **copy** next to the original (`<name>-edited.<ext>`) so the source is never touched; the Save dropdown also offers **Save as…** and **Overwrite original**.
 
