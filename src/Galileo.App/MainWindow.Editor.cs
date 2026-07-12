@@ -40,6 +40,12 @@ public sealed partial class MainWindow
     private double _orientedW, _orientedH;
 
     private bool _cropMode;
+    // Preview zoom: a multiplier on the fit-to-window scale (1 = fit), plus a display-space pan offset.
+    private double _editZoom = 1.0;
+    private double _editPanX, _editPanY;
+    private bool _editPanning;
+    private Point _editPanStart;
+    private double _editPanStartX, _editPanStartY;
     // Before/after comparison: "off" | "split" (draggable divider) | "side" | "original".
     private string _compareMode = "off";
     private double _compareSplit = 0.5;
@@ -87,6 +93,8 @@ public sealed partial class MainWindow
         _dragging = false; _pendingCrop = null; _cropDrag = ""; _cropAtDragStart = default; _pendingShape = null;
         _cropAspect = 0;
         _compareMode = "off"; _compareSplit = 0.5; _compareDragging = false;
+        _editZoom = 1.0; _editPanX = _editPanY = 0; _editPanning = false;
+        if (EditZoomLabel is not null) EditZoomLabel.Content = "Fit";
         _aiUndo = null;
         try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true; // fresh image → fresh cache
         ResetEditSliders();
@@ -134,6 +142,17 @@ public sealed partial class MainWindow
         EditorView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Visible;
         try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true;
+
+        // Hand back everything the editor was holding. The AI sessions in particular pin their models and
+        // DirectML's arenas (gigabytes after a few operations), which would otherwise sit there for the rest
+        // of the session and make even the viewer feel slow.
+        try { _ai.ReleaseSessions(); } catch { }
+        _aiUndo = null;
+        try { _editor.Unload(); } catch { }
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
         if (reloadViewer) _ = LoadCurrentAsync();
     }
 
@@ -158,9 +177,12 @@ public sealed partial class MainWindow
         var src = !_cropMode && _edit.Crop is Rect cr ? cr : new Rect(0, 0, ow, oh);
         _viewSrc = src;
 
-        double scale = Math.Min(cw / src.Width, ch / src.Height);
+        // Zoom is a multiplier on the fit-to-window scale, with a pan offset in display space. Everything
+        // else (crop, markup, the compare divider) maps through _editFitRect/_editFitScale, so it follows.
+        double fit = Math.Min(cw / src.Width, ch / src.Height);
+        double scale = fit * _editZoom;
         double dw = src.Width * scale, dh = src.Height * scale;
-        double ox = (cw - dw) / 2, oy = (ch - dh) / 2;
+        double ox = (cw - dw) / 2 + _editPanX, oy = (ch - dh) / 2 + _editPanY;
         _editFitRect = new Rect(ox, oy, dw, dh);
         _editFitScale = scale;
 
@@ -335,9 +357,73 @@ public sealed partial class MainWindow
     }
 
     /// <summary>The overlay only needs pointer events when something is actually draggable: a crop, a markup
-    /// shape, or the before/after split divider.</summary>
+    /// shape, the before/after split divider, or panning a zoomed-in preview.</summary>
     private void UpdateOverlayHitTest() =>
-        OverlayCanvas.IsHitTestVisible = _cropMode || _markupTool.Length > 0 || _compareMode == "split";
+        OverlayCanvas.IsHitTestVisible =
+            _cropMode || _markupTool.Length > 0 || _compareMode == "split" || _editZoom > 1.0001;
+
+    // ---- preview zoom (scroll wheel + buttons) ----
+
+    private void EditCanvas_Wheel(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_editor.Source is null) return;
+        var pt = e.GetCurrentPoint(EditCanvasHost);
+        var delta = pt.Properties.MouseWheelDelta;
+        if (delta == 0) return;
+        ZoomAt(pt.Position, delta > 0 ? 1.15 : 1 / 1.15);
+        e.Handled = true;
+    }
+
+    private void EditZoomIn_Click(object sender, RoutedEventArgs e) => ZoomAt(CanvasCentre(), 1.25);
+    private void EditZoomOut_Click(object sender, RoutedEventArgs e) => ZoomAt(CanvasCentre(), 1 / 1.25);
+
+    private void EditZoomFit_Click(object sender, RoutedEventArgs e)
+    {
+        _editZoom = 1.0;
+        _editPanX = _editPanY = 0;
+        AfterZoomChanged();
+    }
+
+    private Point CanvasCentre() => new(EditCanvasHost.ActualWidth / 2, EditCanvasHost.ActualHeight / 2);
+
+    /// <summary>Zooms about <paramref name="anchor"/> (the cursor, or the canvas centre for the buttons) so
+    /// whatever is under it stays put — otherwise zooming appears to drift.</summary>
+    private void ZoomAt(Point anchor, double factor)
+    {
+        var old = _editZoom;
+        var z = Math.Clamp(old * factor, 0.2, 8.0);
+        if (Math.Abs(z - old) < 1e-6) return;
+
+        if (_editFitRect.Width > 0 && _viewSrc.Width > 0)
+        {
+            // Offset of the anchor from the image origin, at the old scale.
+            var relX = anchor.X - _editFitRect.X;
+            var relY = anchor.Y - _editFitRect.Y;
+            var k = z / old;
+
+            var fit = _editFitScale / old;                 // scale at zoom = 1
+            var newW = _viewSrc.Width * fit * z;
+            var newH = _viewSrc.Height * fit * z;
+            var cw = EditCanvasHost.ActualWidth;
+            var ch = EditCanvasHost.ActualHeight;
+
+            // Solve for the pan that keeps anchor fixed: anchor - newOrigin == rel * k.
+            _editPanX = anchor.X - relX * k - (cw - newW) / 2;
+            _editPanY = anchor.Y - relY * k - (ch - newH) / 2;
+        }
+
+        _editZoom = z;
+        if (Math.Abs(_editZoom - 1.0) < 1e-6) { _editPanX = 0; _editPanY = 0; } // snap back to a clean fit
+        AfterZoomChanged();
+    }
+
+    private void AfterZoomChanged()
+    {
+        if (EditZoomLabel is not null)
+            EditZoomLabel.Content = Math.Abs(_editZoom - 1.0) < 1e-6 ? "Fit" : $"{_editZoom * 100:0}%";
+        UpdateOverlayHitTest();
+        _editCanvas?.Invalidate();
+    }
 
     private void SetSplitFrom(double displayX)
     {
@@ -360,6 +446,17 @@ public sealed partial class MainWindow
         {
             _compareDragging = true;
             SetSplitFrom(e.GetCurrentPoint(OverlayCanvas).Position.X);
+            OverlayCanvas.CapturePointer(e.Pointer);
+            return;
+        }
+
+        // Zoomed in with no tool active → drag to pan around the image.
+        if (!_cropMode && _markupTool.Length == 0 && _editZoom > 1.0001)
+        {
+            _editPanning = true;
+            _editPanStart = e.GetCurrentPoint(OverlayCanvas).Position;
+            _editPanStartX = _editPanX;
+            _editPanStartY = _editPanY;
             OverlayCanvas.CapturePointer(e.Pointer);
             return;
         }
@@ -395,6 +492,14 @@ public sealed partial class MainWindow
     private void Overlay_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
         if (_compareDragging) { SetSplitFrom(e.GetCurrentPoint(OverlayCanvas).Position.X); return; }
+        if (_editPanning)
+        {
+            var cur = e.GetCurrentPoint(OverlayCanvas).Position;
+            _editPanX = _editPanStartX + (cur.X - _editPanStart.X);
+            _editPanY = _editPanStartY + (cur.Y - _editPanStart.Y);
+            _editCanvas?.Invalidate();
+            return;
+        }
         if (!_dragging) return;
         var p = DisplayToOriented(e.GetCurrentPoint(OverlayCanvas).Position);
         if (_cropMode)
@@ -419,6 +524,7 @@ public sealed partial class MainWindow
     {
         try { OverlayCanvas.ReleasePointerCapture(e.Pointer); } catch { }
         if (_compareDragging) { _compareDragging = false; return; }
+        if (_editPanning) { _editPanning = false; return; }
         FinishOverlayDrag();
     }
 
@@ -445,6 +551,9 @@ public sealed partial class MainWindow
 
     private void FinishOverlayDrag()
     {
+        // Also reached via PointerCaptureLost, so make sure a lost capture can't leave a drag stuck on.
+        _editPanning = false;
+        _compareDragging = false;
         if (!_dragging) return;
         _dragging = false;
         if (_cropMode)

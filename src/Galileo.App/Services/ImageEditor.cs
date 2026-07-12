@@ -251,11 +251,16 @@ public sealed class ImageEditor : IDisposable
         };
     }
 
-    public void Dispose()
+    /// <summary>Releases the loaded bitmaps (source + the before/after reference). Called when the editor
+    /// closes: a full-resolution photo is held twice here, which is a lot of memory to leave sitting around
+    /// while the user is just browsing.</summary>
+    public void Unload()
     {
         Source?.Dispose();
         Source = null;
         Before?.Dispose();
         Before = null;
     }
+
+    public void Dispose() => Unload();
 }

@@ -336,9 +336,15 @@ public sealed class AiEngine : IDisposable
 
     private static byte ToByte(float v) => (byte)Math.Clamp((int)MathF.Round(v * 255f), 0, 255);
 
-    public void Dispose()
+    /// <summary>Drops every cached session. Each one pins its model (CodeFormer alone is 360 MB) plus
+    /// DirectML's GPU/CPU arenas, which grow with use and are never handed back while the session lives — so
+    /// holding them for the life of the app balloons the process and makes everything else sluggish. They're
+    /// cheap enough to rebuild the next time AI is actually used.</summary>
+    public void ReleaseSessions()
     {
         foreach (var s in _sessions.Values) s.Dispose();
         _sessions.Clear();
     }
+
+    public void Dispose() => ReleaseSessions();
 }

@@ -964,12 +964,26 @@
 
             <!-- Canvas + overlays -->
             <Grid Grid.Row="1" Grid.Column="0" x:Name="EditCanvasHost" Margin="12,0,0,12"
-                  SizeChanged="EditCanvasHost_SizeChanged">
+                  Background="Transparent" SizeChanged="EditCanvasHost_SizeChanged"
+                  PointerWheelChanged="EditCanvas_Wheel">
                 <!-- CanvasControl + markup are drawn in code-behind (Win2D/Ink controls in XAML crash the markup compiler) -->
                 <Canvas x:Name="OverlayCanvas" Background="Transparent" IsHitTestVisible="False"
                         PointerPressed="Overlay_PointerPressed" PointerMoved="Overlay_PointerMoved"
                         PointerReleased="Overlay_PointerReleased" PointerCaptureLost="Overlay_PointerCaptureLost"
                         DoubleTapped="Overlay_DoubleTapped" />
+
+                <!-- Zoom control (scroll wheel zooms about the cursor; drag to pan when zoomed in) -->
+                <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,14,14"
+                        Background="#CC000000" CornerRadius="8" Padding="4">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <Button Content="−" Click="EditZoomOut_Click" MinWidth="34" FontSize="15"
+                                ToolTipService.ToolTip="Zoom out" />
+                        <Button x:Name="EditZoomLabel" Content="Fit" Click="EditZoomFit_Click" MinWidth="62"
+                                ToolTipService.ToolTip="Reset to fit the window" />
+                        <Button Content="+" Click="EditZoomIn_Click" MinWidth="34" FontSize="15"
+                                ToolTipService.ToolTip="Zoom in" />
+                    </StackPanel>
+                </Border>
             </Grid>
 
             <!-- Tools rail -->
