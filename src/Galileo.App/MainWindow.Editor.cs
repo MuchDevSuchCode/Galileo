@@ -283,11 +283,13 @@ public sealed partial class MainWindow
                 var s2 = Math.Min(hw / src.Width, ch / src.Height);
                 double dw2 = src.Width * s2, dh2 = src.Height * s2;
                 var oy2 = (ch - dh2) / 2;
-                var oxL = (hw - dw2) / 2;
-                var oxR = hw + (hw - dw2) / 2;
+                // Butt the two images up against the centre line (before right-justified, after
+                // left-justified) so they sit next to each other instead of floating in their halves.
+                var oxL = hw - dw2;
+                var oxR = hw;
                 ds.DrawImage(before, new Rect(oxL, oy2, dw2, dh2), src);
                 ds.DrawImage(after, new Rect(oxR, oy2, dw2, dh2), src);
-                ds.DrawLine((float)hw, 0, (float)hw, (float)ch, Microsoft.UI.Colors.White, 1);
+                ds.DrawLine((float)hw, (float)oy2, (float)hw, (float)(oy2 + dh2), Microsoft.UI.Colors.White, 1);
                 Tag("Before", oxL + 8, oy2 + 8);
                 Tag("After", oxR + 8, oy2 + 8);
                 break;
