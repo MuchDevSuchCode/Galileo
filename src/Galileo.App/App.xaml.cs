@@ -78,13 +78,22 @@ public partial class App : Application
     public void OnRedirected(AppActivationArguments e)
     {
         var path = PathFromActivation(e);
-        LogInfo($"OnRedirected kind={e.Kind} path={path ?? "(none)"}");
+        var newWindow = WantsNewWindow(e);
+        LogInfo($"OnRedirected kind={e.Kind} newWindow={newWindow} path={path ?? "(none)"}");
         var window = _window;
         if (window is null) return;
         window.DispatcherQueue.TryEnqueue(() =>
         {
             try
             {
+                if (newWindow)
+                {
+                    // "Open in new window": an additional in-process window, instantly — instead of a
+                    // separate process paying a full cold start of the self-contained app each time.
+                    var extra = new MainWindow(path);
+                    extra.Activate();
+                    return;
+                }
                 if (window is MainWindow mw)
                 {
                     if (!string.IsNullOrEmpty(path)) mw.OpenExternalPath(path!);
@@ -94,6 +103,18 @@ public partial class App : Application
             }
             catch (Exception ex) { Log("Redirected", ex); }
         });
+    }
+
+    /// <summary>True when the redirected launch asked for its own window (`--new-window`).</summary>
+    private static bool WantsNewWindow(AppActivationArguments e)
+    {
+        try
+        {
+            if (e.Data is Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs la)
+                return la.Arguments.Contains("--new-window", StringComparison.OrdinalIgnoreCase);
+        }
+        catch { /* ignore */ }
+        return false;
     }
 
     private static string? PathFromActivation(AppActivationArguments e)

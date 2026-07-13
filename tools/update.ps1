@@ -46,17 +46,26 @@ $repo    = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $install = Join-Path $PSScriptRoot 'install.ps1'
 $exe     = Join-Path $env:LOCALAPPDATA 'Galileo\app\Galileo.exe'
 
-# 1) Stop running instances so the publish can overwrite the exe.
-$running = Get-Process 'Galileo' -ErrorAction SilentlyContinue
-if ($running) {
+# 1) Stop ALL running instances so the publish can overwrite the exe. Photo windows and background/tray
+#    instances count too — overwriting DLLs under a live process makes it crash later with a stowed
+#    exception (0xc000027b) when it lazily loads a replaced binary. Retry until none remain (a straggler
+#    can appear between the check and the copy).
+$stoppedAny = $false
+for ($try = 0; $try -lt 10; $try++) {
+    $running = Get-Process 'Galileo' -ErrorAction SilentlyContinue
+    if (-not $running) { break }
     foreach ($p in $running) {
         Write-Host "Stopping running Galileo (pid $($p.Id))..." -ForegroundColor DarkGray
-        $p | Stop-Process -Force
+        try { $p | Stop-Process -Force -ErrorAction Stop } catch {}
+        $stoppedAny = $true
     }
     Start-Sleep -Milliseconds 400
-} else {
-    Write-Host "No running Galileo instance found." -ForegroundColor DarkGray
 }
+if (Get-Process 'Galileo' -ErrorAction SilentlyContinue) {
+    Write-Error "A Galileo process refuses to exit - aborting so the publish can't corrupt a live instance."
+    return
+}
+if (-not $stoppedAny) { Write-Host "No running Galileo instance found." -ForegroundColor DarkGray }
 
 # 2) Pull the latest code.
 if ($NoPull) {

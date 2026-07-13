@@ -40,8 +40,10 @@ public static class Program
         // Single-instance is required when running in the background, so clicking the app icon reuses the
         // instance sitting in the tray instead of spawning a new one.
         if (!App.State.SingleInstance && !App.State.RunInBackground && !App.State.StartWithWindows) return false;
-        // "Open in new window" always gets its own window, even in single-instance mode.
-        if (System.Linq.Enumerable.Contains(Environment.GetCommandLineArgs(), "--new-window")) return false;
+        // "--new-window" redirects too — the host opens an ADDITIONAL window in-process (App.OnRedirected).
+        // Spawning a separate process per photo meant a full cold start of the self-contained app every
+        // time (several seconds right after a publish, while Defender rescans the binaries), which read
+        // as "crashed" / "failed to load" from the shell.
         try
         {
             var keyInstance = AppInstance.FindOrRegisterForKey("Galileo-SingleInstance");
