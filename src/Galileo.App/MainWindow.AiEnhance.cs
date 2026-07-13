@@ -238,7 +238,10 @@ public sealed partial class MainWindow
     private async Task RunAutopilotAsync()
     {
         if (_aiBusy || _editor.Source is null) return;
-        if (!await EnsureModelAsync(AiModel.FaceDetect)) return;
+        // Face restoration redraws faces, so Autopilot only considers it when explicitly opted in;
+        // with the toggle off we don't even need (or download) the face-detect model.
+        var allowFaces = AiAutoFaces?.IsChecked == true;
+        if (allowFaces && !await EnsureModelAsync(AiModel.FaceDetect)) return;
 
         SetAiBusy(true);
         _aiCts = new CancellationTokenSource();
@@ -251,7 +254,9 @@ public sealed partial class MainWindow
 
             var engine = Ai;
             var (blur, noise) = await Task.Run(() => AiEngine.Analyze(probe, pw, ph));
-            var faceCount = await Task.Run(() => FaceRestore.DetectRestorable(engine, probe, pw, ph, _aiCts.Token).Count);
+            var faceCount = allowFaces
+                ? await Task.Run(() => FaceRestore.DetectRestorable(engine, probe, pw, ph, _aiCts.Token).Count)
+                : 0;
 
             var wantDenoise = noise > 2.0;
             var wantDetail = blur < 150;

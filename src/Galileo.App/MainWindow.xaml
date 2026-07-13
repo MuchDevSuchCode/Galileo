@@ -1064,6 +1064,8 @@
                             <Button x:Name="AiAutoBtn" Content="✨ Autopilot" Click="AiAuto_Click"
                                     HorizontalAlignment="Stretch"
                                     ToolTipService.ToolTip="Analyse the photo and apply what it actually needs" />
+                            <CheckBox x:Name="AiAutoFaces" Content="Autopilot may restore faces" IsChecked="False"
+                                      ToolTipService.ToolTip="Off by default — face restoration redraws faces, so it's opt-in. The Faces button always works regardless." />
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <Button x:Name="AiEnhanceBtn" Content="Enhance" Click="AiEnhance_Click"
                                         ToolTipService.ToolTip="Recover detail at the same size" />

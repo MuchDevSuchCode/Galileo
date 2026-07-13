@@ -303,23 +303,26 @@ public sealed partial class MainWindow
                 break;
             }
 
-            default: // "split" — after underneath, before revealed to the left of a draggable divider
+            default: // "split" — after underneath, before revealed left of a viewport-anchored divider
             {
                 ds.DrawImage(after, new Rect(ox, oy, dw, dh), src);
-                var f = Math.Clamp(_compareSplit, 0, 1);
+
+                // The divider lives at a fraction of the CANVAS, so it (and its grip) can never be panned
+                // or zoomed out of view; the revealed portion is whatever part of the image lies left of it.
+                var lineX = cw * Math.Clamp(_compareSplit, 0, 1);
+                var f = Math.Clamp((lineX - ox) / Math.Max(1e-6, dw), 0, 1);
                 if (f > 0.001)
                 {
                     var destL = new Rect(ox, oy, dw * f, dh);
                     var srcL = new Rect(src.X, src.Y, src.Width * f, src.Height);
                     ds.DrawImage(before, destL, srcL);
                 }
-                var lineX = (float)(ox + dw * f);
-                ds.DrawLine(lineX, (float)oy, lineX, (float)(oy + dh), Microsoft.UI.Colors.White, 2);
-                // Grip so it reads as draggable.
-                ds.FillCircle(lineX, (float)(oy + dh / 2), 9, Color.FromArgb(220, 255, 255, 255));
-                ds.FillCircle(lineX, (float)(oy + dh / 2), 7, Color.FromArgb(220, 30, 30, 30));
-                Tag("Before", ox + 8, oy + 8);
-                Tag("After", ox + dw - 76, oy + 8);
+                ds.DrawLine((float)lineX, 0, (float)lineX, (float)ch, Microsoft.UI.Colors.White, 2);
+                // Grip stays centred in the viewport (not the image), so it's always grabbable.
+                ds.FillCircle((float)lineX, (float)(ch / 2), 9, Color.FromArgb(220, 255, 255, 255));
+                ds.FillCircle((float)lineX, (float)(ch / 2), 7, Color.FromArgb(220, 30, 30, 30));
+                Tag("Before", 8, 8);
+                Tag("After", cw - 76, 8);
                 break;
             }
         }
@@ -384,8 +387,9 @@ public sealed partial class MainWindow
     /// <summary>True when the pointer is on the split divider's grab zone (the line/handle ±20px).</summary>
     private bool NearSplitDivider(Point pos)
     {
-        if (_editFitRect.Width <= 0) return false;
-        var lineX = _editFitRect.X + _editFitRect.Width * Math.Clamp(_compareSplit, 0, 1);
+        var cw = EditCanvasHost.ActualWidth;
+        if (cw <= 0) return false;
+        var lineX = cw * Math.Clamp(_compareSplit, 0, 1);
         return Math.Abs(pos.X - lineX) <= 20;
     }
 
@@ -452,10 +456,13 @@ public sealed partial class MainWindow
         _editCanvas?.Invalidate();
     }
 
+    // The split is a fraction of the CANVAS, not the image — so the divider/handle always stays in the
+    // viewport even when the image is zoomed or panned out from under it.
     private void SetSplitFrom(double displayX)
     {
-        if (_editFitRect.Width <= 0) return;
-        _compareSplit = Math.Clamp((displayX - _editFitRect.X) / _editFitRect.Width, 0, 1);
+        var cw = EditCanvasHost.ActualWidth;
+        if (cw <= 0) return;
+        _compareSplit = Math.Clamp(displayX / cw, 0, 1);
         _editCanvas?.Invalidate();
     }
 
