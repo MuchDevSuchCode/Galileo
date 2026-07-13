@@ -1,7 +1,40 @@
 using System;
+using System.Buffers;
 using System.Runtime.InteropServices;
 
 namespace Galileo.Services;
+
+/// <summary>
+/// A shell thumbnail's pixels, borrowed from a pool. <see cref="Pixels"/> may be LARGER than the image —
+/// always bound reads by <see cref="ByteCount"/> (or Width/Height), never by <c>Pixels.Length</c>.
+///
+/// Why pooled: the shell returns the cached thumbnail, which is typically 256x256 = 256 KB. Anything over
+/// 85 KB goes straight to the Large Object Heap, so a folder of photos fired hundreds of LOH allocations and
+/// drove a gen2 collection storm — multi-second UI stalls with a heap only tens of MB in size. Renting the
+/// buffer keeps this churn out of the GC entirely.
+/// </summary>
+public readonly struct ShellImage : IDisposable
+{
+    public readonly byte[]? Pixels;
+    public readonly int Width;
+    public readonly int Height;
+    public readonly int ByteCount;
+
+    internal ShellImage(byte[]? pixels, int width, int height)
+    {
+        Pixels = pixels;
+        Width = width;
+        Height = height;
+        ByteCount = width * height * 4;
+    }
+
+    public bool IsValid => Pixels is not null && Width > 0 && Height > 0;
+
+    public void Dispose()
+    {
+        if (Pixels is not null) ArrayPool<byte>.Shared.Return(Pixels);
+    }
+}
 
 /// <summary>
 /// Gets file/folder images the way Explorer does — via IShellItemImageFactory — and extracts the
@@ -86,7 +119,18 @@ public static class ShellImaging
     /// Returns premultiplied top-down BGRA pixels for the path, or (null,0,0) on failure.
     /// <paramref name="iconOnly"/> forces the plain icon (no content thumbnail / white matte).
     /// </summary>
+    /// <summary>Pool-backed variant for the thumbnail hot path — the caller MUST dispose the result.
+    /// See <see cref="ShellImage"/> for why this matters.</summary>
+    public static ShellImage GetImage(string path, int size, bool iconOnly)
+    {
+        var (pixels, w, h) = GetPixels(path, size, iconOnly, pooled: true);
+        return new ShellImage(pixels, w, h);
+    }
+
     public static (byte[]? Pixels, int Width, int Height) GetPixels(string path, int size, bool iconOnly)
+        => GetPixels(path, size, iconOnly, pooled: false);
+
+    private static (byte[]? Pixels, int Width, int Height) GetPixels(string path, int size, bool iconOnly, bool pooled)
     {
         IShellItemImageFactory? factory = null;
         var hbitmap = IntPtr.Zero;
@@ -106,7 +150,10 @@ public static class ShellImaging
             int w = bmp.bmWidth, h = Math.Abs(bmp.bmHeight);
             if (w <= 0 || h <= 0 || w > 1024 || h > 1024) return (null, 0, 0);
 
-            var bytes = new byte[w * h * 4];
+            var need = w * h * 4;
+            // A rented buffer can be larger than `need`; GetDIBits only writes the rows it's told to, and
+            // every consumer bounds itself by w/h, so the slack is harmless.
+            var bytes = pooled ? ArrayPool<byte>.Shared.Rent(need) : new byte[need];
             var bi = new BITMAPINFO();
             bi.bmiHeader.biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>();
             bi.bmiHeader.biWidth = w;
@@ -117,18 +164,23 @@ public static class ShellImaging
 
             hdc = GetDC(IntPtr.Zero);
             var lines = GetDIBits(hdc, hbitmap, 0, (uint)h, bytes, ref bi, DIB_RGB_COLORS);
-            if (lines == 0) return (null, 0, 0);
+            if (lines == 0)
+            {
+                if (pooled) ArrayPool<byte>.Shared.Return(bytes);   // don't lose it back to the pool
+                return (null, 0, 0);
+            }
 
             // Device-dependent bitmaps (some shortcut/file icons) have no alpha channel, so
             // GetDIBits leaves every alpha byte at 0 — which would render the icon fully
             // transparent (invisible). If the whole image came back transparent, treat it as
             // opaque. Genuinely-transparent icons always have at least one opaque pixel, so
             // this never flattens a real alpha channel.
+            // Bound by `need`, not bytes.Length — a rented buffer has slack past the image.
             var anyOpaque = false;
-            for (var i = 3; i < bytes.Length; i += 4)
+            for (var i = 3; i < need; i += 4)
                 if (bytes[i] != 0) { anyOpaque = true; break; }
             if (!anyOpaque)
-                for (var i = 3; i < bytes.Length; i += 4) bytes[i] = 255;
+                for (var i = 3; i < need; i += 4) bytes[i] = 255;
 
             return (bytes, w, h);
         }

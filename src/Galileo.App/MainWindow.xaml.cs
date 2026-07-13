@@ -155,6 +155,10 @@ public sealed partial class MainWindow : Window
     // True between a gallery click and the viewer image opening, to run the connected animation.
     private bool _pendingConnectedAnim;
 
+    // False until the file-manager half of the window is built. A window opened to show a single photo
+    // skips it entirely and only pays for it if the user actually navigates to the explorer.
+    private bool _fileManagerReady;
+
     // Collage mode state
     private readonly Random _rng = new();
     private List<PhotoItem> _collageSource = new();
@@ -207,24 +211,6 @@ public sealed partial class MainWindow : Window
         ExplorerItem.ShowExtensions = _state.ShowExtensions;
         ExplorerItem.FolderThumbnails = _state.FolderThumbnails;
 
-        PopulateSidebar();
-        PopulatePinned();
-        PopulateDevices();
-        _shell.WipeTemp(); // clear any device temp copies left by a previous run
-
-        // Secure vault: wipe any decrypted working folder left by a crash, list vaults, and arm the
-        // idle auto-lock + app-exit lock. A "--new-window" instance is spawned by an already-running
-        // primary (which may have a vault unlocked) — it must NOT run crash recovery, or it would wipe the
-        // live vault's working folder out from under the primary.
-        var spawnedNewWindow = Environment.GetCommandLineArgs().Any(a => string.Equals(a, "--new-window", StringComparison.OrdinalIgnoreCase));
-        if (!spawnedNewWindow)
-        {
-            _vaults.WipeOrphanWorkDirs();
-            ArchiveService.WipeOrphans(); // clear any leftover extracted-zip temp dirs from a prior run
-            WipeShareTempDirs();          // clear any leftover remote-browse temp copies from a prior run
-        }
-        VaultsList.ItemsSource = _vaultList;
-        RefreshVaults();
         _vaultIdleTimer.Tick += VaultIdle_Tick;
         _vaultFlushTimer.Tick += (_, _) => FlushVaultSoon();
         _vaultFlushDebounce.Tick += (_, _) => { _vaultFlushDebounce.Stop(); FlushVaultSoon(); };
@@ -257,14 +243,6 @@ public sealed partial class MainWindow : Window
         // Catch Ctrl+C/X/V/A even if the explorer list marks them handled first (handledEventsToo).
         RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(ExplorerClipboard_KeyDown), handledEventsToo: true);
 
-        // Stay signed in to Google Drive across launches (silent token refresh; no browser).
-        if (GoogleDriveBackup.IsConfigured) _ = SilentReconnectDriveAsync();
-
-        // Scheduled vault backups: re-check periodically while the app is open (launch check runs
-        // once the silent reconnect above completes).
-        _backupTimer.Tick += async (_, _) => await MaybeRunScheduledBackupAsync();
-        _backupTimer.Start();
-
         ApplyDeveloperMode(); // show/hide the Terminal button per the saved setting
         SetResizeCursor(TerminalSplitter); // ↔ cursor on the explorer/terminal divider
         SetResizeCursor(SidebarSplitter);  // ↔ cursor on the sidebar/file-pane divider
@@ -276,11 +254,6 @@ public sealed partial class MainWindow : Window
         ApplyClickMode();
         SyncSortGroupRadios();
         UpdateSortHeaders();
-
-        // Watch for drives being mounted/removed and keep the UI in sync.
-        _knownDrives = CurrentDriveSignature();
-        _driveWatcher.Tick += DriveWatcher_Tick;
-        _driveWatcher.Start();
 
         // Debounced reload when the current folder changes on disk (downloads, other apps, etc.).
         _watchDebounce.Tick += (_, _) =>
@@ -296,23 +269,123 @@ public sealed partial class MainWindow : Window
                 ScheduleVaultFlush();
         };
 
-        InitBackground(); // tray icon + start-hidden if launched with --background
+        InitBackground(); // tray icon + start-hidden if launched with --background (cheap; always needed)
 
         // Windows may launch us with a file (default app) or folder to open.
-        if (!string.IsNullOrEmpty(initialPath) && System.IO.File.Exists(initialPath))
+        // Opening a single photo does NOT build the file manager: that path used to enumerate the
+        // photo's whole containing folder and generate a thumbnail for every file in it, then look the
+        // photo up in that list — so the viewer couldn't show the image until the entire folder had
+        // loaded. On a folder of a few hundred images that is several seconds; and because WinUI runs
+        // every window in a process on ONE UI thread, opening a second and third photo stacked more
+        // full file managers onto the same thread and it stalled for 15+ seconds. See EnsureFileManager.
+        if (!string.IsNullOrEmpty(initialPath) && System.IO.File.Exists(initialPath)
+            && (PhotoLibrary.IsSupported(initialPath) || PhotoLibrary.IsMedia(initialPath)))
         {
-            var dir = System.IO.Path.GetDirectoryName(initialPath);
-            NewTab(dir);
-            OpenPathInCurrentTab(initialPath);
+            OpenViewerDirect(initialPath);
         }
         else if (!string.IsNullOrEmpty(initialPath) && System.IO.Directory.Exists(initialPath))
         {
+            EnsureFileManager();
             NewTab(initialPath);
         }
         else
         {
+            EnsureFileManager();
             NewTab(null); // This PC / home
         }
+    }
+
+    /// <summary>
+    /// Builds the file-manager half of the window: sidebar, pinned items, devices, vault list, drive
+    /// watcher, tray icon and background services. Deferred so a window opened purely to show one photo
+    /// pays for none of it (see the constructor). Runs at most once; safe to call repeatedly.
+    /// </summary>
+    private void EnsureFileManager()
+    {
+        if (_fileManagerReady) return;
+        _fileManagerReady = true;
+
+        PopulateSidebar();
+        PopulatePinned();
+        PopulateDevices();
+        _shell.WipeTemp(); // clear any device temp copies left by a previous run
+
+        // Secure vault: wipe any decrypted working folder left by a crash, list vaults, and arm the
+        // idle auto-lock + app-exit lock. A "--new-window" instance is spawned by an already-running
+        // primary (which may have a vault unlocked) — it must NOT run crash recovery, or it would wipe the
+        // live vault's working folder out from under the primary.
+        var spawnedNewWindow = Environment.GetCommandLineArgs().Any(a => string.Equals(a, "--new-window", StringComparison.OrdinalIgnoreCase));
+        if (!spawnedNewWindow)
+        {
+            _vaults.WipeOrphanWorkDirs();
+            ArchiveService.WipeOrphans(); // clear any leftover extracted-zip temp dirs from a prior run
+            WipeShareTempDirs();          // clear any leftover remote-browse temp copies from a prior run
+        }
+        VaultsList.ItemsSource = _vaultList;
+        RefreshVaults();
+
+        // Watch for drives being mounted/removed and keep the UI in sync.
+        _knownDrives = CurrentDriveSignature();
+        _driveWatcher.Tick += DriveWatcher_Tick;
+        _driveWatcher.Start();
+
+        // Stay signed in to Google Drive across launches (silent token refresh; no browser).
+        if (GoogleDriveBackup.IsConfigured) _ = SilentReconnectDriveAsync();
+
+        // Scheduled vault backups: re-check periodically while the app is open (launch check runs
+        // once the silent reconnect above completes).
+        _backupTimer.Tick += async (_, _) => await MaybeRunScheduledBackupAsync();
+        _backupTimer.Start();
+    }
+
+    /// <summary>
+    /// Shows one photo immediately, without touching the explorer. The folder's other images are pulled
+    /// in afterwards (off-thread, paths only — no thumbnails) so arrow-key / swipe navigation still works;
+    /// they just don't block the image the user actually asked for.
+    /// </summary>
+    private async void OpenViewerDirect(string path)
+    {
+        try
+        {
+            _allPhotos.Clear();
+            foreach (var p in _library.LoadFiles(new[] { path })) _allPhotos.Add(p);
+            _showHiddenAlbum = false;
+            _favoritesOnly = false;
+            RefreshView();
+            _currentIndex = 0;
+
+            ShowViewer();
+            await LoadCurrentAsync(); // the photo is on screen from here on
+
+            // Now backfill the siblings for next/previous.
+            var dir = System.IO.Path.GetDirectoryName(path);
+            if (string.IsNullOrEmpty(dir)) return;
+
+            var siblings = await Task.Run(() =>
+            {
+                try
+                {
+                    return System.IO.Directory.EnumerateFiles(dir)
+                        .Where(PhotoLibrary.IsSupported)
+                        .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+                catch { return new List<string>(); }
+            });
+
+            if (siblings.Count <= 1) return;
+            if (!InViewer) return; // user already navigated away
+
+            var keep = Current?.Path ?? path;
+            _allPhotos.Clear();
+            foreach (var p in _library.LoadFiles(siblings)) _allPhotos.Add(p);
+            RefreshView();
+
+            // Re-anchor on the photo actually being shown — RefreshView rebuilt _view underneath us.
+            var idx = _view.ToList().FindIndex(p => string.Equals(p.Path, keep, StringComparison.OrdinalIgnoreCase));
+            _currentIndex = Math.Max(0, idx);
+        }
+        catch (Exception ex) { App.Log("OpenViewerDirect", ex); }
     }
 
     /// <summary>Opens a file path that lives in the current folder (image → viewer, video → player, else default app).</summary>
@@ -573,6 +646,16 @@ public sealed partial class MainWindow : Window
     /// <summary>Returns to the file-explorer home (the photo viewer / collage live on top of it).</summary>
     private void ShowExplorer()
     {
+        // A window that opened straight into the viewer has no file manager yet — build it now, on
+        // first use, and give it a tab on the folder the photo came from.
+        EnsureFileManager();
+        if (ExplorerTabs.TabItems.Count == 0)
+        {
+            var from = Current?.Path;
+            NewTab(string.IsNullOrEmpty(from) ? null : System.IO.Path.GetDirectoryName(from));
+            return; // NewTab re-enters here with a tab in place and finishes the transition
+        }
+
         if (VideoEditorPanel.Visibility == Visibility.Visible || EditTimeline.Visibility == Visibility.Visible) CloseVideoEditor();
         StopVideo();
         NoteRemoteView(null); // leaving the viewer → close any shared-file access

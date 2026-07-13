@@ -132,11 +132,22 @@ The panel has **Save / Cancel** buttons, so live edits only persist when you cli
 
 ---
 
+## Performance
+
+Galileo stays responsive on huge folders (thousands of files) and on slow external drives. Three things make that work:
+
+- **Opening a photo opens a photo.** A window launched to view a single image shows it immediately — it does not build the file manager, enumerate the containing folder, or generate thumbnails for its neighbours. The rest of the folder is pulled in afterwards, off-thread and paths-only, so arrow-key/swipe navigation still works without holding up the image you asked for. The file manager is built lazily, only if you navigate to it. (This matters because WinUI runs every window in a process on one UI thread — without it, opening a third photo from an 837-file folder stalled the whole app for 16 seconds.)
+- **Thumbnails come from the shell, off-thread.** Galileo uses `IShellItemImageFactory` — the same API Explorer itself uses — instead of `StorageFile.GetThumbnailAsync` + `BitmapImage`. The WinRT route allocates COM objects that the finalizer must marshal back to the UI thread to release, so a gallery of a few hundred photos deadlocks the finalizer, the GC and the UI thread against each other.
+- **No Large Object Heap churn.** The shell returns a ~256 KB thumbnail, well over the 85,000-byte LOH threshold, so allocating one per file drove a gen2 collection storm (and every gen2 collection suspends the UI thread). Those buffers are pooled: a 59-image folder went from 8.2 MB allocated and 2 gen2 collections to **zero of both**.
+- **Image dimensions are read from the file header**, not via WinRT image properties — 0.04 ms per file with no COM objects.
+
+---
+
 ## Tech Stack
 
 - **UI:** WinUI 3 (Windows App SDK **1.6**), Fluent Design, Mica backdrop. Unpackaged, self-contained desktop app.
 - **Runtime:** .NET 8, C# 12.
-- **Imaging:** `Windows.Storage` thumbnails + `BitmapImage`; GPU-composited transform-based viewer (zoom/pan/rotate via `CompositeTransform`); **Win2D** for the image editor and Galileo's own folder/drive/file icons.
+- **Imaging:** shell thumbnails via `IShellItemImageFactory` (off-thread, pooled buffers) rendered into `WriteableBitmap`; GPU-composited transform-based viewer (zoom/pan/rotate via `CompositeTransform`); **Win2D** for the image editor and Galileo's own folder/drive/file icons.
 - **Video editing:** **bundled FFmpeg + FFprobe** (driven by a parameter→filter-graph builder), ported from the standalone *mp4mix* editor.
 - **MVVM:** CommunityToolkit.Mvvm (observable `PhotoItem`).
 - **Storage:** JSON app-state (`%LocalAppData%\Galileo\state.json`) for hidden/favorite flags and slideshow settings.

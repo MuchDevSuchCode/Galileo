@@ -137,11 +137,12 @@ public partial class ExplorerItem : ObservableObject
             // straight from the shell by parsing name (photos thumbnail; folders get the folder icon).
             if (IsShellItem)
             {
-                var (sp, sw, sh) = await Task.Run(() => ShellImaging.GetPixels(ShellId!, px, iconOnly: Kind != ExplorerItemKind.File));
-                if (sp is not null && sw > 0 && sh > 0)
+                using var shell = await Task.Run(() =>
+                    ShellImaging.GetImage(ShellId!, px, iconOnly: Kind != ExplorerItemKind.File));
+                if (shell.IsValid)
                 {
-                    var wb = new WriteableBitmap(sw, sh);
-                    using (var s = wb.PixelBuffer.AsStream()) s.Write(sp, 0, sp.Length);
+                    var wb = new WriteableBitmap(shell.Width, shell.Height);
+                    using (var s = wb.PixelBuffer.AsStream()) s.Write(shell.Pixels!, 0, shell.ByteCount);
                     Icon = wb;
                 }
                 else _iconRequested = false; // transient device/thumbnail miss → allow a retry instead of a permanent blank
@@ -183,13 +184,20 @@ public partial class ExplorerItem : ObservableObject
             // shell call per file whose result was then thrown away in favour of Galileo's own icon.
             if (appIcon || IsImage || PhotoLibrary.IsMedia(path) || DocThumbExts.Contains(ext))
             {
-                var (ip, iw, ih) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: false));
-                if (ip is null) (ip, iw, ih) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: true));
+                // Pooled: the shell hands back its cached 256x256 thumbnail (256 KB), which is 3x over the
+                // Large Object Heap threshold. Allocating one per file drove a gen2 collection storm and
+                // multi-second UI stalls; renting keeps it out of the GC entirely.
+                using var img = await Task.Run(() => ShellImaging.GetImage(path, px, iconOnly: false));
+                using var fallback = img.IsValid
+                    ? default
+                    : await Task.Run(() => ShellImaging.GetImage(path, px, iconOnly: true));
+                var shot = img.IsValid ? img : fallback;
+
                 if (ct.IsCancellationRequested) return;
-                if (ip is not null && iw > 0 && ih > 0)
+                if (shot.IsValid)
                 {
-                    var wbApp = new WriteableBitmap(iw, ih);
-                    using (var s = wbApp.PixelBuffer.AsStream()) s.Write(ip, 0, ip.Length);
+                    var wbApp = new WriteableBitmap(shot.Width, shot.Height);
+                    using (var s = wbApp.PixelBuffer.AsStream()) s.Write(shot.Pixels!, 0, shot.ByteCount);
                     Icon = wbApp;
                     return;
                 }
@@ -223,10 +231,11 @@ public partial class ExplorerItem : ObservableObject
             // Same reason as the file thumbnails: StorageFile/BitmapDecoder/SoftwareBitmap are WinRT objects
             // whose finalizers have to marshal to the UI thread, and this ran once PER FOLDER. The shell
             // path does the whole thing on a worker thread and frees its COM immediately.
-            var (pixels, pw, ph) = await Task.Run(() =>
-                ShellImaging.GetPixels(imgPath, Math.Max(48, px * 3 / 5), iconOnly: false));
-            if (pixels is null || pw <= 0 || ph <= 0) return;
-            ImageCompositor.OverlayPhoto(folderPixels, fw, fh, pixels, pw, ph);
+            using var photo = await Task.Run(() =>
+                ShellImaging.GetImage(imgPath, Math.Max(48, px * 3 / 5), iconOnly: false));
+            if (!photo.IsValid) return;
+            // OverlayPhoto bounds itself by iw/ih, so the pooled buffer's slack is harmless.
+            ImageCompositor.OverlayPhoto(folderPixels, fw, fh, photo.Pixels!, photo.Width, photo.Height);
         }
         catch { /* leave the plain folder icon */ }
     }

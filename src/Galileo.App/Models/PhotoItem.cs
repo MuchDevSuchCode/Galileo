@@ -1,9 +1,11 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Storage;
 using Windows.Storage.FileProperties;
@@ -25,8 +27,9 @@ public partial class PhotoItem : ObservableObject
     [ObservableProperty]
     private bool _isHidden;
 
+    // ImageSource, not BitmapImage: thumbnails come back as WriteableBitmap from the shell pipeline.
     [ObservableProperty]
-    private BitmapImage? _thumbnail;
+    private ImageSource? _thumbnail;
 
     private bool _thumbnailRequested;
     private CancellationTokenSource? _thumbnailCts;
@@ -49,21 +52,33 @@ public partial class PhotoItem : ObservableObject
     public double Aspect { get; private set; } = 1.0;
     private bool _aspectLoaded;
 
-    /// <summary>Reads the image's pixel dimensions (cheap metadata read) to populate <see cref="Aspect"/>.</summary>
+    /// <summary>Reads the image's pixel dimensions (cheap header read) to populate <see cref="Aspect"/>.</summary>
+    /// <remarks>
+    /// Uses <see cref="Services.ImageInfo"/> rather than Properties.GetImagePropertiesAsync: the latter
+    /// allocates two WinRT objects per photo, and a gallery of hundreds of them starves the finalizer,
+    /// the GC and the UI thread against each other. See <see cref="LoadThumbnailAsync"/>.
+    /// </remarks>
     public async Task EnsureAspectAsync()
     {
         if (_aspectLoaded) return;
-        try
+
+        await Task.Run(() =>
         {
-            var file = await StorageFile.GetFileFromPathAsync(Path);
-            var props = await file.Properties.GetImagePropertiesAsync();
-            if (props.Width > 0 && props.Height > 0)
-                Aspect = (double)props.Width / props.Height;
-        }
-        catch
-        {
-            // Leave Aspect at 1.0 if metadata is unreadable.
-        }
+            var dim = Services.ImageInfo.GetDimensions(Path);
+
+            // Formats the header reader doesn't know (HEIC/AVIF/RAW): fall back to the shell thumbnail,
+            // which preserves the source aspect. Still off-thread, still pooled, still no WinRT.
+            if (dim is null)
+            {
+                using var img = Services.ShellImaging.GetImage(Path, 96, iconOnly: false);
+                if (img.IsValid) dim = (img.Width, img.Height);
+            }
+
+            if (dim is { Width: > 0, Height: > 0 } d)
+                Aspect = (double)d.Width / d.Height;
+            // else leave Aspect at 1.0
+        });
+
         _aspectLoaded = true;
     }
 
@@ -78,6 +93,14 @@ public partial class PhotoItem : ObservableObject
     }
 
     /// <summary>Lazily decodes a small thumbnail. Safe to call repeatedly.</summary>
+    /// <remarks>
+    /// Deliberately does NOT use StorageFile.GetThumbnailAsync + BitmapImage.SetSourceAsync — the same trap
+    /// <see cref="ExplorerItem.LoadIconAsync"/> documents. Those WinRT objects are reclaimed by the finalizer,
+    /// which has to marshal each one back to the STA to release it, so a gallery of photos deadlocks the
+    /// finalizer, the GC and the UI thread against each other. SetSourceAsync also decodes on the UI/render
+    /// thread. IShellItemImageFactory (what Explorer itself uses) runs entirely off-thread with an explicit
+    /// COM release, and its buffer is pooled, so the whole path allocates nothing on the Large Object Heap.
+    /// </remarks>
     public async Task LoadThumbnailAsync(uint size = 240)
     {
         if (_thumbnailRequested) return;
@@ -92,26 +115,30 @@ public partial class PhotoItem : ObservableObject
         {
             await Services.DecodeThrottle.RunAsync(async () =>
             {
-                try
-                {
-                    var file = await StorageFile.GetFileFromPathAsync(Path);
-                    using StorageItemThumbnail thumb =
-                        await file.GetThumbnailAsync(ThumbnailMode.PicturesView, size, ThumbnailOptions.ResizeThumbnail);
+                using var img = await Task.Run(
+                    () => Services.ShellImaging.GetImage(Path, (int)size, iconOnly: false), ct);
 
-                    var bmp = new BitmapImage { DecodePixelWidth = (int)size };
-                    await bmp.SetSourceAsync(thumb);
-                    Thumbnail = bmp;
-                }
-                catch
+                // Back on the UI thread: WriteableBitmap must be created there.
+                if (ct.IsCancellationRequested) { _thumbnailRequested = false; return; }
+                if (!img.IsValid)
                 {
-                    // Unreadable / unsupported file — leave thumbnail null (placeholder shows).
-                    _thumbnailRequested = false;
+                    _thumbnailRequested = false; // unreadable / unsupported — placeholder stays
+                    return;
                 }
+
+                var wb = new WriteableBitmap(img.Width, img.Height);
+                using (var s = wb.PixelBuffer.AsStream())
+                    s.Write(img.Pixels!, 0, img.ByteCount); // ByteCount, never Pixels.Length — pooled buffers have slack
+                Thumbnail = wb;
             }, ct);
         }
         catch (OperationCanceledException)
         {
             _thumbnailRequested = false; // scrolled off before its decode slot opened — reload when realized again
+        }
+        catch
+        {
+            _thumbnailRequested = false;
         }
     }
 
