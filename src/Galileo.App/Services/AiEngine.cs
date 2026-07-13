@@ -24,6 +24,8 @@ public enum AiModel
     /// <summary>LaMa — content-aware fill / inpainting, 512x512 (image + mask). CPU only: DirectML cannot
     /// execute the MatMul inside its Fourier unit (it fails at Run with "parameter is incorrect").</summary>
     Inpaint,
+    /// <summary>PP-OCRv3 DB — text detection. Emits a per-pixel probability map, which is already a mask.</summary>
+    TextDetect,
 }
 
 /// <param name="Cpu">Force the CPU provider — for models DirectML loads happily but then fails to run.</param>
@@ -64,6 +66,10 @@ public sealed class AiEngine : IDisposable
         [AiModel.Inpaint] = new(AiModel.Inpaint, "inpaint_lama.onnx",
             "https://huggingface.co/opencv/inpainting_lama/resolve/main/inpainting_lama_2025jan.onnx",
             "image", 1, 50_000_000, "LaMa content-aware fill (88 MB)", Cpu: true),
+
+        [AiModel.TextDetect] = new(AiModel.TextDetect, "text_detect.onnx",
+            "https://huggingface.co/opencv/text_detection_ppocr/resolve/main/text_detection_en_ppocrv3_2023may.onnx",
+            "x", 1, 1_000_000, "PP-OCR text detection (2 MB)"),
     };
 
     /// <summary>Long-edge cap on the input when keeping a 4x result (the output has 16x the pixels).</summary>

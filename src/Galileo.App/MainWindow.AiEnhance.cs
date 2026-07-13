@@ -49,10 +49,68 @@ public sealed partial class MainWindow
 
     private enum AiJob { Enhance, Upscale, Denoise, Faces }
 
-    /// <summary>Content-aware fill: rasterize the lasso into a source-space mask and let LaMa paint it out.</summary>
+    /// <summary>Turns the drawn lasso into the source-space selection mask.</summary>
+    private void BuildSelectionFromLasso()
+    {
+        if (_editor.Source is null || _lasso.Count < 3) { ClearSelection(); return; }
+        int w = (int)_editor.PixelWidth, h = (int)_editor.PixelHeight;
+
+        // The lasso is drawn on the oriented preview; map it back to raw source pixels.
+        var poly = new List<Point>(_lasso.Count);
+        foreach (var p in _lasso)
+            if (_editor.TryOrientedToSource(_edit, p, out var sp)) poly.Add(sp);
+
+        if (poly.Count < 3) { ClearSelection(); return; }
+        SetSelection(RasterizePolygon(poly, w, h), w, h);
+    }
+
+    /// <summary>Finds text (watermarks, captions, timestamps) and selects it — no drawing required.</summary>
+    private async void AiSelectText_Click(object sender, RoutedEventArgs e)
+    {
+        if (_aiBusy || _editor.Source is null) return;
+        if (!await EnsureModelAsync(AiModel.TextDetect)) return;
+
+        SetAiBusy(true);
+        _aiCts = new CancellationTokenSource();
+        try
+        {
+            var pixels = _editor.GetSourcePixels(0, out var w, out var h);
+            AiSay("Looking for text…");
+
+            var engine = Ai;
+            var ct = _aiCts.Token;
+            var regions = 0;
+            var mask = await Task.Run(() => TextDetect.DetectMask(engine, pixels, w, h, out regions, ct), ct);
+
+            if (mask is null)
+            {
+                ClearSelection();
+                AiSay("No text found in this image.");
+                return;
+            }
+            _lasso.Clear();          // a detected selection isn't a polygon
+            SetSelection(mask, w, h);
+            AiSay($"Selected {regions} text region{(regions == 1 ? "" : "s")} — press Fill to remove.");
+        }
+        catch (OperationCanceledException) { AiSay("Cancelled."); }
+        catch (Exception ex)
+        {
+            App.Log("AiSelectText", ex);
+            await MessageAsync("Select text", "Text detection failed.\n\n" + ex.Message);
+            AiSay(null);
+        }
+        finally
+        {
+            _aiCts?.Dispose();
+            _aiCts = null;
+            SetAiBusy(false);
+        }
+    }
+
+    /// <summary>Content-aware fill: LaMa paints out whatever is selected (lasso or detected text).</summary>
     private async void AiFill_Click(object sender, RoutedEventArgs e)
     {
-        if (_aiBusy || _editor.Source is null || _lasso.Count < 3) return;
+        if (_aiBusy || _editor.Source is null || _selMask is null) return;
         if (!await EnsureModelAsync(AiModel.Inpaint)) return;
 
         SetAiBusy(true);
@@ -61,27 +119,17 @@ public sealed partial class MainWindow
         try
         {
             var before = _editor.GetSourcePixels(0, out var w, out var h);
+            var mask = _selMask;
+            if (mask.Length != w * h) { AiSay("The selection no longer matches the image."); return; }
 
-            // The lasso is drawn on the oriented preview; map it back to raw source pixels.
-            var poly = new List<Point>(_lasso.Count);
-            foreach (var p in _lasso)
-            {
-                if (!_editor.TryOrientedToSource(_edit, p, out var sp)) continue;
-                poly.Add(sp);
-            }
-            if (poly.Count < 3) { AiSay("Selection is outside the image."); return; }
-
-            var mask = RasterizePolygon(poly, w, h);
             AiSay("Filling the selection…");
-
             var p2 = AiProgressReporter();
             var ct = _aiCts.Token;
             var engine = Ai;
             var result = await Task.Run(() => Inpaint.Fill(engine, before, w, h, mask, p2, ct), ct);
 
             ApplyAiResult(before, w, h, result, w, h);
-            _lasso.Clear();
-            UpdateLassoUi();
+            ClearSelection();
             sw.Stop();
             AiSay($"Filled the selection  ·  {engine.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");
         }
@@ -140,8 +188,9 @@ public sealed partial class MainWindow
     private void SetAiBusy(bool busy)
     {
         _aiBusy = busy;
-        foreach (var b in new[] { AiEnhanceBtn, AiUpscaleBtn, AiDenoiseBtn, AiFacesBtn, AiAutoBtn })
+        foreach (var b in new[] { AiEnhanceBtn, AiUpscaleBtn, AiDenoiseBtn, AiFacesBtn, AiAutoBtn, SelectTextBtn })
             if (b is not null) b.IsEnabled = !busy;
+        UpdateLassoUi();   // Fill depends on both the busy state and whether a selection exists
         if (AiProgress is not null)
         {
             AiProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;

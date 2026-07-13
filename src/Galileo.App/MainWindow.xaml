@@ -1089,6 +1089,9 @@
                         <!-- Retouch: lasso selection + content-aware fill (LaMa) -->
                         <StackPanel Spacing="6">
                             <TextBlock Text="RETOUCH" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />
+                            <Button x:Name="SelectTextBtn" Content="🅣  Select text" Click="AiSelectText_Click"
+                                    HorizontalAlignment="Stretch"
+                                    ToolTipService.ToolTip="Find watermarks / captions / timestamps automatically and select them" />
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <Button x:Name="LassoBtn" Content="Lasso" Click="LassoTool_Click"
                                         ToolTipService.ToolTip="Draw freehand around something to select it" />
@@ -1097,7 +1100,7 @@
                                 <Button Content="Clear" Click="LassoClear_Click"
                                         ToolTipService.ToolTip="Clear the selection" />
                             </StackPanel>
-                            <TextBlock Text="Turn on Lasso, drag around an object, then Fill to erase it."
+                            <TextBlock Text="Select text (or lasso an object), then Fill to erase it seamlessly."
                                        Foreground="#66FFFFFF" FontSize="11" TextWrapping="Wrap" />
                         </StackPanel>
 

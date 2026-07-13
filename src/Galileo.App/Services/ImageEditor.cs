@@ -144,6 +144,19 @@ public sealed class ImageEditor : IDisposable
         return width / Math.Max(1.0, oldW);
     }
 
+    /// <summary>Puts an overlay that's in raw source-pixel space (e.g. a selection mask) through the same
+    /// geometry as the image, so it lines up on the rotated/flipped preview.</summary>
+    public ICanvasImage BuildOrientedOverlay(EditState s, ICanvasImage overlay, out Rect orientedBounds)
+    {
+        var m = OrientMatrix(s, out orientedBounds);
+        return new Transform2DEffect
+        {
+            Source = overlay,
+            TransformMatrix = m,
+            InterpolationMode = CanvasImageInterpolation.NearestNeighbor,
+        };
+    }
+
     /// <summary>Maps a point from oriented-image space (what the user sees and draws on) back to raw source
     /// pixels — needed because selections are drawn on the rotated/flipped preview but the AI rewrites the
     /// underlying source bitmap.</summary>

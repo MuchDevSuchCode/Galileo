@@ -65,6 +65,46 @@ public sealed partial class MainWindow
     private bool _lassoMode;
     private readonly List<Point> _lasso = new();
     private bool _lassoDrawing;
+
+    // The actual selection: a mask in RAW SOURCE pixels. Both the lasso and "Select text" produce one, so
+    // Fill has a single input regardless of how the selection was made. _selOverlay is just its visual.
+    private byte[]? _selMask;
+    private CanvasBitmap? _selOverlay;
+
+    /// <summary>Adopts a source-space selection mask and builds the tinted overlay shown on the canvas.</summary>
+    private void SetSelection(byte[]? mask, int w, int h)
+    {
+        _selMask = mask;
+        try { _selOverlay?.Dispose(); } catch { }
+        _selOverlay = null;
+
+        if (mask is not null && _editCanvas is not null)
+        {
+            var px = new byte[w * h * 4];
+            for (var i = 0; i < mask.Length; i++)
+            {
+                if (mask[i] == 0) continue;
+                var p = i * 4;
+                px[p] = 255; px[p + 1] = 40; px[p + 2] = 190;   // BGRA — magenta
+                px[p + 3] = 90;                                  // translucent
+            }
+            try
+            {
+                _selOverlay = CanvasBitmap.CreateFromBytes(_editCanvas.Device, px, w, h,
+                    Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized);
+            }
+            catch (Exception ex) { App.Log("SelOverlay", ex); }
+        }
+        UpdateLassoUi();
+        _editCanvas?.Invalidate();
+    }
+
+    private void ClearSelection()
+    {
+        _lasso.Clear();
+        _lassoDrawing = false;
+        SetSelection(null, 0, 0);
+    }
     private double _cropAspect;     // 0 = free
     private bool _dragging;
     private Point _dragStart;       // oriented-image space
@@ -109,8 +149,8 @@ public sealed partial class MainWindow
         _compareMode = "off"; _compareSplit = 0.5; _compareDragging = false;
         _editZoom = 1.0; _editPanX = _editPanY = 0; _editPanning = false;
         if (EditZoomLabel is not null) EditZoomLabel.Content = "Fit";
-        _lassoMode = false; _lasso.Clear(); _lassoDrawing = false;
-        UpdateLassoUi();
+        _lassoMode = false;
+        ClearSelection();
         InvalidateLiveDenoise();
         try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true; // fresh image → fresh cache
         ResetEditSliders();
@@ -166,6 +206,9 @@ public sealed partial class MainWindow
         _editUndo.Clear();   // undo entries can hold full-resolution bitmaps
         _editRedo.Clear();
         InvalidateLiveDenoise();   // the pair holds two full-resolution buffers
+        try { _selOverlay?.Dispose(); } catch { }
+        _selOverlay = null;
+        _selMask = null;
         try { _editor.Unload(); } catch { }
         GC.Collect();
         GC.WaitForPendingFinalizers();
@@ -295,6 +338,18 @@ public sealed partial class MainWindow
         var my = oy - src.Y * scale;
         foreach (var m in _markup) DrawShape(ds, m, mx, my, scale);
         if (_pendingShape is MarkupItem ps) DrawShape(ds, ps, mx, my, scale);
+
+        // The committed selection (from the lasso or from text detection) lives in source-pixel space, so
+        // it's put through the same geometry as the image to line up on the rotated/flipped preview.
+        if (_selOverlay is not null)
+        {
+            try
+            {
+                var selImg = _editor.BuildOrientedOverlay(_edit, _selOverlay, out _);
+                ds.DrawImage(selImg, new Rect(ox, oy, dw, dh), src);
+            }
+            catch (Exception ex) { App.Log("SelDraw", ex); }
+        }
 
         // Lasso selection (oriented space, same mapping). Drawn as a dark/light dashed pair so it stays
         // visible over any image content.
@@ -461,20 +516,14 @@ public sealed partial class MainWindow
         _editCanvas?.Invalidate();
     }
 
-    private void LassoClear_Click(object sender, RoutedEventArgs e)
-    {
-        _lasso.Clear();
-        _lassoDrawing = false;
-        UpdateLassoUi();
-        _editCanvas?.Invalidate();
-    }
+    private void LassoClear_Click(object sender, RoutedEventArgs e) => ClearSelection();
 
     private void UpdateLassoUi()
     {
         if (LassoBtn is not null)
             LassoBtn.Content = _lassoMode ? "Lasso (on)" : "Lasso";
         if (FillBtn is not null)
-            FillBtn.IsEnabled = _lasso.Count >= 3 && !_aiBusy;
+            FillBtn.IsEnabled = _selMask is not null && !_aiBusy;
     }
 
     /// <summary>True when the pointer is on the split divider's grab zone (the line/handle ±20px).</summary>
@@ -675,9 +724,8 @@ public sealed partial class MainWindow
         if (_lassoDrawing)
         {
             _lassoDrawing = false;
-            if (_lasso.Count < 3) _lasso.Clear();   // a stray click isn't a selection
-            UpdateLassoUi();
-            _editCanvas?.Invalidate();
+            if (_lasso.Count < 3) { ClearSelection(); return; }   // a stray click isn't a selection
+            BuildSelectionFromLasso();
             return;
         }
         if (_editPanning) { _editPanning = false; return; }
