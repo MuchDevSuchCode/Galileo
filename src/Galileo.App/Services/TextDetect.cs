@@ -59,18 +59,21 @@ public static class TextDetect
         }
 
         ct.ThrowIfCancellationRequested();
-        var session = engine.Session(AiModel.TextDetect);
-        var inputName = session.InputMetadata.Keys.First();
-        using var results = session.Run(new[] { NamedOnnxValue.CreateFromTensor(inputName, input) });
-        var t = results[0].AsTensor<float>();
-        var dims = t.Dimensions.ToArray();
-        var prob = (t as DenseTensor<float> ?? t.ToDenseTensor()).Buffer.ToArray();
-        var mw = dims[^1];
-        var mh = dims[^2];
+        // Under the engine's lock, so leaving the editor can't dispose the session mid-run.
+        var (prob, mw, mh) = engine.Use(AiModel.TextDetect, session =>
+        {
+            var inputName = session.InputMetadata.Keys.First();
+            using var results = session.Run(new[] { NamedOnnxValue.CreateFromTensor(inputName, input) });
+            var t = results[0].AsTensor<float>();
+            var d = t.Dimensions.ToArray();
+            return ((t as DenseTensor<float> ?? t.ToDenseTensor()).Buffer.ToArray(), d[^1], d[^2]);
+        });
+        ct.ThrowIfCancellationRequested();
+        if (prob.Length < mw * mh) throw new InvalidOperationException("The text-detection model returned an unexpected map.");
 
         // Threshold, then grow each text region back to full glyph height (see class remarks).
         var bin = new bool[mw * mh];
-        for (var i = 0; i < bin.Length && i < prob.Length; i++) bin[i] = prob[i] > Threshold;
+        for (var i = 0; i < bin.Length; i++) bin[i] = prob[i] > Threshold;
 
         var det = new byte[mw * mh];
         var seen = new bool[mw * mh];
@@ -78,6 +81,7 @@ public static class TextDetect
 
         for (var i = 0; i < bin.Length; i++)
         {
+            if ((i & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
             if (!bin[i] || seen[i]) continue;
             int x0 = i % mw, x1 = x0, y0 = i / mw, y1 = y0, count = 0;
             queue.Clear();
@@ -99,10 +103,12 @@ public static class TextDetect
             }
             if (count < MinArea) continue;
 
-            // Grow relative to the band's own height, so this scales with the text size.
+            // Grow relative to the band's own height, so this scales with the text size — but cap the growth
+            // against the image. On a poster or a scanned page the map can light up as one tall blob, and an
+            // uncapped 1.2x expansion would select the whole photo and then ask LaMa to repaint all of it.
             var bh = y1 - y0 + 1;
-            var padY = (int)(bh * 1.2);
-            var padX = (int)(bh * 0.6);
+            var padY = Math.Min((int)(bh * 1.2), mh / 8);
+            var padX = Math.Min((int)(bh * 0.6), mw / 8);
             var ex0 = Math.Max(0, x0 - padX);
             var ex1 = Math.Min(mw - 1, x1 + padX);
             var ey0 = Math.Max(0, y0 - padY);

@@ -315,7 +315,8 @@ Open any image and click **Edit** (the pencil in the viewer toolbar, or right-cl
   - **Denoise** — **Real-ESRGAN general-x4v3**, trained on real-world noise/blur/JPEG damage, with a **strength** dial that blends against the original.
   - **Faces** — **CodeFormer** blind face restoration. **YuNet** finds each face with 5 landmarks, the face is affine-aligned into the 512×512 FFHQ frame CodeFormer expects, restored, then warped back and **feathered** in so the seam doesn't show. A **fidelity** slider trades staying-true-to-the-original against inventing more detail. Tiny background faces are skipped (the net would just invent one).
   - The regular **Undo / Redo** reverse AI steps too: the edit history is one stack, and AI entries carry the pixels that were there before (the newest few keep their bitmap; older entries degrade to parameters-only so history can't pin gigabytes). **Reset** reverts AI pixels as well as the sliders.
-  - The AI runtime is **loaded only when an AI button is actually pressed** — opening the editor to crop a photo never touches ONNX Runtime — and the sessions (and their GPU memory) are **released when the editor closes**.
+  - The AI runtime is **loaded only when an AI button is actually pressed** — opening the editor to crop a photo never touches ONNX Runtime. Loaded models are then **kept warm** (switching between tools never reloads them) and released only after a spell of not using AI at all, so the memory comes back without making every trip through the viewer pay a reload.
+  - A running operation can be **cancelled** (including a model download), and leaving the editor or opening another photo cancels it — its result is discarded rather than landing on the wrong image.
 
   Images are processed in **overlapping tiles** whose overlap is discarded when stitching, which is what stops tile seams from appearing.
 
@@ -349,7 +350,7 @@ Open a video and click **Edit** (the pencil in the player's controls) for a full
 - **Save frame** — export the current frame as a PNG.
 - Exports run on a background thread and show the **floating progress card** with **Cancel** (and **Hide** to keep working). FFmpeg & FFprobe are **bundled** with the app — nothing to install.
 
-> Ported from the standalone *mp4mix* editor. AI upscaling (Real-ESRGAN) from mp4mix is not included.
+> Ported from the standalone *mp4mix* editor. AI upscaling applies to **photos** (see the [image editor](#image-editor)) — it isn't wired into the **video** editor yet.
 
 ---
 

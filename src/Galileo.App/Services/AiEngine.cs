@@ -119,8 +119,23 @@ public sealed class AiEngine : IDisposable
     }
 
     private readonly Dictionary<AiModel, InferenceSession> _sessions = new();
+
+    /// <summary>Guards the session cache. Inference runs on a worker thread while the UI thread can call
+    /// <see cref="ReleaseSessions"/> (leaving the editor) — disposing an InferenceSession that Run() is
+    /// executing on is an unrecoverable native AccessViolation, not a catchable exception. Held for the
+    /// whole of an inference, so a release waits for the work to finish instead of pulling it out.</summary>
+    private readonly object _gate = new();
+
     public string Provider { get; private set; } = "CPU";
 
+    /// <summary>Runs <paramref name="work"/> against the model's session while holding the cache lock, so
+    /// the session cannot be disposed underneath it.</summary>
+    internal T Use<T>(AiModel m, Func<InferenceSession, T> work)
+    {
+        lock (_gate) return work(Session(m));
+    }
+
+    /// <summary>Only call with <see cref="_gate"/> held (or from <see cref="Use{T}"/>).</summary>
     internal InferenceSession Session(AiModel m)
     {
         if (_sessions.TryGetValue(m, out var s)) return s;
@@ -135,9 +150,10 @@ public sealed class AiEngine : IDisposable
         }
         else
         {
+            SessionOptions? opts = null;
             try
             {
-                var opts = new SessionOptions { LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_FATAL };
+                opts = new SessionOptions { LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_FATAL };
                 opts.AppendExecutionProvider_DML(0);            // adapter 0 = primary DX12 GPU
                 opts.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
                 created = new InferenceSession(PathFor(m), opts);
@@ -149,6 +165,7 @@ public sealed class AiEngine : IDisposable
                 created = new InferenceSession(PathFor(m));
                 Provider = "CPU";
             }
+            finally { opts?.Dispose(); }   // native ORT handle — leaked once per rebuild otherwise
         }
         _sessions[m] = created;
         return created;
@@ -176,21 +193,40 @@ public sealed class AiEngine : IDisposable
         IProgress<double>? progress, CancellationToken ct)
     {
         var spec = Catalog[model];
-        var session = Session(model);
+
+        // The output has scale^2 the pixels; make sure it can't silently overflow the allocation.
+        var outPixels = (long)w * h * (keepUpscale ? (long)spec.Scale * spec.Scale : 1);
+        if (outPixels * 4 > int.MaxValue)
+            throw new InvalidOperationException("That image is too large to process at this scale.");
+
+        int ow = 0, oh = 0;
+        Exception? first = null;
+
         foreach (var tile in new[] { 512, 256, 128 })
         {
             try
             {
-                return RunTiled(session, spec.Input, bgra, w, h, spec.Scale, keepUpscale, tile,
-                    out outW, out outH, progress, ct);
+                var result = Use(model, session => RunTiled(session, spec.Input, bgra, w, h, spec.Scale,
+                    keepUpscale, tile, out ow, out oh, progress, ct));
+                outW = ow;
+                outH = oh;
+                return result;
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex) when (tile > 128)
+            catch (OutOfMemoryException ex) when (tile > 128)
             {
-                App.LogInfo($"AI: tile {tile} failed ({ex.GetType().Name}), retrying smaller");
+                // Only back off for the thing a smaller tile can actually fix. Retrying on any exception
+                // hid real defects behind two more full passes and an unhelpful generic message.
+                first ??= ex;
+                App.LogInfo($"AI: tile {tile} ran out of memory, retrying smaller");
+            }
+            catch (OnnxRuntimeException ex) when (tile > 128)
+            {
+                first ??= ex;
+                App.LogInfo($"AI: tile {tile} failed in ORT ({ex.Message.Split('\n')[0]}), retrying smaller");
             }
         }
-        throw new InvalidOperationException("AI processing failed on this image.");
+        throw first ?? new InvalidOperationException("AI processing failed on this image.");
     }
 
     /// <summary>Overlap-tiled inference. The overlap is discarded when stitching, which is what stops tile
@@ -303,8 +339,13 @@ public sealed class AiEngine : IDisposable
     /// <summary>Linear blend, so an effect can be dialed back instead of being all-or-nothing.</summary>
     public static byte[] Blend(byte[] original, byte[] processed, double strength)
     {
+        if (original.Length != processed.Length)
+            throw new ArgumentException("Blend inputs differ in size.");
+
         var t = (float)Math.Clamp(strength, 0, 1);
-        if (t >= 0.999f) return processed;
+        // Always hand back a fresh buffer. Returning `processed` itself aliased the caller's array — the
+        // undo snapshot and the new source became the same object, so a later in-place write corrupted undo.
+        if (t >= 0.999f) return (byte[])processed.Clone();
         var outp = new byte[original.Length];
         for (var i = 0; i < original.Length; i += 4)
         {
@@ -366,8 +407,11 @@ public sealed class AiEngine : IDisposable
     /// cheap enough to rebuild the next time AI is actually used.</summary>
     public void ReleaseSessions()
     {
-        foreach (var s in _sessions.Values) s.Dispose();
-        _sessions.Clear();
+        lock (_gate)   // never dispose a session an inference is running on
+        {
+            foreach (var s in _sessions.Values) s.Dispose();
+            _sessions.Clear();
+        }
     }
 
     public void Dispose() => ReleaseSessions();

@@ -27,10 +27,10 @@ public sealed partial class MainWindow
     private CanvasControl? _editCanvas;
     private EditState _edit = new();
     private string? _editPath;
-    /// <summary>One undo entry. Slider/filter/crop edits only need the parameters; the AI models rewrite
-    /// pixels, so those entries also carry the bitmap that was there before — otherwise Undo would restore
-    /// the old settings onto the new pixels and appear to do nothing.</summary>
-    private sealed record EditSnapshot(EditState State, byte[]? Pixels, int W, int H);
+    /// <summary>One undo entry. Slider/filter/crop edits only need the parameters; markup is its own list,
+    /// and the AI models rewrite pixels, so those entries also carry the bitmap that was there before —
+    /// otherwise Undo would restore the old settings onto the new pixels and appear to do nothing.</summary>
+    private sealed record EditSnapshot(EditState State, List<MarkupItem> Markup, byte[]? Pixels, int W, int H);
 
     private readonly List<EditSnapshot> _editUndo = new();   // list, not Stack: we prune old pixel snapshots
     private readonly List<EditSnapshot> _editRedo = new();
@@ -136,7 +136,9 @@ public sealed partial class MainWindow
         var token = ++_editLoadToken;   // any earlier open is now stale
         var path = item.Path;
 
-        // Reset ALL editor state up front so nothing carries over from a previous image.
+        // Reset ALL editor state up front so nothing carries over from a previous image — including any AI
+        // job still running on the PREVIOUS photo, whose result must not land on this one.
+        AbortAiWork();
         _editPath = path;
         _editLoading = true;
         _edit = new EditState();
@@ -199,10 +201,15 @@ public sealed partial class MainWindow
         ViewerView.Visibility = Visibility.Visible;
         try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true;
 
-        // Hand back everything the editor was holding. The AI sessions in particular pin their models and
-        // DirectML's arenas (gigabytes after a few operations), which would otherwise sit there for the rest
-        // of the session and make even the viewer feel slow. `_ai?` — never construct it just to release it.
-        try { _ai?.ReleaseSessions(); } catch { }
+        // Stop any in-flight AI first and invalidate its result — otherwise disposing a session later would
+        // pull it out from under a worker thread (a native AccessViolation, not a catchable exception), and
+        // a late-finishing job would write its pixels into a closed editor.
+        AbortAiWork();
+
+        // Don't drop the models immediately: hopping out to the viewer and back would then reload CodeFormer
+        // (360 MB) every time. They're released after a spell of not using AI at all, so the memory still
+        // comes back once you've genuinely moved on.
+        ScheduleModelRelease();
         _editUndo.Clear();   // undo entries can hold full-resolution bitmaps
         _editRedo.Clear();
         InvalidateLiveDenoise();   // the pair holds two full-resolution buffers
@@ -231,9 +238,18 @@ public sealed partial class MainWindow
     /// Every exit route must go through this — the Cancel button, the window's X, and Esc. Guarding only the
     /// Cancel button silently threw away AI edits when the window was closed instead.
     /// </summary>
+    /// <summary>Guards against a second ContentDialog while one is already up — showing two throws
+    /// InvalidOperationException out of an async void handler, which takes the process down. Reachable by
+    /// pressing Esc twice quickly, since Esc and the Cancel button share this path.</summary>
+    private bool _leaveDialogOpen;
+
     private async Task<bool> ConfirmLeaveEditorAsync()
     {
         if (!InEditor || !HasUnsavedEdits) return true;
+        if (_leaveDialogOpen) return false;   // already asking
+
+        // Don't ask on top of a running job — cancel it first so the answer can't be raced by a late result.
+        if (_aiBusy) AbortAiWork();
 
         var dialog = new ContentDialog
         {
@@ -252,13 +268,18 @@ public sealed partial class MainWindow
             XamlRoot = RootGrid.XamlRoot,
         };
 
-        return await dialog.ShowAsync() switch
+        _leaveDialogOpen = true;
+        try
         {
-            // Only leave if the file actually made it to disk — a failed export must not lose the work.
-            ContentDialogResult.Primary => await SaveCopyAsync(),
-            ContentDialogResult.Secondary => true,   // discard
-            _ => false,                              // keep editing
-        };
+            return await dialog.ShowAsync() switch
+            {
+                // Only leave if the file actually made it to disk — a failed export must not lose the work.
+                ContentDialogResult.Primary => await SaveCopyAsync(),
+                ContentDialogResult.Secondary => true,   // discard
+                _ => false,                              // keep editing
+            };
+        }
+        finally { _leaveDialogOpen = false; }
     }
 
     private async void EditCancel_Click(object sender, RoutedEventArgs e)
@@ -496,6 +517,17 @@ public sealed partial class MainWindow
 
     private void SetCanvasMode(string mode)
     {
+        // Engaging a tool leaves compare mode. While comparing, the canvas draws two images and the
+        // fit-rect no longer describes where the image is — a crop or lasso drag would map to the wrong
+        // place and wasn't even drawn, so you could silently crop a photo you never saw a rectangle on.
+        if (mode is "crop" or "shape" && _compareMode != "off")
+        {
+            _compareMode = "off";
+            _editLoading = true;
+            if (CompareCombo.Items.Count > 0) CompareCombo.SelectedIndex = 0;
+            _editLoading = false;
+        }
+
         _cropMode = mode == "crop";
         if (mode != "shape") _markupTool = "";
         // Crop/markup and the lasso are mutually exclusive tools.
@@ -521,6 +553,14 @@ public sealed partial class MainWindow
         {
             SetCanvasMode("none");   // clears crop/markup tools
             _lassoMode = true;       // (SetCanvasMode doesn't know about the lasso)
+            // Same reason as crop/markup: while comparing, a drag maps to the wrong place.
+            if (_compareMode != "off")
+            {
+                _compareMode = "off";
+                _editLoading = true;
+                if (CompareCombo.Items.Count > 0) CompareCombo.SelectedIndex = 0;
+                _editLoading = false;
+            }
         }
         UpdateLassoUi();
         UpdateOverlayHitTest();
@@ -767,8 +807,15 @@ public sealed partial class MainWindow
     private void FinishOverlayDrag()
     {
         // Also reached via PointerCaptureLost, so make sure a lost capture can't leave a drag stuck on.
+        // _lassoDrawing especially: leaving it set meant the lasso kept trailing the cursor with no button
+        // held, and carried on drawing over whatever tool was selected next.
         _editPanning = false;
         _compareDragging = false;
+        if (_lassoDrawing)
+        {
+            _lassoDrawing = false;
+            if (_lasso.Count >= 3) BuildSelectionFromLasso(); else ClearSelection();
+        }
         if (!_dragging) return;
         _dragging = false;
         if (_cropMode)
@@ -781,7 +828,7 @@ public sealed partial class MainWindow
             var keep = ps.Kind == MarkupKind.Pen
                 ? ps.Points.Count > 1
                 : Math.Abs(ps.End.X - ps.Start.X) > 3 || Math.Abs(ps.End.Y - ps.Start.Y) > 3;
-            if (keep) _markup.Add(ps);
+            if (keep) { PushUndo(); _markup.Add(ps); }   // markup is undoable like any other edit
             _pendingShape = null;
         }
         _editCanvas?.Invalidate();
@@ -867,6 +914,7 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Primary, XamlRoot = RootGrid.XamlRoot,
         };
         if (await dlg.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrEmpty(box.Text)) return;
+        PushUndo();
         _markup.Add(new MarkupItem
         {
             Kind = MarkupKind.Text, Start = at, End = at, Text = box.Text,
@@ -1002,6 +1050,8 @@ public sealed partial class MainWindow
 
     private void MarkupClear_Click(object sender, RoutedEventArgs e)
     {
+        if (_markup.Count == 0) return;
+        PushUndo();          // clearing every annotation was previously unrecoverable
         _markup.Clear();
         _editCanvas?.Invalidate();
     }
@@ -1010,9 +1060,17 @@ public sealed partial class MainWindow
 
     private void PushUndo(byte[]? pixels = null, int w = 0, int h = 0)
     {
-        _editUndo.Add(new EditSnapshot(_edit.Clone(), pixels, w, h));
+        _editUndo.Add(new EditSnapshot(_edit.Clone(), MarkupSnapshot(), pixels, w, h));
         _editRedo.Clear();
         PrunePixelSnapshots(_editUndo);
+    }
+
+    private List<MarkupItem> MarkupSnapshot() => _markup.Select(m => m.Clone()).ToList();
+
+    private void RestoreMarkup(List<MarkupItem> items)
+    {
+        _markup.Clear();
+        _markup.AddRange(items.Select(m => m.Clone()));
     }
 
     /// <summary>Records the current pixels as well — used before an AI model rewrites them.</summary>
@@ -1062,11 +1120,17 @@ public sealed partial class MainWindow
         int nowW = 0, nowH = 0;
         if (entry.Pixels is not null && _editor.Source is not null)
             nowPixels = _editor.GetSourcePixels(0, out nowW, out nowH);
-        to.Add(new EditSnapshot(_edit.Clone(), nowPixels, nowW, nowH));
+        to.Add(new EditSnapshot(_edit.Clone(), MarkupSnapshot(), nowPixels, nowW, nowH));
         PrunePixelSnapshots(to);
 
         _edit = entry.State;
-        if (entry.Pixels is not null) { _editor.ReplaceSource(entry.Pixels, entry.W, entry.H); InvalidateLiveDenoise(); }
+        RestoreMarkup(entry.Markup);
+        if (entry.Pixels is not null)
+        {
+            _editor.ReplaceSource(entry.Pixels, entry.W, entry.H);
+            InvalidateLiveDenoise();
+            ClearSelection();   // a mask sized to the other bitmap can't be reused
+        }
 
         SyncSlidersFromState();
         InvalidateEditImage();
@@ -1074,6 +1138,10 @@ public sealed partial class MainWindow
 
     private void EditReset_Click(object sender, RoutedEventArgs e)
     {
+        // The AI works from a snapshot of the pixels taken when it started, so a reset mid-run would be
+        // silently overwritten when the job lands — it would look like the reset undid itself.
+        if (_aiBusy) { StatusText.Text = "Wait for the AI operation to finish."; return; }
+
         // Reset means "back to the file as it was", so it has to undo AI pixel changes too — not just the
         // sliders. The pixel snapshot (100MB+ on a big photo) is only taken when AI actually rewrote the
         // source; a plain slider reset stays cheap.
@@ -1119,19 +1187,33 @@ public sealed partial class MainWindow
         return true;
     }
 
+    /// <summary>Serializes the save handlers. Double-clicking "Save a copy" otherwise wrote both
+    /// `-edited` AND `-edited-2` and called ExitEditMode twice.</summary>
+    private bool _saving;
+
     private async void SaveCopy_Click(object sender, RoutedEventArgs e)
     {
-        if (await SaveCopyAsync()) ExitEditMode(reloadViewer: false);
+        if (_saving || _aiBusy) return;
+        _saving = true;
+        try { if (await SaveCopyAsync()) ExitEditMode(reloadViewer: false); }
+        finally { _saving = false; }
     }
 
     private async void SaveAs_Click(object sender, RoutedEventArgs e)
     {
-        if (_editPath is null) return;
+        if (_editPath is null || _saving || _aiBusy) return;
+        _saving = true;
+        try { await SaveAsCoreAsync(); }
+        finally { _saving = false; }
+    }
+
+    private async Task SaveAsCoreAsync()
+    {
         var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.PicturesLibrary };
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
         picker.FileTypeChoices.Add("JPEG image", new List<string> { ".jpg" });
         picker.FileTypeChoices.Add("PNG image", new List<string> { ".png" });
-        picker.SuggestedFileName = System.IO.Path.GetFileNameWithoutExtension(_editPath) + "-edited";
+        picker.SuggestedFileName = System.IO.Path.GetFileNameWithoutExtension(_editPath!) + "-edited";
         var file = await picker.PickSaveFileAsync();
         if (file is null) return;
         if (await ExportToAsync(file.Path))
@@ -1143,7 +1225,14 @@ public sealed partial class MainWindow
 
     private async void SaveOverwrite_Click(object sender, RoutedEventArgs e)
     {
-        if (_editPath is null) return;
+        if (_editPath is null || _saving || _aiBusy) return;
+        _saving = true;
+        try { await SaveOverwriteCoreAsync(); }
+        finally { _saving = false; }
+    }
+
+    private async Task SaveOverwriteCoreAsync()
+    {
         var confirm = new ContentDialog
         {
             Title = "Overwrite original?",
@@ -1156,13 +1245,19 @@ public sealed partial class MainWindow
         // The photo viewer's BitmapImage keeps the original file memory-mapped, so writing over it
         // directly fails with ERROR_USER_MAPPED_FILE. Release that hold, render to a sibling temp file,
         // then atomically replace the original (with a short retry while the mapping is released).
-        var path = _editPath;
+        var path = _editPath!;
         ViewerImage.Source = null;
 
         var dir = System.IO.Path.GetDirectoryName(path)!;
         var ext = System.IO.Path.GetExtension(path);
         var tmp = System.IO.Path.Combine(dir, System.IO.Path.GetFileNameWithoutExtension(path) + ".galileo-tmp" + ext);
-        if (!await ExportToAsync(tmp)) return;
+        if (!await ExportToAsync(tmp))
+        {
+            // The viewer's image was released to free the file lock; a failed export must put it back or the
+            // viewer behind the editor stays permanently blank.
+            _ = LoadCurrentAsync();
+            return;
+        }
 
         if (await ReplaceWithRetryAsync(tmp, path))
         {

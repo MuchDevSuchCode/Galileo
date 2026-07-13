@@ -49,10 +49,11 @@ public static class FaceRestore
     {
         var faces = DetectRestorable(engine, bgra, w, h, ct);
         facesRestored = 0;
-        if (faces.Count == 0) return bgra;
+        // Clone even on the no-op path: returning the caller's array made the undo snapshot and the new
+        // source the same object, so a later in-place write would corrupt undo.
+        if (faces.Count == 0) return (byte[])bgra.Clone();
 
         var outPix = (byte[])bgra.Clone();
-        var session = engine.Session(AiModel.Face);
         var spec = AiEngine.Catalog[AiModel.Face];
 
         for (var i = 0; i < faces.Count; i++)
@@ -80,17 +81,21 @@ public static class FaceRestore
             }
 
             var wTensor = new DenseTensor<double>(new[] { Math.Clamp(fidelity, 0, 1) }, Array.Empty<int>());
-            using var results = session.Run(new[]
+            // Under the engine's lock, so the session can't be disposed mid-inference by the UI thread.
+            var restored = engine.Use(AiModel.Face, session =>
             {
-                NamedOnnxValue.CreateFromTensor(spec.Input, input),
-                NamedOnnxValue.CreateFromTensor("w", wTensor),
+                using var results = session.Run(new[]
+                {
+                    NamedOnnxValue.CreateFromTensor(spec.Input, input),
+                    NamedOnnxValue.CreateFromTensor("w", wTensor),
+                });
+                var y = results.FirstOrDefault(r => r.Name == "y") ?? results[0];
+                var t = y.AsTensor<float>();
+                return (t as DenseTensor<float> ?? t.ToDenseTensor()).Buffer.ToArray();
             });
-            var t = results.First(r => r.Name == "y").AsTensor<float>();
-            var dense = t as DenseTensor<float> ?? t.ToDenseTensor();
-            var ob = dense.Buffer.Span;
 
             // Warp the restored face back and feather it in, so the seam doesn't show.
-            PasteBack(outPix, w, h, ob, m);
+            PasteBack(outPix, w, h, restored, m);
             facesRestored++;
             progress?.Report((double)(i + 1) / faces.Count);
         }
@@ -170,8 +175,6 @@ public static class FaceRestore
 
     public static List<Face> Detect(AiEngine engine, byte[] bgra, int w, int h, CancellationToken ct = default)
     {
-        var session = engine.Session(AiModel.FaceDetect);
-
         // Letterbox into 640x640 (top-left, uniform scale) so aspect ratio is preserved.
         var scale = Math.Min((float)DetSize / w, (float)DetSize / h);
         var nw = Math.Max(1, (int)(w * scale));
@@ -191,19 +194,29 @@ public static class FaceRestore
         }
 
         ct.ThrowIfCancellationRequested();
-        using var results = session.Run(new[] { NamedOnnxValue.CreateFromTensor("input", input) });
-        var outputs = results.ToDictionary(r => r.Name, r => r.AsTensor<float>().ToDenseTensor().Buffer.ToArray());
+        var outputs = engine.Use(AiModel.FaceDetect, session =>
+        {
+            using var results = session.Run(new[] { NamedOnnxValue.CreateFromTensor("input", input) });
+            return results.ToDictionary(r => r.Name, r => r.AsTensor<float>().ToDenseTensor().Buffer.ToArray());
+        });
 
         var faces = new List<Face>();
         foreach (var stride in new[] { 8, 16, 32 })
         {
-            var cls = outputs[$"cls_{stride}"];
-            var obj = outputs[$"obj_{stride}"];
-            var box = outputs[$"bbox_{stride}"];
-            var kps = outputs[$"kps_{stride}"];
-            var grid = DetSize / stride;
+            // A different export (names or anchor layout) should say so, not throw KeyNotFound/IndexOutOfRange
+            // from deep inside the decode loop.
+            if (!outputs.TryGetValue($"cls_{stride}", out var cls) ||
+                !outputs.TryGetValue($"obj_{stride}", out var obj) ||
+                !outputs.TryGetValue($"bbox_{stride}", out var box) ||
+                !outputs.TryGetValue($"kps_{stride}", out var kps))
+                throw new InvalidOperationException("The face-detection model has an unexpected output layout.");
 
-            for (var i = 0; i < grid * grid; i++)
+            var grid = DetSize / stride;
+            var anchors = grid * grid;
+            if (cls.Length < anchors || obj.Length < anchors || box.Length < anchors * 4 || kps.Length < anchors * 10)
+                throw new InvalidOperationException("The face-detection model has an unexpected anchor layout.");
+
+            for (var i = 0; i < anchors; i++)
             {
                 // YuNet's score is the geometric mean of the classification and objectness heads.
                 var c = Math.Clamp(cls[i], 0f, 1f);

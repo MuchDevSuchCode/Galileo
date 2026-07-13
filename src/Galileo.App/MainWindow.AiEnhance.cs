@@ -29,6 +29,62 @@ public sealed partial class MainWindow
     private bool _aiBusy;
     private CancellationTokenSource? _aiCts;
 
+    /// <summary>Separate from <see cref="_aiCts"/>: Autopilot downloads models *between* its stages, so a
+    /// download must not clobber the in-flight job's token source (it would null it out mid-run).</summary>
+    private CancellationTokenSource? _downloadCts;
+
+    /// <summary>Bumped whenever the editor loads a different image or closes. A job captures it and refuses
+    /// to apply its result if it no longer matches — otherwise a slow upscale of photo A could land on
+    /// photo B, or write into an editor that has already been unloaded.</summary>
+    private int _aiGeneration;
+
+    /// <summary>
+    /// Models are cached per-model and are NOT dropped when you switch between them. But they were being
+    /// dropped every time the editor closed, so hopping back to the viewer and returning meant reloading
+    /// CodeFormer (360 MB) from scratch.
+    ///
+    /// Instead, keep them warm and release only after a spell of not using AI at all — you get the memory
+    /// back when you've moved on, without paying a reload for every trip through the viewer.
+    /// </summary>
+    private static readonly TimeSpan AiIdleRelease = TimeSpan.FromMinutes(5);
+
+    private Microsoft.UI.Xaml.DispatcherTimer? _aiIdleTimer;
+
+    /// <summary>Cancels any pending release — an AI operation is starting or running.</summary>
+    private void KeepModelsWarm() => _aiIdleTimer?.Stop();
+
+    /// <summary>Arms the idle release (called when the editor closes).</summary>
+    private void ScheduleModelRelease()
+    {
+        if (_ai is null) return;   // nothing loaded — don't even create the timer
+        if (_aiIdleTimer is null)
+        {
+            _aiIdleTimer = new Microsoft.UI.Xaml.DispatcherTimer { Interval = AiIdleRelease };
+            _aiIdleTimer.Tick += (_, _) =>
+            {
+                _aiIdleTimer!.Stop();
+                if (_aiBusy || InEditor) return;   // still in use — try again next time we leave
+                try { _ai?.ReleaseSessions(); } catch { }
+                App.LogInfo("AI: released cached models after idle");
+                GC.Collect();
+            };
+        }
+        _aiIdleTimer.Stop();
+        _aiIdleTimer.Start();
+    }
+
+    /// <summary>Cancels any in-flight AI work and invalidates its result. Called when the editor loads a new
+    /// image or closes.</summary>
+    private void AbortAiWork()
+    {
+        _aiGeneration++;
+        try { _aiCts?.Cancel(); } catch { }
+        try { _downloadCts?.Cancel(); } catch { }
+        _aiBusy = false;
+        if (AiProgress is not null) AiProgress.Visibility = Visibility.Collapsed;
+        if (AiCancelBtn is not null) AiCancelBtn.Visibility = Visibility.Collapsed;
+    }
+
     // Live denoise: the network runs once at full strength; the strength slider then re-blends the
     // original against that processed result instantly, always re-rendering from the original rather
     // than compounding passes. Invalidated whenever any other operation rewrites the pixels.
@@ -115,6 +171,7 @@ public sealed partial class MainWindow
 
         SetAiBusy(true);
         _aiCts = new CancellationTokenSource();
+        var gen = _aiGeneration;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
@@ -128,7 +185,7 @@ public sealed partial class MainWindow
             var engine = Ai;
             var result = await Task.Run(() => Inpaint.Fill(engine, before, w, h, mask, p2, ct), ct);
 
-            ApplyAiResult(before, w, h, result, w, h);
+            if (!ApplyAiResult(gen, before, w, h, result, w, h)) return;
             ClearSelection();
             sw.Stop();
             AiSay($"Filled the selection  ·  {engine.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");
@@ -185,11 +242,22 @@ public sealed partial class MainWindow
         return mask;
     }
 
+    /// <summary>Stops the running AI job. The models honour the token between tiles/faces, so this takes
+    /// effect at the next checkpoint rather than instantly.</summary>
+    private void AiCancel_Click(object sender, RoutedEventArgs e)
+    {
+        try { _aiCts?.Cancel(); } catch { }
+        try { _downloadCts?.Cancel(); } catch { }
+        AiSay("Cancelling…");
+    }
+
     private void SetAiBusy(bool busy)
     {
         _aiBusy = busy;
+        if (busy) KeepModelsWarm();   // an idle release must not fire mid-operation
         foreach (var b in new[] { AiEnhanceBtn, AiUpscaleBtn, AiDenoiseBtn, AiFacesBtn, AiAutoBtn, SelectTextBtn })
             if (b is not null) b.IsEnabled = !busy;
+        if (AiCancelBtn is not null) AiCancelBtn.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         UpdateLassoUi();   // Fill depends on both the busy state and whether a selection exists
         if (AiProgress is not null)
         {
@@ -236,10 +304,18 @@ public sealed partial class MainWindow
 
         SetAiBusy(true);
         AiSay($"Downloading {spec.Label}…");
+        // Its own token so Cancel works during the download too — CodeFormer is 360 MB, and being unable to
+        // stop that is exactly when you'd want to.
+        _downloadCts = new CancellationTokenSource();
         try
         {
-            await AiEngine.DownloadAsync(model, AiProgressReporter());
+            await AiEngine.DownloadAsync(model, AiProgressReporter(), _downloadCts.Token);
             return true;
+        }
+        catch (OperationCanceledException)
+        {
+            AiSay("Download cancelled.");
+            return false;
         }
         catch (Exception ex)
         {
@@ -247,7 +323,14 @@ public sealed partial class MainWindow
             await MessageAsync("AI", "Couldn't download the model.\n\n" + ex.Message);
             return false;
         }
-        finally { SetAiBusy(false); }
+        finally
+        {
+            _downloadCts?.Dispose();
+            _downloadCts = null;
+            // Don't clear the busy state if a job is still running around us (Autopilot downloads
+            // mid-flow); the job's own finally will do it.
+            if (_aiCts is null) SetAiBusy(false);
+        }
     }
 
     /// <summary>Called when the live-denoise slider moves: re-blend original vs processed and redisplay.
@@ -262,15 +345,31 @@ public sealed partial class MainWindow
     }
 
     /// <summary>Pushes the pre-AI pixels onto the shared undo history, then swaps in the result. Pushed only
-    /// on success, so a failed or cancelled run doesn't leave a bogus entry to "undo".</summary>
-    private void ApplyAiResult(byte[] before, int beforeW, int beforeH, byte[] result, int outW, int outH)
+    /// on success, so a failed or cancelled run doesn't leave a bogus entry to "undo".
+    /// Returns false when the result is stale (the editor moved on) and was discarded.</summary>
+    private bool ApplyAiResult(int generation, byte[] before, int beforeW, int beforeH,
+        byte[] result, int outW, int outH)
     {
+        // The editor loaded a different photo, or closed, while this ran — dropping the result is the whole
+        // point of the generation check.
+        if (generation != _aiGeneration || _editor.Source is null) return false;
+
         InvalidateLiveDenoise();   // any pixel rewrite obsoletes the live-blend pair (denoise re-arms after)
         PushUndo(before, beforeW, beforeH);
         var factor = _editor.ReplaceSource(result, outW, outH);
-        if (_edit.Crop is { } c && Math.Abs(factor - 1.0) > 0.001)
-            _edit.Crop = new Rect(c.X * factor, c.Y * factor, c.Width * factor, c.Height * factor);
+
+        if (Math.Abs(factor - 1.0) > 0.001)
+        {
+            // Everything held in oriented/source coordinates has to follow the resize.
+            if (_edit.Crop is { } c)
+                _edit.Crop = new Rect(c.X * factor, c.Y * factor, c.Width * factor, c.Height * factor);
+            foreach (var m in _markup) m.Scale(factor);
+            // The selection mask is sized to the old pixels; it can't be reinterpreted, so drop it rather
+            // than leave a stale overlay that draws in the wrong place and a Fill button that can't work.
+            ClearSelection();
+        }
         InvalidateEditImage();
+        return true;
     }
 
     private static AiModel ModelFor(AiJob job) => job switch
@@ -288,6 +387,7 @@ public sealed partial class MainWindow
 
         SetAiBusy(true);
         _aiCts = new CancellationTokenSource();
+        var gen = _aiGeneration;
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         try
@@ -337,7 +437,7 @@ public sealed partial class MainWindow
                 return;
             }
 
-            ApplyAiResult(before, bw, bh, result, outW, outH);
+            if (!ApplyAiResult(gen, before, bw, bh, result, outW, outH)) return;
             if (job == AiJob.Denoise)
             {
                 // Arm the live slider (after ApplyAiResult, which clears any previous pair).
@@ -383,6 +483,7 @@ public sealed partial class MainWindow
 
         SetAiBusy(true);
         _aiCts = new CancellationTokenSource();
+        var gen = _aiGeneration;
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         try
@@ -425,18 +526,22 @@ public sealed partial class MainWindow
             var denoiseStrength = Math.Clamp((noise - 1.5) / 6.0, 0.35, 1.0);
             var fidelity = Fidelity;
 
+            // Each stage's output size feeds the next. Enhance keeps the size today, but hard-coding the
+            // INPUT size into ReplaceSource would silently hand it a mismatched buffer the day it doesn't.
             int outW = pw, outH = ph, facesDone = 0;
             var result = await Task.Run(() =>
             {
                 var cur = probe;
-                if (wantDenoise) cur = engine.Denoise(cur, pw, ph, denoiseStrength, p, ct);
-                if (wantDetail) cur = engine.Enhance(cur, pw, ph, false, out outW, out outH, p, ct);
-                if (wantFaces) cur = FaceRestore.Run(engine, cur, pw, ph, fidelity, out facesDone, p, ct);
+                if (wantDenoise) cur = engine.Denoise(cur, outW, outH, denoiseStrength, p, ct);
+                if (wantDetail) cur = engine.Enhance(cur, outW, outH, false, out outW, out outH, p, ct);
+                if (wantFaces) cur = FaceRestore.Run(engine, cur, outW, outH, fidelity, out facesDone, p, ct);
                 return cur;
             }, ct);
 
-            ApplyAiResult(probe, pw, ph, result, pw, ph);
+            if (!ApplyAiResult(gen, probe, pw, ph, result, outW, outH)) return;
             sw.Stop();
+            if (wantFaces && facesDone != faceCount)
+                plan[plan.Count - 1] = $"restore {facesDone} face{(facesDone == 1 ? "" : "s")}";
             AiSay($"Autopilot: {string.Join(" + ", plan)}  ·  {engine.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");
         }
         catch (OperationCanceledException) { AiSay("Cancelled."); }

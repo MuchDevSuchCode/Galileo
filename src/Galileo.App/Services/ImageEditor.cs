@@ -191,6 +191,14 @@ public sealed class ImageEditor : IDisposable
     {
         var oriented = BuildOriented(s, out var bounds);
         var crop = s.Crop ?? new Rect(0, 0, bounds.Width, bounds.Height);
+
+        // The crop lives in oriented space and can be stale relative to the CURRENT source — an AI upscale
+        // rewrites the pixels at a new size and a rotation changes the bounds. Intersect it with the real
+        // bounds (and reject NaN) so we can't ask for a render target larger than the image, or overflow.
+        crop = Intersect(crop, new Rect(0, 0, bounds.Width, bounds.Height));
+        if (crop.Width < 1 || crop.Height < 1 || double.IsNaN(crop.Width) || double.IsNaN(crop.Height))
+            crop = new Rect(0, 0, bounds.Width, bounds.Height);
+
         var w = Math.Max(1, (int)Math.Round(crop.Width));
         var h = Math.Max(1, (int)Math.Round(crop.Height));
 
@@ -279,6 +287,15 @@ public sealed class ImageEditor : IDisposable
             maxX = Math.Max(maxX, p.X); maxY = Math.Max(maxY, p.Y);
         }
         return new Rect(minX, minY, maxX - minX, maxY - minY);
+    }
+
+    private static Rect Intersect(Rect a, Rect b)
+    {
+        var x1 = Math.Max(a.X, b.X);
+        var y1 = Math.Max(a.Y, b.Y);
+        var x2 = Math.Min(a.X + a.Width, b.X + b.Width);
+        var y2 = Math.Min(a.Y + a.Height, b.Y + b.Height);
+        return x2 <= x1 || y2 <= y1 ? default : new Rect(x1, y1, x2 - x1, y2 - y1);
     }
 
     private static CanvasBitmapFileFormat FormatFor(string path)

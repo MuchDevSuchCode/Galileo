@@ -57,7 +57,9 @@ public static class Inpaint
         var selH = maxY - minY + 1;
         var side = (int)Math.Ceiling(Math.Max(selW, selH) * ContextFactor);
         side = Math.Max(side, S);
-        side = Math.Clamp(side, 64, Math.Min(w, h));
+        // Clamp to the image, but never below 1 — Math.Clamp(x, 64, min(w,h)) THREW when the image was
+        // smaller than 64px (min > max), so filling a thumbnail or a thin strip failed outright.
+        side = Math.Min(side, Math.Max(1, Math.Min(w, h)));
         var cx = (minX + maxX) / 2;
         var cy = (minY + maxY) / 2;
         var rx = Math.Clamp(cx - side / 2, 0, Math.Max(0, w - side));
@@ -73,36 +75,58 @@ public static class Inpaint
         const int plane = S * S;
         for (var y = 0; y < S; y++)
         {
-            var sy = Math.Min(h - 1, ry + (int)((y + 0.5f) * rh / S));
+            var sy0 = ry + y * rh / S;
+            var sy1 = Math.Max(sy0 + 1, ry + (y + 1) * rh / S);
+            var sy = Math.Min(h - 1, sy0);
             for (var x = 0; x < S; x++)
             {
-                var sx = Math.Min(w - 1, rx + (int)((x + 0.5f) * rw / S));
+                var sx0 = rx + x * rw / S;
+                var sx1 = Math.Max(sx0 + 1, rx + (x + 1) * rw / S);
+                var sx = Math.Min(w - 1, sx0);
                 var p = (sy * w + sx) * 4;
                 var o = y * S + x;
                 ib[o] = bgra[p + 2] / 255f;             // R
                 ib[plane + o] = bgra[p + 1] / 255f;     // G
                 ib[2 * plane + o] = bgra[p] / 255f;     // B
-                mb[o] = mask[sy * w + sx] != 0 ? 1f : 0f;   // 1 = hole
+
+                // MAX-downsample the mask, not a point sample. Point-sampling a selection thinner than the
+                // crop's 512-grid step (a power line, a thin watermark stroke) could miss it entirely — LaMa
+                // would get an empty hole and hand the image back unchanged while the UI claimed success.
+                var hole = 0f;
+                for (var my = sy0; my < sy1 && hole == 0f; my++)
+                {
+                    if (my < 0 || my >= h) continue;
+                    for (var mx = sx0; mx < sx1; mx++)
+                    {
+                        if (mx < 0 || mx >= w) continue;
+                        if (mask[my * w + mx] != 0) { hole = 1f; break; }
+                    }
+                }
+                mb[o] = hole;   // 1 = hole
             }
         }
         ct.ThrowIfCancellationRequested();
         progress?.Report(0.3);
 
-        // 4. Inpaint.
-        var session = engine.Session(AiModel.Inpaint);
-        using var results = session.Run(new[]
+        // 4. Inpaint — under the engine's lock, so leaving the editor can't dispose the session mid-run.
+        var ob = engine.Use(AiModel.Inpaint, session =>
         {
-            NamedOnnxValue.CreateFromTensor("image", img),
-            NamedOnnxValue.CreateFromTensor("mask", msk),
+            using var results = session.Run(new[]
+            {
+                NamedOnnxValue.CreateFromTensor("image", img),
+                NamedOnnxValue.CreateFromTensor("mask", msk),
+            });
+            var t = results[0].AsTensor<float>();
+            return (t as DenseTensor<float> ?? t.ToDenseTensor()).Buffer.ToArray();
         });
-        var t = results[0].AsTensor<float>();
-        var dense = t as DenseTensor<float> ?? t.ToDenseTensor();
-        var ob = dense.Buffer.Span;
+        ct.ThrowIfCancellationRequested();
 
-        // This export emits 0..255 (verified); tolerate a 0..1 export too.
-        var max = 0f;
-        foreach (var v in ob) if (v > max) max = v;
-        var scale = max > 1.5f ? 1f : 255f;
+        // This export emits 0..255 (verified). Decide on the mean rather than the max: an unclamped export
+        // can overshoot on a single specular pixel, which would flip a 0..1 model into the 0..255 branch and
+        // clamp the whole fill to black.
+        double sum = 0;
+        foreach (var v in ob) sum += v;
+        var scale = sum / ob.Length > 1.5 ? 1f : 255f;
         progress?.Report(0.8);
 
         // 5. Feather the mask so the fill blends instead of showing a hard cut.

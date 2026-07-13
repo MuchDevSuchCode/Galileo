@@ -1083,6 +1083,9 @@
                             <TextBlock Text="Face fidelity (low = more invented detail)" Foreground="White" FontSize="12" />
                             <Slider x:Name="AiFidelity" Minimum="0" Maximum="100" Value="70" />
                             <ProgressBar x:Name="AiProgress" Minimum="0" Maximum="1" Value="0" Visibility="Collapsed" />
+                            <Button x:Name="AiCancelBtn" Content="Cancel" Click="AiCancel_Click" Visibility="Collapsed"
+                                    HorizontalAlignment="Stretch"
+                                    ToolTipService.ToolTip="Stop the running AI operation" />
                             <TextBlock x:Name="AiStatus" Foreground="#99FFFFFF" FontSize="11" TextWrapping="Wrap" />
                         </StackPanel>
 
