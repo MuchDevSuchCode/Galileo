@@ -56,6 +56,10 @@ public sealed partial class MainWindow
         if (AiProgress is not null)
         {
             AiProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+            // Indeterminate until the first real progress tick: the gap covers loading the model into the
+            // GPU (a few seconds on first use, since AI loads only when actually used), so the bar visibly
+            // works instead of sitting at 0.
+            AiProgress.IsIndeterminate = busy;
             AiProgress.Value = 0;
         }
     }
@@ -63,7 +67,12 @@ public sealed partial class MainWindow
     private void AiSay(string? text) { if (AiStatus is not null) AiStatus.Text = text ?? ""; }
 
     private IProgress<double> AiProgressReporter() =>
-        new Progress<double>(v => { if (AiProgress is not null) AiProgress.Value = v; });
+        new Progress<double>(v =>
+        {
+            if (AiProgress is null) return;
+            AiProgress.IsIndeterminate = false;
+            AiProgress.Value = v;
+        });
 
     /// <summary>Downloads a model once, with confirmation (they range from 0.2 MB to 360 MB).</summary>
     private async Task<bool> EnsureModelAsync(AiModel model)

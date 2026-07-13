@@ -77,6 +77,11 @@ public partial class ExplorerItem : ObservableObject
         if (string.IsNullOrEmpty(Name)) Name = path;
     }
 
+    /// <summary>A fresh copy with no icon loaded. Views with different icon sizes must not share
+    /// instances: <see cref="LoadIconAsync"/> keeps whichever bitmap loaded first, so a 32px sidebar
+    /// icon would get stretched blurry in the large This PC grid.</summary>
+    public ExplorerItem Clone() => new(Path, Kind, Size, Modified, TypeName, Name, ShellId, TotalBytes, FreeBytes);
+
     public bool IsImage => Kind == ExplorerItemKind.File && PhotoLibrary.IsSupported(IsShellItem ? Name : Path);
 
     public string SizeText => Kind == ExplorerItemKind.File ? FormatSize(Size) : "";

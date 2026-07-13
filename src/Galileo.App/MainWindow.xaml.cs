@@ -1278,9 +1278,10 @@ public sealed partial class MainWindow : Window
                 foreach (var i in drives) _ = i.LoadIconAsync(32);
                 if (_currentFolder is null)
                 {
-                    // Keep any async-appended devices that are already in the listing.
+                    // Keep any async-appended devices that are already in the listing. Clone the drives —
+                    // these instances go to the 32px sidebar, and the grid needs its own icons at grid size.
                     var devices = _explorerRaw.Where(x => x.ShellId is not null).ToList();
-                    _explorerRaw = _fs.GetQuickAccess().Concat(drives).Concat(devices).ToList();
+                    _explorerRaw = _fs.GetQuickAccess().Concat(drives.Select(d => d.Clone())).Concat(devices).ToList();
                     ApplySortAndGroup();
                     ApplyViewMode();
                 }
@@ -1544,7 +1545,9 @@ public sealed partial class MainWindow : Window
             // Paint instantly from the drive cache — DriveInfo (IsReady/size) can block for the SMB
             // timeout on a sleeping network drive, so it must never run here on the UI thread. The
             // cache refreshes off-thread and the listing updates in place if anything changed.
-            _explorerRaw = _fs.GetQuickAccess().Concat(_driveCache).ToList();
+            // Clone the cached items: the cache's own instances live in the sidebar with 32px icons,
+            // and sharing them here would show those small icons stretched blurry at grid size.
+            _explorerRaw = _fs.GetQuickAccess().Concat(_driveCache.Select(d => d.Clone())).ToList();
             ApplySortAndGroup();
             ApplyViewMode();
             UpdateHideFolderButton();
