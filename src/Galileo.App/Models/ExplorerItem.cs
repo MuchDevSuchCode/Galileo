@@ -166,41 +166,40 @@ public partial class ExplorerItem : ObservableObject
                 return;
             }
 
-            // Files: prefer a real preview thumbnail (photo/doc) — correct orientation.
-            var file = await StorageFile.GetFileFromPathAsync(path);
-            StorageItemThumbnail? thumb = null;
-            try { thumb = await file.GetThumbnailAsync(ThumbnailMode.SingleItem, size, ThumbnailOptions.ResizeThumbnail); }
-            catch { }
-
-            if (thumb is not null && thumb.Type != ThumbnailType.Icon)
-            {
-                using (thumb) { var b = new BitmapImage(); await b.SetSourceAsync(thumb); Icon = b; }
-                return;
-            }
-
-            // No real preview. Keep app/shortcut branding (those icons aren't Windows' generic ones)
-            // via the shell; for everything else use Galileo's own page-with-extension-badge icon.
+            // Files.
+            //
+            // This deliberately does NOT use StorageFile.GetThumbnailAsync / BitmapImage. Those create WinRT
+            // objects that are only reclaimed by the finalizer, and finalizing them has to marshal back to
+            // the STA (UI) thread. Realizing a folder of photos queued hundreds of them: the finalizer thread
+            // starved waiting on the UI thread, the GC blocked waiting on finalizers, and the UI thread
+            // stalled for 10-15s waiting on the GC — which is what made opening a 256 KB photo take 15
+            // seconds. IShellItemImageFactory does the same job (it IS what Explorer uses, honours EXIF
+            // orientation, and reads the same thumbnail cache), runs entirely on a worker thread, and
+            // releases its COM explicitly. The only UI-thread cost left is one WriteableBitmap memcpy.
             var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
             var appIcon = ext is ".exe" or ".lnk" or ".url" or ".msi" or ".ico" or ".scr" or ".cpl";
-            if (appIcon)
+
+            // Only ask the shell for the kinds of file that actually have a preview. Everything else got a
+            // shell call per file whose result was then thrown away in favour of Galileo's own icon.
+            if (appIcon || IsImage || PhotoLibrary.IsMedia(path) || DocThumbExts.Contains(ext))
             {
                 var (ip, iw, ih) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: false));
                 if (ip is null) (ip, iw, ih) = await Task.Run(() => ShellImaging.GetPixels(path, px, iconOnly: true));
+                if (ct.IsCancellationRequested) return;
                 if (ip is not null && iw > 0 && ih > 0)
                 {
                     var wbApp = new WriteableBitmap(iw, ih);
                     using (var s = wbApp.PixelBuffer.AsStream()) s.Write(ip, 0, ip.Length);
                     Icon = wbApp;
-                    thumb?.Dispose();
                     return;
                 }
             }
 
             var fp = await Task.Run(() => IconFactory.RenderFile(px, ext));
+            if (ct.IsCancellationRequested) return;
             var wbFile = new WriteableBitmap(px, px);
             using (var s = wbFile.PixelBuffer.AsStream()) s.Write(fp, 0, fp.Length);
             Icon = wbFile;
-            thumb?.Dispose();
         }
         catch
         {
@@ -221,15 +220,13 @@ public partial class ExplorerItem : ObservableObject
         if (imgPath is null) return;
         try
         {
-            var file = await StorageFile.GetFileFromPathAsync(imgPath);
-            using var thumb = await file.GetThumbnailAsync(ThumbnailMode.PicturesView, (uint)Math.Max(48, px * 3 / 5), ThumbnailOptions.ResizeThumbnail);
-            if (thumb is null || thumb.Type == ThumbnailType.Icon) return; // only real photo thumbnails
-
-            var decoder = await BitmapDecoder.CreateAsync(thumb);
-            var sb = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
-            var pixels = new byte[4 * sb.PixelWidth * sb.PixelHeight];
-            sb.CopyToBuffer(pixels.AsBuffer());
-            ImageCompositor.OverlayPhoto(folderPixels, fw, fh, pixels, sb.PixelWidth, sb.PixelHeight);
+            // Same reason as the file thumbnails: StorageFile/BitmapDecoder/SoftwareBitmap are WinRT objects
+            // whose finalizers have to marshal to the UI thread, and this ran once PER FOLDER. The shell
+            // path does the whole thing on a worker thread and frees its COM immediately.
+            var (pixels, pw, ph) = await Task.Run(() =>
+                ShellImaging.GetPixels(imgPath, Math.Max(48, px * 3 / 5), iconOnly: false));
+            if (pixels is null || pw <= 0 || ph <= 0) return;
+            ImageCompositor.OverlayPhoto(folderPixels, fw, fh, pixels, pw, ph);
         }
         catch { /* leave the plain folder icon */ }
     }
@@ -241,6 +238,13 @@ public partial class ExplorerItem : ObservableObject
         if (!FolderThumbnails.TryGetValue(folderPath, out var imgPath)) return null;
         return File.Exists(imgPath) && PhotoLibrary.IsSupported(imgPath) ? imgPath : null;
     }
+
+    /// <summary>Non-media file types that still have a real shell preview worth fetching. Anything not in
+    /// here (and not an image/video/app) gets Galileo's own icon without troubling the shell at all.</summary>
+    private static readonly HashSet<string> DocThumbExts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".svg", ".psd", ".ai", ".eps", ".rtf",
+    };
 
     /// <summary>First supported image in a folder (bounded scan), or null.</summary>
     private static string? FindFirstImage(string folderPath)
