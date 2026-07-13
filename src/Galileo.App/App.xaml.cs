@@ -90,7 +90,8 @@ public partial class App : Application
                 {
                     // "Open in new window": an additional in-process window, instantly — instead of a
                     // separate process paying a full cold start of the self-contained app each time.
-                    var extra = new MainWindow(path);
+                    // secondaryWindow: it's a guest of this process — no tray icon, no crash recovery.
+                    var extra = new MainWindow(path, secondaryWindow: true);
                     extra.Activate();
                     return;
                 }

@@ -32,9 +32,11 @@ public sealed partial class MainWindow
     /// <summary>Wire up tray + background behavior at startup from saved settings.</summary>
     private void InitBackground()
     {
-        // A --new-window instance is a throwaway viewer spawned by the primary — it must NOT create a tray
-        // icon or run in the background, or every "open in new window" would leave a permanent tray copy.
-        if (LaunchedNewWindow()) return;
+        // An "open in new window" window is a throwaway viewer belonging to the primary — it must NOT create
+        // a tray icon or run in the background, or every opened photo leaves a permanent tray copy.
+        // _secondaryWindow, not just LaunchedNewWindow(): these windows are created in-process by the
+        // primary now, so the command line is the primary's and doesn't mention --new-window.
+        if (_secondaryWindow || LaunchedNewWindow()) return;
 
         if (_state.RunInBackground || _state.StartWithWindows) EnsureTray();
         if (LaunchedInBackground() && _tray is not null)

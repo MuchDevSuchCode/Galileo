@@ -159,6 +159,19 @@ public sealed partial class MainWindow : Window
     // skips it entirely and only pays for it if the user actually navigates to the explorer.
     private bool _fileManagerReady;
 
+    /// <summary>
+    /// True for an additional window opened by the running instance ("open in new window"). Such a window
+    /// is a guest: it must not create a tray icon and must not run any once-per-process crash recovery.
+    ///
+    /// This cannot be inferred from the command line. "--new-window" used to spawn a whole new process, so
+    /// checking Environment.GetCommandLineArgs() worked; those windows are now created in-process by the
+    /// primary (App.OnRedirected), whose own command line has no such argument. The checks that relied on
+    /// it were therefore silently doing nothing — leaving a tray icon per opened photo, and, far worse,
+    /// letting a guest window run vault crash-recovery that would wipe the live vault's working folder out
+    /// from under the primary.
+    /// </summary>
+    private readonly bool _secondaryWindow;
+
     // Collage mode state
     private readonly Random _rng = new();
     private List<PhotoItem> _collageSource = new();
@@ -166,8 +179,9 @@ public sealed partial class MainWindow : Window
     private int _collageCount;
     private CollagePreset _collagePreset = CollagePreset.Justified;
 
-    public MainWindow(string? initialPath = null)
+    public MainWindow(string? initialPath = null, bool secondaryWindow = false)
     {
+        _secondaryWindow = secondaryWindow;
         InitializeComponent();
         _library = new PhotoLibrary(_state);
         PhotoGrid.ItemsSource = _view;
@@ -311,11 +325,11 @@ public sealed partial class MainWindow : Window
         _shell.WipeTemp(); // clear any device temp copies left by a previous run
 
         // Secure vault: wipe any decrypted working folder left by a crash, list vaults, and arm the
-        // idle auto-lock + app-exit lock. A "--new-window" instance is spawned by an already-running
+        // idle auto-lock + app-exit lock. An "open in new window" window belongs to an already-running
         // primary (which may have a vault unlocked) — it must NOT run crash recovery, or it would wipe the
-        // live vault's working folder out from under the primary.
-        var spawnedNewWindow = Environment.GetCommandLineArgs().Any(a => string.Equals(a, "--new-window", StringComparison.OrdinalIgnoreCase));
-        if (!spawnedNewWindow)
+        // live vault's working folder out from under the primary. See _secondaryWindow: this deliberately
+        // does not consult the command line, which is the primary's and says nothing about this window.
+        if (!_secondaryWindow && !LaunchedNewWindow())
         {
             _vaults.WipeOrphanWorkDirs();
             ArchiveService.WipeOrphans(); // clear any leftover extracted-zip temp dirs from a prior run
@@ -6526,10 +6540,15 @@ public sealed partial class MainWindow : Window
         try { _term?.Dispose(); _term = null; } catch { } // kill any terminal shell on close
         try { VideoPlayer.MediaPlayer?.Pause(); } catch { } // don't keep audio playing during a deferred close
         StopFolderWatch();
-        try { CleanupRemoteBrowse(); } catch { }   // securely wipe any shared-browse copies
-        try { WipeShareTempDirs(); } catch { }
+        try { CleanupRemoteBrowse(); } catch { }   // securely wipe THIS window's shared-browse copies
         RemoveTray();
         _backupTimer.Stop(); _driveWatcher.Stop();
+
+        // Everything above is this window's own state. What follows is process-wide, and a guest window
+        // ("open in new window") closing is not the app exiting — the primary is still running. Wiping the
+        // shared temp root or locking the vault here would pull them out from under it.
+        if (_secondaryWindow) return;
+        try { WipeShareTempDirs(); } catch { }
         if (!_vaults.IsAnyUnlocked) return;
         args.Cancel = true;                      // defer close until the vault is secured
         try { await _vaults.LockCurrentAsync(); } catch (Exception ex) { App.Log("VaultCloseLock", ex); }
