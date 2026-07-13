@@ -221,9 +221,19 @@ public sealed partial class MainWindow
     /// or an AI operation (which rewrites the source pixels and so isn't visible in the EditState).</summary>
     private bool HasUnsavedEdits => !_edit.IsNeutral || _markup.Count > 0 || _editor.SourceModified;
 
-    private async void EditCancel_Click(object sender, RoutedEventArgs e)
+    /// <summary>True while the editor is on screen.</summary>
+    private bool InEditor => EditorView.Visibility == Visibility.Visible;
+
+    /// <summary>
+    /// Asks about unsaved work before leaving the editor. Returns true if the caller may proceed (the work
+    /// was saved, or the user chose to discard it) and false to stay put.
+    ///
+    /// Every exit route must go through this — the Cancel button, the window's X, and Esc. Guarding only the
+    /// Cancel button silently threw away AI edits when the window was closed instead.
+    /// </summary>
+    private async Task<bool> ConfirmLeaveEditorAsync()
     {
-        if (!HasUnsavedEdits) { ExitEditMode(reloadViewer: false); return; }
+        if (!InEditor || !HasUnsavedEdits) return true;
 
         var dialog = new ContentDialog
         {
@@ -242,17 +252,18 @@ public sealed partial class MainWindow
             XamlRoot = RootGrid.XamlRoot,
         };
 
-        switch (await dialog.ShowAsync())
+        return await dialog.ShowAsync() switch
         {
-            case ContentDialogResult.Primary:
-                SaveCopy_Click(sender, e);   // exits the editor itself once the export succeeds
-                break;
-            case ContentDialogResult.Secondary:
-                ExitEditMode(reloadViewer: false);
-                break;
-            default:
-                break;                        // "Keep editing" — stay put
-        }
+            // Only leave if the file actually made it to disk — a failed export must not lose the work.
+            ContentDialogResult.Primary => await SaveCopyAsync(),
+            ContentDialogResult.Secondary => true,   // discard
+            _ => false,                              // keep editing
+        };
+    }
+
+    private async void EditCancel_Click(object sender, RoutedEventArgs e)
+    {
+        if (await ConfirmLeaveEditorAsync()) ExitEditMode(reloadViewer: false);
     }
 
     // ---- canvas drawing ----
@@ -1095,18 +1106,22 @@ public sealed partial class MainWindow
         catch (Exception ex) { StatusText.Text = "Save failed: " + ex.Message; App.Log("EditorSave", ex); return false; }
     }
 
-    private async void SaveCopy_Click(object sender, RoutedEventArgs e)
+    /// <summary>Writes the edit to a new file next to the original. True if it landed on disk.</summary>
+    private async Task<bool> SaveCopyAsync()
     {
-        if (_editPath is null) return;
+        if (_editPath is null) return false;
         var dir = System.IO.Path.GetDirectoryName(_editPath)!;
         var ext = System.IO.Path.GetExtension(_editPath);
         var baseName = System.IO.Path.GetFileNameWithoutExtension(_editPath);
         var dest = UniquePath(System.IO.Path.Combine(dir, baseName + "-edited" + ext), isDir: false);
-        if (await ExportToAsync(dest))
-        {
-            StatusText.Text = "Saved " + System.IO.Path.GetFileName(dest);
-            ExitEditMode(reloadViewer: false);
-        }
+        if (!await ExportToAsync(dest)) return false;
+        StatusText.Text = "Saved " + System.IO.Path.GetFileName(dest);
+        return true;
+    }
+
+    private async void SaveCopy_Click(object sender, RoutedEventArgs e)
+    {
+        if (await SaveCopyAsync()) ExitEditMode(reloadViewer: false);
     }
 
     private async void SaveAs_Click(object sender, RoutedEventArgs e)

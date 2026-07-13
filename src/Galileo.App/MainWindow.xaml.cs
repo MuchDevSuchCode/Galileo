@@ -5636,6 +5636,9 @@ public sealed partial class MainWindow : Window
                 Navigate(+1); e.Handled = true; break;
             case VirtualKey.Escape when SettingsOverlay.Visibility == Visibility.Visible:
                 CancelSettings(); e.Handled = true; break;
+            case VirtualKey.Escape when InEditor:
+                EditCancel_Click(this, new RoutedEventArgs());  // same unsaved-changes guard as Cancel
+                e.Handled = true; break;
             case VirtualKey.Escape when InCollage:
                 ShowExplorer(); e.Handled = true; break;
             case VirtualKey.Escape when InViewer:
@@ -6405,6 +6408,19 @@ public sealed partial class MainWindow : Window
     private async void AppWindow_Closing(Microsoft.UI.Windowing.AppWindow sender,
         Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
     {
+        // Unsaved edits (including AI, which rewrites pixels) must never be lost to the X. Cancel the close
+        // synchronously — it's too late once we've awaited — then ask, and only re-close if they let us.
+        if (!_closingForVaultLock && InEditor && HasUnsavedEdits)
+        {
+            args.Cancel = true;
+            if (await ConfirmLeaveEditorAsync())
+            {
+                ExitEditMode(reloadViewer: false);   // leaves the editor, so this branch won't re-trigger
+                Close();
+            }
+            return;
+        }
+
         // "Close button returns to files": while viewing a single photo/video, X acts like Back, not quit.
         if (!_closingForVaultLock && _state.CloseToViewerBack && InViewer)
         {
