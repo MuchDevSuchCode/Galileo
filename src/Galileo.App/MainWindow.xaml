@@ -1135,13 +1135,21 @@
                     BorderBrush="#22FFFFFF" BorderThickness="0,1,0,0" Padding="12,8">
                 <Grid>
                     <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Left">
-                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="EditUndo_Click" ToolTipService.ToolTip="Undo">
-                            <FontIcon Glyph="&#xE7A7;" FontFamily="Segoe Fluent Icons" />
-                        </Button>
-                        <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="EditRedo_Click" ToolTipService.ToolTip="Redo">
-                            <FontIcon Glyph="&#xE7A6;" FontFamily="Segoe Fluent Icons" />
-                        </Button>
                         <Button Content="Reset" Click="EditReset_Click" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                        <Button Click="EditUndo_Click" ToolTipService.ToolTip="Undo the last change (including AI)">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE7A7;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                                <TextBlock Text="Undo" />
+                            </StackPanel>
+                        </Button>
+                        <Button Click="EditRedo_Click" ToolTipService.ToolTip="Redo">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE7A6;" FontFamily="Segoe Fluent Icons" FontSize="14" />
+                                <TextBlock Text="Redo" />
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
                         <Button Content="Cancel" Click="EditCancel_Click" />
