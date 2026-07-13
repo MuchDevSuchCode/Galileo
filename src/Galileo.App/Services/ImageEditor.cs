@@ -144,6 +144,20 @@ public sealed class ImageEditor : IDisposable
         return width / Math.Max(1.0, oldW);
     }
 
+    /// <summary>Maps a point from oriented-image space (what the user sees and draws on) back to raw source
+    /// pixels — needed because selections are drawn on the rotated/flipped preview but the AI rewrites the
+    /// underlying source bitmap.</summary>
+    public bool TryOrientedToSource(EditState s, Point p, out Point source)
+    {
+        source = default;
+        if (Source is null) return false;
+        var m = OrientMatrix(s, out _);
+        if (!Matrix3x2.Invert(m, out var inv)) return false;
+        var v = Vector2.Transform(new Vector2((float)p.X, (float)p.Y), inv);
+        source = new Point(v.X, v.Y);
+        return true;
+    }
+
     /// <summary>The full color + orientation effect graph. <paramref name="orientedBounds"/> is the
     /// post-transform image rectangle (origin 0,0); crop coordinates are relative to it.</summary>
     public ICanvasImage BuildOriented(EditState s, out Rect orientedBounds)

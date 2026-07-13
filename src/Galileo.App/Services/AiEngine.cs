@@ -21,9 +21,14 @@ public enum AiModel
     Face,
     /// <summary>YuNet — face detection with 5 landmarks (needed to align faces for CodeFormer).</summary>
     FaceDetect,
+    /// <summary>LaMa — content-aware fill / inpainting, 512x512 (image + mask). CPU only: DirectML cannot
+    /// execute the MatMul inside its Fourier unit (it fails at Run with "parameter is incorrect").</summary>
+    Inpaint,
 }
 
-public sealed record ModelSpec(AiModel Model, string File, string Url, string Input, int Scale, long MinBytes, string Label);
+/// <param name="Cpu">Force the CPU provider — for models DirectML loads happily but then fails to run.</param>
+public sealed record ModelSpec(AiModel Model, string File, string Url, string Input, int Scale, long MinBytes,
+    string Label, bool Cpu = false);
 
 /// <summary>
 /// On-device AI image restoration, run on the GPU through DirectML (any DX12 card — no CUDA install).
@@ -55,6 +60,10 @@ public sealed class AiEngine : IDisposable
         [AiModel.FaceDetect] = new(AiModel.FaceDetect, "face_yunet.onnx",
             "https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2023mar.onnx",
             "input", 1, 100_000, "YuNet face detection (0.2 MB)"),
+
+        [AiModel.Inpaint] = new(AiModel.Inpaint, "inpaint_lama.onnx",
+            "https://huggingface.co/opencv/inpainting_lama/resolve/main/inpainting_lama_2025jan.onnx",
+            "image", 1, 50_000_000, "LaMa content-aware fill (88 MB)", Cpu: true),
     };
 
     /// <summary>Long-edge cap on the input when keeping a 4x result (the output has 16x the pixels).</summary>
@@ -109,22 +118,31 @@ public sealed class AiEngine : IDisposable
     internal InferenceSession Session(AiModel m)
     {
         if (_sessions.TryGetValue(m, out var s)) return s;
-        if (!IsReady(m)) throw new InvalidOperationException($"The {Catalog[m].Label} model hasn't been downloaded yet.");
+        var spec = Catalog[m];
+        if (!IsReady(m)) throw new InvalidOperationException($"The {spec.Label} model hasn't been downloaded yet.");
 
         InferenceSession created;
-        try
+        if (spec.Cpu)
         {
-            var opts = new SessionOptions { LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_FATAL };
-            opts.AppendExecutionProvider_DML(0);            // adapter 0 = primary DX12 GPU
-            opts.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
-            created = new InferenceSession(PathFor(m), opts);
-            Provider = "DirectML (GPU)";
-        }
-        catch (Exception ex)
-        {
-            App.LogInfo("AI: DirectML unavailable, falling back to CPU: " + ex.Message);
-            created = new InferenceSession(PathFor(m));
+            created = new InferenceSession(PathFor(m));   // DirectML can't run this graph — see ModelSpec.Cpu
             Provider = "CPU";
+        }
+        else
+        {
+            try
+            {
+                var opts = new SessionOptions { LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_FATAL };
+                opts.AppendExecutionProvider_DML(0);            // adapter 0 = primary DX12 GPU
+                opts.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
+                created = new InferenceSession(PathFor(m), opts);
+                Provider = "DirectML (GPU)";
+            }
+            catch (Exception ex)
+            {
+                App.LogInfo("AI: DirectML unavailable, falling back to CPU: " + ex.Message);
+                created = new InferenceSession(PathFor(m));
+                Provider = "CPU";
+            }
         }
         _sessions[m] = created;
         return created;

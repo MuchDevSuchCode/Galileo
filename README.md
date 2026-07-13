@@ -321,10 +321,14 @@ Open any image and click **Edit** (the pencil in the viewer toolbar, or right-cl
 
   > Two well-known models were evaluated and **rejected because they don't actually work**: **SCUNet** crashes DirectML outright, and the OpenCV **NAFNet** ONNX is a broken export (garbage output on GPU, crash on CPU). The Real-ESRGAN *general* model covers denoise/sharpen instead. This is a genuine local AI stack, but it is not equivalent to Topaz Photo AI, whose models are proprietary and considerably larger.
 
+- **Retouch — lasso + content-aware fill** — turn on **Lasso**, drag freehand around something (a watermark, a stray object, a wire), and hit **Fill**: it's erased and what belongs there is painted in. Powered by **LaMa** inpainting, run locally. Only the selected pixels ever change — everything else is byte-for-byte identical — and the fill is feathered at its edge so there's no seam. The selection is automatically **grown a few pixels** first, because watermarks and text have a soft anti-aliased fringe just outside their visible edge and leaving it behind is what makes a removal look "nearly clean". A selection that fits the model's 512px window maps into it 1:1 (no resampling), so fills stay sharp. Draw **tightly around the mark** — a big box over important content forces the model to invent what was underneath.
+
+  > This one runs on the **CPU** (~2s per fill): DirectML loads the graph but fails inside LaMa's Fourier unit, so it's pinned to CPU rather than shipped broken.
+
 - **Compare** — check your work against the original: a **split slider** (drag the divider to wipe), **side by side**, or **original only**. The reference is put through the edit's *geometry only*, so before/after still line up pixel-for-pixel even after a 4× upscale changed the dimensions.
 - **Preview zoom** — the **scroll wheel zooms about the cursor** (what's under the pointer stays put), **− / +** buttons zoom about the centre, the readout doubles as a **Fit** reset, and you **drag to pan** once zoomed in. Crop, markup and the compare divider all keep working while zoomed.
 - **Markup** — annotate with pen/highlighter/eraser (ink), **text**, and **rectangle / ellipse / line / arrow** shapes in your choice of color.
-- **Undo / Redo / Reset**, then **Save** — by default it writes a **copy** next to the original (`<name>-edited.<ext>`) so the source is never touched; the Save dropdown also offers **Save as…** and **Overwrite original**.
+- **Undo / Redo / Reset**, then **Save** — by default it writes a **copy** next to the original (`<name>-edited.<ext>`) so the source is never touched; the Save dropdown also offers **Save as…** and **Overwrite original**. Leaving the editor with unsaved work (including AI changes) prompts to **Save a copy / Discard / Keep editing**.
 
 Rendering uses **Win2D** (GPU effect graph) for the preview and a full-resolution bake on save. Edits are non-destructive until you save, and the saved copy appears in the folder automatically (live refresh). HEIC/RAW sources are supported when the OS codec is installed.
 

@@ -1086,6 +1086,21 @@
                             <TextBlock x:Name="AiStatus" Foreground="#99FFFFFF" FontSize="11" TextWrapping="Wrap" />
                         </StackPanel>
 
+                        <!-- Retouch: lasso selection + content-aware fill (LaMa) -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="RETOUCH" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button x:Name="LassoBtn" Content="Lasso" Click="LassoTool_Click"
+                                        ToolTipService.ToolTip="Draw freehand around something to select it" />
+                                <Button x:Name="FillBtn" Content="Fill" Click="AiFill_Click" IsEnabled="False"
+                                        ToolTipService.ToolTip="Content-aware fill: remove the selection and paint in what belongs there" />
+                                <Button Content="Clear" Click="LassoClear_Click"
+                                        ToolTipService.ToolTip="Clear the selection" />
+                            </StackPanel>
+                            <TextBlock Text="Turn on Lasso, drag around an object, then Fill to erase it."
+                                       Foreground="#66FFFFFF" FontSize="11" TextWrapping="Wrap" />
+                        </StackPanel>
+
                         <!-- Before / after comparison -->
                         <StackPanel Spacing="6">
                             <TextBlock Text="COMPARE" Foreground="#99FFFFFF" FontSize="11" FontWeight="SemiBold" />

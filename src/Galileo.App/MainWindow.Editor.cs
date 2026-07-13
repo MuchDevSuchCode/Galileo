@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Galileo.Models;
 using Galileo.Services;
 using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Geometry;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.UI.Xaml;
@@ -60,6 +61,10 @@ public sealed partial class MainWindow
     private double _compareSplit = 0.5;
     private bool _compareDragging;
     private string _markupTool = "";
+    // Lasso selection (oriented-image space). Freehand while dragging; closed on release.
+    private bool _lassoMode;
+    private readonly List<Point> _lasso = new();
+    private bool _lassoDrawing;
     private double _cropAspect;     // 0 = free
     private bool _dragging;
     private Point _dragStart;       // oriented-image space
@@ -104,6 +109,8 @@ public sealed partial class MainWindow
         _compareMode = "off"; _compareSplit = 0.5; _compareDragging = false;
         _editZoom = 1.0; _editPanX = _editPanY = 0; _editPanning = false;
         if (EditZoomLabel is not null) EditZoomLabel.Content = "Fit";
+        _lassoMode = false; _lasso.Clear(); _lassoDrawing = false;
+        UpdateLassoUi();
         InvalidateLiveDenoise();
         try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true; // fresh image → fresh cache
         ResetEditSliders();
@@ -167,7 +174,43 @@ public sealed partial class MainWindow
         if (reloadViewer) _ = LoadCurrentAsync();
     }
 
-    private void EditCancel_Click(object sender, RoutedEventArgs e) => ExitEditMode(reloadViewer: false);
+    /// <summary>True when the editor holds work that isn't on disk: any adjustment/crop/filter, any markup,
+    /// or an AI operation (which rewrites the source pixels and so isn't visible in the EditState).</summary>
+    private bool HasUnsavedEdits => !_edit.IsNeutral || _markup.Count > 0 || _editor.SourceModified;
+
+    private async void EditCancel_Click(object sender, RoutedEventArgs e)
+    {
+        if (!HasUnsavedEdits) { ExitEditMode(reloadViewer: false); return; }
+
+        var dialog = new ContentDialog
+        {
+            Title = "Save your changes?",
+            Content = new TextBlock
+            {
+                Text = $"You've made changes to {System.IO.Path.GetFileName(_editPath) ?? "this image"} that "
+                     + "haven't been saved. Saving writes a copy next to the original — the original file is "
+                     + "never modified.",
+                TextWrapping = TextWrapping.Wrap,
+            },
+            PrimaryButtonText = "Save a copy",
+            SecondaryButtonText = "Discard",
+            CloseButtonText = "Keep editing",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = RootGrid.XamlRoot,
+        };
+
+        switch (await dialog.ShowAsync())
+        {
+            case ContentDialogResult.Primary:
+                SaveCopy_Click(sender, e);   // exits the editor itself once the export succeeds
+                break;
+            case ContentDialogResult.Secondary:
+                ExitEditMode(reloadViewer: false);
+                break;
+            default:
+                break;                        // "Keep editing" — stay put
+        }
+    }
 
     // ---- canvas drawing ----
 
@@ -252,6 +295,23 @@ public sealed partial class MainWindow
         var my = oy - src.Y * scale;
         foreach (var m in _markup) DrawShape(ds, m, mx, my, scale);
         if (_pendingShape is MarkupItem ps) DrawShape(ds, ps, mx, my, scale);
+
+        // Lasso selection (oriented space, same mapping). Drawn as a dark/light dashed pair so it stays
+        // visible over any image content.
+        if (_lasso.Count >= 2)
+        {
+            using var path = new CanvasPathBuilder(ds.Device);
+            path.BeginFigure((float)(mx + _lasso[0].X * scale), (float)(my + _lasso[0].Y * scale));
+            for (var i = 1; i < _lasso.Count; i++)
+                path.AddLine((float)(mx + _lasso[i].X * scale), (float)(my + _lasso[i].Y * scale));
+            path.EndFigure(_lassoDrawing ? CanvasFigureLoop.Open : CanvasFigureLoop.Closed);
+            using var geo = CanvasGeometry.CreatePath(path);
+
+            if (!_lassoDrawing) ds.FillGeometry(geo, Color.FromArgb(40, 110, 168, 255));
+            ds.DrawGeometry(geo, Color.FromArgb(200, 0, 0, 0), 3f);
+            using var dash = new CanvasStrokeStyle { DashStyle = CanvasDashStyle.Dash };
+            ds.DrawGeometry(geo, Microsoft.UI.Colors.White, 1.5f, dash);
+        }
     }
 
     /// <summary>Draws the pristine image against the edited one. "before" is put through the same geometry
@@ -372,6 +432,8 @@ public sealed partial class MainWindow
     {
         _cropMode = mode == "crop";
         if (mode != "shape") _markupTool = "";
+        // Crop/markup and the lasso are mutually exclusive tools.
+        if (mode is "crop" or "shape") { _lassoMode = false; UpdateLassoUi(); }
         // Clear any half-finished drag so a previously stuck pointer state can't break the new mode
         // (e.g. a lost pointer-capture that never fired PointerReleased).
         _dragging = false; _pendingCrop = null; _pendingShape = null; _cropDrag = "";
@@ -382,7 +444,38 @@ public sealed partial class MainWindow
     /// shape, the compare view (divider handle and pan/zoom inspection), or panning a zoomed-in preview.</summary>
     private void UpdateOverlayHitTest() =>
         OverlayCanvas.IsHitTestVisible =
-            _cropMode || _markupTool.Length > 0 || _compareMode != "off" || _editZoom > 1.0001;
+            _cropMode || _markupTool.Length > 0 || _lassoMode || _compareMode != "off" || _editZoom > 1.0001;
+
+    // ---- lasso selection ----
+
+    private void LassoTool_Click(object sender, RoutedEventArgs e)
+    {
+        _lassoMode = !_lassoMode;
+        if (_lassoMode)
+        {
+            SetCanvasMode("none");   // clears crop/markup tools
+            _lassoMode = true;       // (SetCanvasMode doesn't know about the lasso)
+        }
+        UpdateLassoUi();
+        UpdateOverlayHitTest();
+        _editCanvas?.Invalidate();
+    }
+
+    private void LassoClear_Click(object sender, RoutedEventArgs e)
+    {
+        _lasso.Clear();
+        _lassoDrawing = false;
+        UpdateLassoUi();
+        _editCanvas?.Invalidate();
+    }
+
+    private void UpdateLassoUi()
+    {
+        if (LassoBtn is not null)
+            LassoBtn.Content = _lassoMode ? "Lasso (on)" : "Lasso";
+        if (FillBtn is not null)
+            FillBtn.IsEnabled = _lasso.Count >= 3 && !_aiBusy;
+    }
 
     /// <summary>True when the pointer is on the split divider's grab zone (the line/handle ±20px).</summary>
     private bool NearSplitDivider(Point pos)
@@ -485,6 +578,17 @@ public sealed partial class MainWindow
             return;
         }
 
+        // Lasso: start a fresh freehand selection.
+        if (_lassoMode)
+        {
+            _lasso.Clear();
+            _lassoDrawing = true;
+            _lasso.Add(DisplayToOriented(e.GetCurrentPoint(OverlayCanvas).Position));
+            OverlayCanvas.CapturePointer(e.Pointer);
+            _editCanvas?.Invalidate();
+            return;
+        }
+
         // Zoomed in with no tool active (including compare views) → drag to pan around the image.
         if (!_cropMode && _markupTool.Length == 0 && _editZoom > 1.0001)
         {
@@ -527,6 +631,15 @@ public sealed partial class MainWindow
     private void Overlay_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
         if (_compareDragging) { SetSplitFrom(e.GetCurrentPoint(OverlayCanvas).Position.X); return; }
+        if (_lassoDrawing)
+        {
+            var lp = DisplayToOriented(e.GetCurrentPoint(OverlayCanvas).Position);
+            // Skip near-duplicate points: a lasso of thousands of points makes the scanline fill crawl.
+            if (_lasso.Count == 0 || Math.Abs(lp.X - _lasso[^1].X) + Math.Abs(lp.Y - _lasso[^1].Y) > 1.5)
+                _lasso.Add(lp);
+            _editCanvas?.Invalidate();
+            return;
+        }
         if (_editPanning)
         {
             var cur = e.GetCurrentPoint(OverlayCanvas).Position;
@@ -559,6 +672,14 @@ public sealed partial class MainWindow
     {
         try { OverlayCanvas.ReleasePointerCapture(e.Pointer); } catch { }
         if (_compareDragging) { _compareDragging = false; return; }
+        if (_lassoDrawing)
+        {
+            _lassoDrawing = false;
+            if (_lasso.Count < 3) _lasso.Clear();   // a stray click isn't a selection
+            UpdateLassoUi();
+            _editCanvas?.Invalidate();
+            return;
+        }
         if (_editPanning) { _editPanning = false; return; }
         FinishOverlayDrag();
     }

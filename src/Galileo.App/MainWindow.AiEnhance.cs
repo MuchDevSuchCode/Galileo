@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Galileo.Services;
@@ -47,6 +48,94 @@ public sealed partial class MainWindow
     private async void AiAuto_Click(object sender, RoutedEventArgs e) => await RunAutopilotAsync();
 
     private enum AiJob { Enhance, Upscale, Denoise, Faces }
+
+    /// <summary>Content-aware fill: rasterize the lasso into a source-space mask and let LaMa paint it out.</summary>
+    private async void AiFill_Click(object sender, RoutedEventArgs e)
+    {
+        if (_aiBusy || _editor.Source is null || _lasso.Count < 3) return;
+        if (!await EnsureModelAsync(AiModel.Inpaint)) return;
+
+        SetAiBusy(true);
+        _aiCts = new CancellationTokenSource();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var before = _editor.GetSourcePixels(0, out var w, out var h);
+
+            // The lasso is drawn on the oriented preview; map it back to raw source pixels.
+            var poly = new List<Point>(_lasso.Count);
+            foreach (var p in _lasso)
+            {
+                if (!_editor.TryOrientedToSource(_edit, p, out var sp)) continue;
+                poly.Add(sp);
+            }
+            if (poly.Count < 3) { AiSay("Selection is outside the image."); return; }
+
+            var mask = RasterizePolygon(poly, w, h);
+            AiSay("Filling the selection…");
+
+            var p2 = AiProgressReporter();
+            var ct = _aiCts.Token;
+            var engine = Ai;
+            var result = await Task.Run(() => Inpaint.Fill(engine, before, w, h, mask, p2, ct), ct);
+
+            ApplyAiResult(before, w, h, result, w, h);
+            _lasso.Clear();
+            UpdateLassoUi();
+            sw.Stop();
+            AiSay($"Filled the selection  ·  {engine.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");
+        }
+        catch (OperationCanceledException) { AiSay("Cancelled."); }
+        catch (Exception ex)
+        {
+            App.Log("AiFill", ex);
+            await MessageAsync("Content-aware fill", "The fill failed.\n\n" + ex.Message);
+            AiSay(null);
+        }
+        finally
+        {
+            _aiCts?.Dispose();
+            _aiCts = null;
+            SetAiBusy(false);
+            UpdateLassoUi();
+        }
+    }
+
+    /// <summary>Fills a closed polygon into a byte mask (255 inside) by scanline — testing every pixel
+    /// against every edge would crawl on a lasso with hundreds of points.</summary>
+    private static byte[] RasterizePolygon(List<Point> poly, int w, int h)
+    {
+        var mask = new byte[w * h];
+        var n = poly.Count;
+        var xs = new List<double>(8);
+
+        var minY = Math.Max(0, (int)Math.Floor(poly.Min(p => p.Y)));
+        var maxY = Math.Min(h - 1, (int)Math.Ceiling(poly.Max(p => p.Y)));
+
+        for (var y = minY; y <= maxY; y++)
+        {
+            var cy = y + 0.5;
+            xs.Clear();
+            for (var i = 0; i < n; i++)
+            {
+                var a = poly[i];
+                var b = poly[(i + 1) % n];           // closing edge included
+                if (a.Y == b.Y) continue;
+                // Half-open rule: counts each crossing once, so shared vertices can't double-count.
+                if (cy < Math.Min(a.Y, b.Y) || cy >= Math.Max(a.Y, b.Y)) continue;
+                xs.Add(a.X + (cy - a.Y) * (b.X - a.X) / (b.Y - a.Y));
+            }
+            if (xs.Count < 2) continue;
+            xs.Sort();
+            for (var i = 0; i + 1 < xs.Count; i += 2)
+            {
+                var x0 = Math.Max(0, (int)Math.Ceiling(xs[i] - 0.5));
+                var x1 = Math.Min(w - 1, (int)Math.Floor(xs[i + 1] - 0.5));
+                for (var x = x0; x <= x1; x++) mask[y * w + x] = 255;
+            }
+        }
+        return mask;
+    }
 
     private void SetAiBusy(bool busy)
     {
