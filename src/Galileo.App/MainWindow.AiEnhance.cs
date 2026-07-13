@@ -28,7 +28,16 @@ public sealed partial class MainWindow
     private bool _aiBusy;
     private CancellationTokenSource? _aiCts;
 
-    private double Strength => (AiStrength?.Value ?? 80) / 100.0;
+    // Live denoise: the network runs once at full strength; the strength slider then re-blends the
+    // original against that processed result instantly, always re-rendering from the original rather
+    // than compounding passes. Invalidated whenever any other operation rewrites the pixels.
+    private byte[]? _denoiseBase;
+    private byte[]? _denoiseProcessed;
+    private int _denoiseW, _denoiseH;
+
+    internal void InvalidateLiveDenoise() { _denoiseBase = null; _denoiseProcessed = null; }
+
+    private double Strength => (AiStrength?.Value ?? 40) / 100.0;
     private double Fidelity => (AiFidelity?.Value ?? 70) / 100.0;
 
     private async void AiEnhance_Click(object sender, RoutedEventArgs e) => await RunAiAsync(AiJob.Enhance);
@@ -94,10 +103,22 @@ public sealed partial class MainWindow
         finally { SetAiBusy(false); }
     }
 
+    /// <summary>Called when the live-denoise slider moves: re-blend original vs processed and redisplay.
+    /// This always starts from the original pixels, so dragging never compounds the effect.</summary>
+    private void AiStrength_Changed(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (_aiBusy || _denoiseBase is null || _denoiseProcessed is null) return;
+        var blended = AiEngine.Blend(_denoiseBase, _denoiseProcessed, Strength);
+        _editor.ReplaceSource(blended, _denoiseW, _denoiseH);
+        AiSay($"Denoise strength {Strength:P0}");
+        InvalidateEditImage();
+    }
+
     /// <summary>Pushes the pre-AI pixels onto the shared undo history, then swaps in the result. Pushed only
     /// on success, so a failed or cancelled run doesn't leave a bogus entry to "undo".</summary>
     private void ApplyAiResult(byte[] before, int beforeW, int beforeH, byte[] result, int outW, int outH)
     {
+        InvalidateLiveDenoise();   // any pixel rewrite obsoletes the live-blend pair (denoise re-arms after)
         PushUndo(before, beforeW, beforeH);
         var factor = _editor.ReplaceSource(result, outW, outH);
         if (_edit.Crop is { } c && Math.Abs(factor - 1.0) > 0.001)
@@ -147,12 +168,20 @@ public sealed partial class MainWindow
 
             var engine = Ai;
             int outW = w, outH = h, faces = 0;
-            var result = await Task.Run(() => job switch
+            byte[]? denoisedFull = null;   // pure processed result, kept so the strength slider can re-blend live
+            var result = await Task.Run(() =>
             {
-                AiJob.Upscale => engine.Enhance(pixels, w, h, true, out outW, out outH, p, ct),
-                AiJob.Enhance => engine.Enhance(pixels, w, h, false, out outW, out outH, p, ct),
-                AiJob.Denoise => engine.Denoise(pixels, w, h, strength, p, ct),
-                _ => FaceRestore.Run(engine, pixels, w, h, fidelity, out faces, p, ct),
+                switch (job)
+                {
+                    case AiJob.Upscale: return engine.Enhance(pixels, w, h, true, out outW, out outH, p, ct);
+                    case AiJob.Enhance: return engine.Enhance(pixels, w, h, false, out outW, out outH, p, ct);
+                    case AiJob.Denoise:
+                        // Run the network once at 100%; the displayed result is a blend, and the slider can
+                        // then re-blend from the original instantly without another inference pass.
+                        denoisedFull = engine.Denoise(pixels, w, h, 1.0, p, ct);
+                        return AiEngine.Blend(pixels, denoisedFull, strength);
+                    default: return FaceRestore.Run(engine, pixels, w, h, fidelity, out faces, p, ct);
+                }
             }, ct);
 
             if (job == AiJob.Faces && faces == 0)
@@ -162,11 +191,16 @@ public sealed partial class MainWindow
             }
 
             ApplyAiResult(before, bw, bh, result, outW, outH);
+            if (job == AiJob.Denoise)
+            {
+                // Arm the live slider (after ApplyAiResult, which clears any previous pair).
+                _denoiseBase = pixels; _denoiseProcessed = denoisedFull; _denoiseW = w; _denoiseH = h;
+            }
             sw.Stop();
             AiSay(job switch
             {
                 AiJob.Upscale => $"Upscaled → {outW}×{outH}",
-                AiJob.Denoise => $"Denoised (strength {strength:P0})",
+                AiJob.Denoise => $"Denoised (strength {strength:P0}) — drag the slider to fine-tune live",
                 AiJob.Faces => $"Restored {faces} face{(faces == 1 ? "" : "s")}",
                 _ => $"Enhanced → {outW}×{outH}",
             } + $"  ·  {engine.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");

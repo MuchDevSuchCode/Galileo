@@ -1077,7 +1077,7 @@
                                         ToolTipService.ToolTip="Restore faces (CodeFormer)" />
                             </StackPanel>
                             <TextBlock Text="Denoise strength" Foreground="White" FontSize="12" />
-                            <Slider x:Name="AiStrength" Minimum="0" Maximum="100" Value="80" />
+                            <Slider x:Name="AiStrength" Minimum="0" Maximum="100" Value="40" ValueChanged="AiStrength_Changed" />
                             <TextBlock Text="Face fidelity (low = more invented detail)" Foreground="White" FontSize="12" />
                             <Slider x:Name="AiFidelity" Minimum="0" Maximum="100" Value="70" />
                             <ProgressBar x:Name="AiProgress" Minimum="0" Maximum="1" Value="0" Visibility="Collapsed" />

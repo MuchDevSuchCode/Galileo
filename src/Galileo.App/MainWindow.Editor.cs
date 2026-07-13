@@ -104,6 +104,7 @@ public sealed partial class MainWindow
         _compareMode = "off"; _compareSplit = 0.5; _compareDragging = false;
         _editZoom = 1.0; _editPanX = _editPanY = 0; _editPanning = false;
         if (EditZoomLabel is not null) EditZoomLabel.Content = "Fit";
+        InvalidateLiveDenoise();
         try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true; // fresh image → fresh cache
         ResetEditSliders();
         _editLoading = true;
@@ -157,6 +158,7 @@ public sealed partial class MainWindow
         try { _ai?.ReleaseSessions(); } catch { }
         _editUndo.Clear();   // undo entries can hold full-resolution bitmaps
         _editRedo.Clear();
+        InvalidateLiveDenoise();   // the pair holds two full-resolution buffers
         try { _editor.Unload(); } catch { }
         GC.Collect();
         GC.WaitForPendingFinalizers();
@@ -280,18 +282,24 @@ public sealed partial class MainWindow
             case "side":
             {
                 var hw = cw / 2;
-                var s2 = Math.Min(hw / src.Width, ch / src.Height);
+                var s2 = Math.Min(hw / src.Width, ch / src.Height) * _editZoom;
                 double dw2 = src.Width * s2, dh2 = src.Height * s2;
-                var oy2 = (ch - dh2) / 2;
-                // Butt the two images up against the centre line (before right-justified, after
-                // left-justified) so they sit next to each other instead of floating in their halves.
-                var oxL = hw - dw2;
-                var oxR = hw;
-                ds.DrawImage(before, new Rect(oxL, oy2, dw2, dh2), src);
-                ds.DrawImage(after, new Rect(oxR, oy2, dw2, dh2), src);
-                ds.DrawLine((float)hw, (float)oy2, (float)hw, (float)(oy2 + dh2), Microsoft.UI.Colors.White, 1);
-                Tag("Before", oxL + 8, oy2 + 8);
-                Tag("After", oxR + 8, oy2 + 8);
+                var oy2 = (ch - dh2) / 2 + _editPanY;
+
+                // Fits in a half → butt the images against the centre line so they sit next to each other.
+                // Zoomed past the half → centre both on the same source region (plus pan), so the two sides
+                // show the SAME part of the image for inspection. Each half clips its own image.
+                double oxL, oxR;
+                if (dw2 <= hw) { oxL = hw - dw2 + _editPanX; oxR = hw + _editPanX; }
+                else { oxL = (hw - dw2) / 2 + _editPanX; oxR = hw + (hw - dw2) / 2 + _editPanX; }
+
+                using (ds.CreateLayer(1f, new Rect(0, 0, hw, ch)))
+                    ds.DrawImage(before, new Rect(oxL, oy2, dw2, dh2), src);
+                using (ds.CreateLayer(1f, new Rect(hw, 0, hw, ch)))
+                    ds.DrawImage(after, new Rect(oxR, oy2, dw2, dh2), src);
+                ds.DrawLine((float)hw, 0, (float)hw, (float)ch, Microsoft.UI.Colors.White, 1);
+                Tag("Before", 8, 8);
+                Tag("After", hw + 8, 8);
                 break;
             }
 
@@ -368,10 +376,18 @@ public sealed partial class MainWindow
     }
 
     /// <summary>The overlay only needs pointer events when something is actually draggable: a crop, a markup
-    /// shape, the before/after split divider, or panning a zoomed-in preview.</summary>
+    /// shape, the compare view (divider handle and pan/zoom inspection), or panning a zoomed-in preview.</summary>
     private void UpdateOverlayHitTest() =>
         OverlayCanvas.IsHitTestVisible =
-            _cropMode || _markupTool.Length > 0 || _compareMode == "split" || _editZoom > 1.0001;
+            _cropMode || _markupTool.Length > 0 || _compareMode != "off" || _editZoom > 1.0001;
+
+    /// <summary>True when the pointer is on the split divider's grab zone (the line/handle ±20px).</summary>
+    private bool NearSplitDivider(Point pos)
+    {
+        if (_editFitRect.Width <= 0) return false;
+        var lineX = _editFitRect.X + _editFitRect.Width * Math.Clamp(_compareSplit, 0, 1);
+        return Math.Abs(pos.X - lineX) <= 20;
+    }
 
     // ---- preview zoom (scroll wheel + buttons) ----
 
@@ -452,8 +468,9 @@ public sealed partial class MainWindow
 
     private void Overlay_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
-        // Dragging the before/after divider takes precedence over any editing tool.
-        if (_compareMode == "split")
+        // Split mode: only a grab on the divider handle drags it — everywhere else the drag pans, so the
+        // user can zoom in and inspect matching areas on both sides.
+        if (_compareMode == "split" && NearSplitDivider(e.GetCurrentPoint(OverlayCanvas).Position))
         {
             _compareDragging = true;
             SetSplitFrom(e.GetCurrentPoint(OverlayCanvas).Position.X);
@@ -461,7 +478,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        // Zoomed in with no tool active → drag to pan around the image.
+        // Zoomed in with no tool active (including compare views) → drag to pan around the image.
         if (!_cropMode && _markupTool.Length == 0 && _editZoom > 1.0001)
         {
             _editPanning = true;
@@ -862,7 +879,7 @@ public sealed partial class MainWindow
         PrunePixelSnapshots(to);
 
         _edit = entry.State;
-        if (entry.Pixels is not null) _editor.ReplaceSource(entry.Pixels, entry.W, entry.H);
+        if (entry.Pixels is not null) { _editor.ReplaceSource(entry.Pixels, entry.W, entry.H); InvalidateLiveDenoise(); }
 
         SyncSlidersFromState();
         InvalidateEditImage();
@@ -875,6 +892,7 @@ public sealed partial class MainWindow
         // source; a plain slider reset stays cheap.
         if (_editor.SourceModified) PushUndoPixels(); else PushUndo();
         _editor.RevertToOriginal();
+        InvalidateLiveDenoise();
         _edit = new EditState();
         _markup.Clear();
         ResetEditSliders();
