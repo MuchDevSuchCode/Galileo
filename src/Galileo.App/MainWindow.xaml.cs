@@ -361,6 +361,15 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            // Videos/audio aren't photos — LoadFiles below would filter them out and leave an EMPTY
+            // viewer. Route them straight to the embedded media player instead.
+            if (PhotoLibrary.IsMedia(path))
+            {
+                var fi = new System.IO.FileInfo(path);
+                OpenVideoFromExplorer(new ExplorerItem(path, ExplorerItemKind.File, fi.Length, fi.LastWriteTime, fi.Extension));
+                return;
+            }
+
             _allPhotos.Clear();
             foreach (var p in _library.LoadFiles(new[] { path })) _allPhotos.Add(p);
             _showHiddenAlbum = false;
@@ -2929,8 +2938,18 @@ public sealed partial class MainWindow : Window
             if (!item.IsFolder)
                 menu.Items.Add(SMI("Open with…", null, (_, _) => OpenWithItem2(item.Path)));
             menu.Items.Add(new MenuFlyoutSeparator());
-            menu.Items.Add(SMI("Cut", Symbol.Cut, async (_, _) => await CutToClipboardAsync(item.Path)));
-            menu.Items.Add(SMI("Copy", Symbol.Copy, async (_, _) => await CopyFileToClipboardAsync(item.Path)));
+            menu.Items.Add(SMI("Cut", Symbol.Cut, async (_, _) =>
+            {
+                var sel = SelectedExplorerItems();
+                if (sel.All(s => s != item)) sel = new List<ExplorerItem> { item };
+                await CopyItemsToClipboardAsync(sel, cut: true);
+            }));
+            menu.Items.Add(SMI("Copy", Symbol.Copy, async (_, _) =>
+            {
+                var sel = SelectedExplorerItems();
+                if (sel.All(s => s != item)) sel = new List<ExplorerItem> { item };
+                await CopyItemsToClipboardAsync(sel, cut: false);
+            }));
             menu.Items.Add(SMI("Copy path", Symbol.Link, (_, _) => CopyTextToClipboard(item.Path)));
             menu.Items.Add(SMI("Paste", Symbol.Paste, async (_, _) => await PasteIntoCurrentAsync()));
             if (item.IsImage)
@@ -3100,23 +3119,6 @@ public sealed partial class MainWindow : Window
             1 => $"Converted to {System.IO.Path.GetFileName(lastPath)}",
             _ => $"Converted {ok} images to {targetExt.TrimStart('.').ToUpperInvariant()}",
         };
-    }
-
-    private async System.Threading.Tasks.Task CopyFileToClipboardAsync(string path)
-    {
-        try
-        {
-            IStorageItem item = Directory.Exists(path)
-                ? await StorageFolder.GetFolderFromPathAsync(path)
-                : await StorageFile.GetFileFromPathAsync(path);
-            var data = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
-            data.SetStorageItems(new[] { item });
-            _suppressClipChange = true;
-            Clipboard.SetContent(data);
-            _fileClip = (new List<string> { path }, false);
-            StatusText.Text = "Copied to clipboard";
-        }
-        catch (Exception ex) { StatusText.Text = $"Copy failed: {ex.Message}"; }
     }
 
     private void CopyTextToClipboard(string text)
@@ -3378,26 +3380,44 @@ public sealed partial class MainWindow : Window
     /// <summary>Copies (or cuts) the selected explorer items to the clipboard as files/folders,
     /// so they can be pasted here or into Windows Explorer.</summary>
     private async System.Threading.Tasks.Task CopySelectedExplorerAsync(bool cut)
+        => await CopyItemsToClipboardAsync(SelectedExplorerItems(), cut);
+
+    /// <summary>Copies (or cuts) the given items to both the in-app clip and the system clipboard.
+    /// The in-app clip is recorded first so pasting inside Galileo works for the FULL set even when
+    /// the WinRT storage-item round-trip below is slow or fails for some items (large selections,
+    /// network shares); items WinRT can't wrap are simply left out of the system clipboard.</summary>
+    private async System.Threading.Tasks.Task CopyItemsToClipboardAsync(List<ExplorerItem> selection, bool cut)
     {
         // Drives can't be copied/moved — only real files and folders.
-        var selection = SelectedExplorerItems().Where(i => i.Kind != ExplorerItemKind.Drive).ToList();
+        selection = selection.Where(i => i.Kind != ExplorerItemKind.Drive).ToList();
         if (selection.Count == 0) return;
+
+        _fileClip = (selection.Select(s => s.Path).ToList(), cut);
+        StatusText.Text = $"{(cut ? "Cut" : "Copied")} {selection.Count} item(s)";
+
+        // Resolve concurrently: sequential WinRT lookups take seconds for hundreds of files, during
+        // which a paste in Explorer would still see the OLD clipboard.
+        var resolved = await System.Threading.Tasks.Task.WhenAll(selection.Select(async it =>
+        {
+            try
+            {
+                return it.IsFolder
+                    ? (IStorageItem)await StorageFolder.GetFolderFromPathAsync(it.Path)
+                    : await StorageFile.GetFileFromPathAsync(it.Path);
+            }
+            catch { return null; } // not visible to WinRT (locked, gone, odd path) — the in-app clip still has it
+        }));
+        var items = resolved.Where(i => i is not null).Cast<IStorageItem>().ToList();
+        if (items.Count == 0) return; // in-app paste still works via _fileClip
+
         try
         {
-            var items = new List<IStorageItem>();
-            foreach (var it in selection)
-                items.Add(it.IsFolder
-                    ? await StorageFolder.GetFolderFromPathAsync(it.Path)
-                    : await StorageFile.GetFileFromPathAsync(it.Path));
-
             var data = new DataPackage { RequestedOperation = cut ? DataPackageOperation.Move : DataPackageOperation.Copy };
             data.SetStorageItems(items);
             _suppressClipChange = true;
             Clipboard.SetContent(data);
-            _fileClip = (selection.Select(s => s.Path).ToList(), cut);
-            StatusText.Text = $"{(cut ? "Cut" : "Copied")} {items.Count} item(s)";
         }
-        catch (Exception ex) { StatusText.Text = $"{(cut ? "Cut" : "Copy")} failed: {ex.Message}"; }
+        catch { _suppressClipChange = false; } // clipboard busy — in-app paste still works via _fileClip
     }
 
     private async System.Threading.Tasks.Task DeleteExplorerAsync(ExplorerItem item)
@@ -4026,25 +4046,6 @@ public sealed partial class MainWindow : Window
     {
         if (sender.TabItems.Count <= 1) return; // always keep one tab
         sender.TabItems.Remove(args.Tab);       // removal re-selects a neighbour → SelectionChanged loads it
-    }
-
-    // ===================== Cut / move / drop between folders =====================
-
-    private async Task CutToClipboardAsync(string path)
-    {
-        try
-        {
-            IStorageItem si = Directory.Exists(path)
-                ? await StorageFolder.GetFolderFromPathAsync(path)
-                : await StorageFile.GetFileFromPathAsync(path);
-            var data = new DataPackage { RequestedOperation = DataPackageOperation.Move };
-            data.SetStorageItems(new[] { si });
-            _suppressClipChange = true;
-            Clipboard.SetContent(data);
-            _fileClip = (new List<string> { path }, true);
-            StatusText.Text = "Cut to clipboard";
-        }
-        catch (Exception ex) { StatusText.Text = $"Cut failed: {ex.Message}"; }
     }
 
     // ===================== Rubber-band (marquee) selection =====================
