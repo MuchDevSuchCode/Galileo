@@ -384,14 +384,23 @@ public sealed partial class MainWindow : Window
             var dir = System.IO.Path.GetDirectoryName(path);
             if (string.IsNullOrEmpty(dir)) return;
 
+            // Order the siblings the way the EXPLORER would show this folder — its remembered
+            // per-folder sort, else the current global sort — so the viewer's arrow keys walk the
+            // same sequence the user sees in the file list (this window may never have shown it).
+            var (sortBy, sortDesc) = _state.FolderSorts.TryGetValue(dir, out var pref)
+                ? (pref.SortBy, pref.SortDescending)
+                : (_state.SortBy, _state.SortDescending);
             var siblings = await Task.Run(() =>
             {
                 try
                 {
-                    return System.IO.Directory.EnumerateFiles(dir)
-                        .Where(PhotoLibrary.IsSupported)
-                        .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                    long SafeLen(System.IO.FileInfo f) { try { return f.Length; } catch { return 0; } }
+                    var files = new System.IO.DirectoryInfo(dir).EnumerateFiles()
+                        .Where(f => PhotoLibrary.IsSupported(f.FullName))
+                        .Select(f => new ExplorerItem(f.FullName, ExplorerItemKind.File, SafeLen(f),
+                                                      f.LastWriteTime, FileSystemService.TypeName(f.Extension)))
                         .ToList();
+                    return SortItems(files, sortBy, sortDesc).Select(i => i.Path).ToList();
                 }
                 catch { return new List<string>(); }
             });
@@ -1901,11 +1910,14 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private List<ExplorerItem> SortItems(List<ExplorerItem> items)
+    private List<ExplorerItem> SortItems(List<ExplorerItem> items) =>
+        SortItems(items, _state.SortBy, _state.SortDescending);
+
+    private static List<ExplorerItem> SortItems(List<ExplorerItem> items, string sortBy, bool sortDescending)
     {
-        var dir = _state.SortDescending ? -1 : 1;
+        var dir = sortDescending ? -1 : 1;
         int ByName(ExplorerItem a, ExplorerItem b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
-        int Primary(ExplorerItem a, ExplorerItem b) => _state.SortBy switch
+        int Primary(ExplorerItem a, ExplorerItem b) => sortBy switch
         {
             "Date" => a.Modified.CompareTo(b.Modified),
             "Type" => string.Compare(a.TypeName, b.TypeName, StringComparison.OrdinalIgnoreCase) is var c && c != 0 ? c : ByName(a, b),

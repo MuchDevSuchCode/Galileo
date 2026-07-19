@@ -126,7 +126,7 @@ public sealed class FileSystemService
     private static bool IsWindowsHidden(FileAttributes a) =>
         a.HasFlag(FileAttributes.Hidden) || a.HasFlag(FileAttributes.System);
 
-    private static string TypeName(string ext) =>
+    internal static string TypeName(string ext) =>
         string.IsNullOrEmpty(ext) ? "File" : $"{ext.TrimStart('.').ToUpperInvariant()} File";
 
     private static IEnumerable<T> SafeEnumerate<T>(Func<IEnumerable<T>> source)
