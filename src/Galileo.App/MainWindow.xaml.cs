@@ -6525,7 +6525,7 @@ public sealed partial class MainWindow : Window
             args.Cancel = true;
             if (await ConfirmLeaveEditorAsync())
             {
-                ExitEditMode(reloadViewer: false);   // leaves the editor, so this branch won't re-trigger
+                ExitEditMode(reloadViewer: false, activateWindow: false);   // leaves the editor, so this branch won't re-trigger
                 Close();
             }
             return;

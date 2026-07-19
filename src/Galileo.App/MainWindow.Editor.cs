@@ -195,7 +195,7 @@ public sealed partial class MainWindow
         finally { _editLoadGate.Release(); }
     }
 
-    private void ExitEditMode(bool reloadViewer)
+    private void ExitEditMode(bool reloadViewer, bool activateWindow = true)
     {
         EditorView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Visible;
@@ -222,6 +222,24 @@ public sealed partial class MainWindow
         GC.Collect();
 
         if (reloadViewer) _ = LoadCurrentAsync();
+
+        // Leaving the editor must land the user back on THIS window's viewer. Saving over the original
+        // reshuffles the main explorer window's list (same process, same UI thread), which can pull the
+        // foreground to it — re-assert activation so the viewer the user was working in stays on top.
+        // Skipped when the window is closing (activating a dying window just flashes it).
+        if (activateWindow)
+        {
+            try { Activate(); } catch { }
+            // The explorer refresh is debounced (~400ms after the file lands) and can steal focus AFTER
+            // we exit — re-assert once more after it has had its turn.
+            var t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
+            t.Tick += (_, _) =>
+            {
+                t.Stop();
+                if (Visible) { try { Activate(); } catch { } }
+            };
+            t.Start();
+        }
     }
 
     /// <summary>True when the editor holds work that isn't on disk: any adjustment/crop/filter, any markup,
