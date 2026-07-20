@@ -65,6 +65,9 @@ public sealed partial class MainWindow
     private bool _lassoMode;
     private readonly List<Point> _lasso = new();
     private bool _lassoDrawing;
+    // Photoshop-style combine mode, captured from the modifier keys when the drag STARTS:
+    // plain = new selection, Shift = add, Alt = subtract, Shift+Alt = intersect.
+    private string _lassoCombine = "new";
 
     // The actual selection: a mask in RAW SOURCE pixels. Both the lasso and "Select text" produce one, so
     // Fill has a single input regardless of how the selection was made. _selOverlay is just its visual.
@@ -415,7 +418,16 @@ public sealed partial class MainWindow
             if (!_lassoDrawing) ds.FillGeometry(geo, Color.FromArgb(40, 110, 168, 255));
             ds.DrawGeometry(geo, Color.FromArgb(200, 0, 0, 0), 3f);
             using var dash = new CanvasStrokeStyle { DashStyle = CanvasDashStyle.Dash };
-            ds.DrawGeometry(geo, Microsoft.UI.Colors.White, 1.5f, dash);
+            // While drawing, the dash tells the user which combine mode this stroke is in:
+            // green = add (Shift), red = subtract (Alt), amber = intersect (Shift+Alt).
+            var dashColor = !_lassoDrawing ? Microsoft.UI.Colors.White : _lassoCombine switch
+            {
+                "add" => Color.FromArgb(255, 90, 220, 90),
+                "subtract" => Color.FromArgb(255, 255, 110, 110),
+                "intersect" => Color.FromArgb(255, 255, 210, 80),
+                _ => Microsoft.UI.Colors.White,
+            };
+            ds.DrawGeometry(geo, dashColor, 1.5f, dash);
         }
     }
 
@@ -579,7 +591,9 @@ public sealed partial class MainWindow
                 if (CompareCombo.Items.Count > 0) CompareCombo.SelectedIndex = 0;
                 _editLoading = false;
             }
+            AiSay("Lasso: drag to select · Shift adds · Alt subtracts · Shift+Alt intersects · Ctrl+D deselects");
         }
+        else AiSay(null);
         UpdateLassoUi();
         UpdateOverlayHitTest();
         _editCanvas?.Invalidate();
@@ -696,9 +710,14 @@ public sealed partial class MainWindow
             return;
         }
 
-        // Lasso: start a fresh freehand selection.
+        // Lasso: start a freehand stroke. The modifiers decide how it combines with the existing
+        // selection on release (Photoshop keys) — read HERE at drag start, like Photoshop does.
         if (_lassoMode)
         {
+            _lassoCombine = IsShiftDown() && IsAltDown() ? "intersect"
+                          : IsShiftDown() ? "add"
+                          : IsAltDown() ? "subtract"
+                          : "new";
             _lasso.Clear();
             _lassoDrawing = true;
             _lasso.Add(DisplayToOriented(e.GetCurrentPoint(OverlayCanvas).Position));

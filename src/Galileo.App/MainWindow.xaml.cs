@@ -5798,6 +5798,8 @@ public sealed partial class MainWindow : Window
                 Navigate(+1); e.Handled = true; break;
             case VirtualKey.Escape when SettingsOverlay.Visibility == Visibility.Visible:
                 CancelSettings(); e.Handled = true; break;
+            case VirtualKey.D when InEditor && IsCtrlDown() && !IsTextInputFocused():
+                ClearSelection(); e.Handled = true; break;      // Photoshop's Deselect
             case VirtualKey.Escape when InEditor:
                 EditCancel_Click(this, new RoutedEventArgs());  // same unsaved-changes guard as Cancel
                 e.Handled = true; break;

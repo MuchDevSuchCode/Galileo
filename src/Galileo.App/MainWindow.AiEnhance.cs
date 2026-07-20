@@ -105,7 +105,8 @@ public sealed partial class MainWindow
 
     private enum AiJob { Enhance, Upscale, Denoise, Faces }
 
-    /// <summary>Turns the drawn lasso into the source-space selection mask.</summary>
+    /// <summary>Turns the drawn lasso into the source-space selection mask, combining it with any
+    /// existing selection per the Photoshop-style mode captured at drag start (add/subtract/intersect).</summary>
     private void BuildSelectionFromLasso()
     {
         if (_editor.Source is null || _lasso.Count < 3) { ClearSelection(); return; }
@@ -117,7 +118,32 @@ public sealed partial class MainWindow
             if (_editor.TryOrientedToSource(_edit, p, out var sp)) poly.Add(sp);
 
         if (poly.Count < 3) { ClearSelection(); return; }
-        SetSelection(RasterizePolygon(poly, w, h), w, h);
+        var shape = RasterizePolygon(poly, w, h);
+        _lasso.Clear();   // committed — from here the tinted mask overlay IS the selection's visual
+
+        var old = _selMask is { } m && m.Length == shape.Length ? m : null;
+        switch (_lassoCombine)
+        {
+            case "add" when old is not null:
+                for (var i = 0; i < shape.Length; i++) if (old[i] != 0) shape[i] = 255;
+                break;
+            case "subtract":
+                if (old is null) { SetSelection(null, 0, 0); return; }   // nothing to subtract from
+                var cut = (byte[])old.Clone();
+                for (var i = 0; i < shape.Length; i++) if (shape[i] != 0) cut[i] = 0;
+                shape = cut;
+                break;
+            case "intersect" when old is not null:
+                for (var i = 0; i < shape.Length; i++) shape[i] = (byte)(old[i] != 0 && shape[i] != 0 ? 255 : 0);
+                break;
+        }
+
+        // Subtract/intersect can leave nothing — that's "no selection", not an invisible one.
+        var any = false;
+        for (var i = 0; i < shape.Length; i++) if (shape[i] != 0) { any = true; break; }
+        if (!any) { ClearSelection(); AiSay("No pixels selected."); return; }
+
+        SetSelection(shape, w, h);
     }
 
     /// <summary>Finds text (watermarks, captions, timestamps) and selects it — no drawing required.</summary>

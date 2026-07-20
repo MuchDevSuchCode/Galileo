@@ -1097,7 +1097,7 @@
                                     ToolTipService.ToolTip="Find watermarks / captions / timestamps automatically and select them" />
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <Button x:Name="LassoBtn" Content="Lasso" Click="LassoTool_Click"
-                                        ToolTipService.ToolTip="Draw freehand around something to select it" />
+                                        ToolTipService.ToolTip="Draw freehand around something to select it.&#x0a;Shift+drag adds to the selection, Alt+drag subtracts,&#x0a;Shift+Alt+drag intersects, Ctrl+D deselects." />
                                 <Button x:Name="FillBtn" Content="Fill" Click="AiFill_Click" IsEnabled="False"
                                         ToolTipService.ToolTip="Content-aware fill: remove the selection and paint in what belongs there" />
                                 <Button Content="Clear" Click="LassoClear_Click"
