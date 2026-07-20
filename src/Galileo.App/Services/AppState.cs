@@ -59,6 +59,11 @@ public sealed class AppState
     public bool PeekEnabled { get; set; } = true;             // Spacebar Quick Look preview in the explorer
     public bool ShowAlbumArt { get; set; } = true;            // show embedded cover art when playing audio
     public bool StartVideoMuted { get; set; }                 // new videos begin muted (off by default)
+
+    /// <summary>Remembered playback audio state, restored when the next video/audio plays:
+    /// muted stays muted, otherwise the last volume (unless "Start videos muted" forces a mute).</summary>
+    public bool VideoMuted { get; set; }
+    public double VideoVolume { get; set; } = 100;
     public string SortBy { get; set; } = "Name";              // Name | Date | Type | Size
     public bool SortDescending { get; set; }
     public string GroupBy { get; set; } = "None";             // None | Name | Date | Type | Size

@@ -255,6 +255,7 @@ public sealed partial class MainWindow : Window
             _vaultPushDebounce.Stop();
             if (_sharing?.HasActiveViewers == true) _ = _sharing.NotifyVaultChangedAsync();
         };
+        _volSaveDebounce.Tick += (_, _) => { _volSaveDebounce.Stop(); _state.Save(); };
 
         // Track activation: privacy re-hide, catch-up of deferred folder refreshes, and a diagnostic
         // trail (CodeActivated on a window the user didn't click = something programmatic stole focus).
@@ -2674,11 +2675,12 @@ public sealed partial class MainWindow : Window
                 // Movie category → full multichannel output (no stereo downmix); Windows' spatial
                 // engine (Dolby Atmos / DTS:X / Windows Sonic) on the output device renders surround.
                 mp.AudioCategory = Windows.Media.Playback.MediaPlayerAudioCategory.Movie;
-                // Reset mute per clip so a previously-muted video doesn't silence the next one; honor
-                // "Start videos muted" only for video (not audio).
-                _videoMuted = !isAudio && _state.StartVideoMuted;
-                if (_videoMuted && VideoVolumeSlider.Value > 0) VideoVolumeSlider.Value = 0; // keep slider in sync
-                else if (!_videoMuted && VideoVolumeSlider.Value <= 0) VideoVolumeSlider.Value = 100;
+                // Restore the remembered audio state: muted stays muted, otherwise the last volume.
+                // "Start videos muted" (opt-in, Settings) still forces a muted start for video.
+                var remVol = Math.Clamp(_state.VideoVolume, 0, 100);
+                if (Math.Abs(VideoVolumeSlider.Value - remVol) > 0.5) VideoVolumeSlider.Value = remVol; // fires SliderChanged
+                _videoMuted = _state.VideoMuted || (!isAudio && _state.StartVideoMuted);
+                _state.VideoMuted = _videoMuted;   // SliderChanged just derived mute from the volume — put the truth back
                 mp.IsMuted = _videoMuted;
                 mp.Volume = VideoVolumeSlider.Value / 100.0;
                 mp.IsLoopingEnabled = _videoRepeat;
@@ -2690,11 +2692,16 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { StatusText.Text = $"Couldn't play video: {ex.Message}"; App.Log("OpenVideo", ex); }
     }
 
+    // Debounces state.json writes while the volume slider is being dragged.
+    private readonly DispatcherTimer _volSaveDebounce = new() { Interval = TimeSpan.FromMilliseconds(600) };
+
     /// <summary>Speaker icon: toggle mute/unmute.</summary>
     private void VideoVolume_Click(object sender, RoutedEventArgs e)
     {
         _videoMuted = !_videoMuted;
         if (VideoPlayer.MediaPlayer is not null) VideoPlayer.MediaPlayer.IsMuted = _videoMuted;
+        _state.VideoMuted = _videoMuted;   // remembered for the next video
+        _state.Save();
         UpdateVideoToggleIcons();
     }
 
@@ -2703,6 +2710,13 @@ public sealed partial class MainWindow : Window
         if (VideoPlayer.MediaPlayer is not null) VideoPlayer.MediaPlayer.Volume = e.NewValue / 100.0;
         _videoMuted = e.NewValue <= 0; // dragging to 0 mutes; above 0 unmutes
         if (VideoPlayer.MediaPlayer is not null) VideoPlayer.MediaPlayer.IsMuted = _videoMuted;
+        if (InVideo)   // ignore the slider's initial XAML-load tick — don't clobber the remembered state
+        {
+            _state.VideoVolume = e.NewValue;
+            _state.VideoMuted = _videoMuted;
+            _volSaveDebounce.Stop();
+            _volSaveDebounce.Start();
+        }
         UpdateVideoToggleIcons();
     }
 
@@ -5855,7 +5869,12 @@ public sealed partial class MainWindow : Window
             case VirtualKey.Escape when InCollage:
                 ShowExplorer(); e.Handled = true; break;
             case VirtualKey.Escape when InViewer:
-                if (_isFullScreen) ToggleFullScreen(); else ShowExplorer();
+                if (_isFullScreen) ToggleFullScreen();
+                // A photo window ("open in new window", either in-process or via --new-window) is a
+                // viewer, not a file manager: Esc closes it (unless "Close button returns to files"
+                // says viewers should go back to the explorer instead).
+                else if ((_secondaryWindow || LaunchedNewWindow()) && !_state.CloseToViewerBack) Close();
+                else ShowExplorer();
                 e.Handled = true; break;
             case VirtualKey.F11:
                 ToggleFullScreen(); e.Handled = true; break;
