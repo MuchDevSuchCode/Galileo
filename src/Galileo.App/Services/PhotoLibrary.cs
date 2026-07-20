@@ -79,7 +79,9 @@ public sealed class PhotoLibrary
             .ToList();
     }
 
-    /// <summary>Builds items from an explicit set of file paths (e.g. a multi-file drop).</summary>
+    /// <summary>Builds items from an explicit set of file paths (e.g. a multi-file drop).
+    /// NOTE: the result is re-sorted by file name — callers that need a specific order must re-order
+    /// the returned items themselves (see PopulatePhotoPipelineFromCurrent / OpenViewerDirect).</summary>
     public List<PhotoItem> LoadFiles(IEnumerable<string> paths)
     {
         return paths

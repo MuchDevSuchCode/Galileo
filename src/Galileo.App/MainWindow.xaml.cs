@@ -453,8 +453,13 @@ public sealed partial class MainWindow : Window
             if (!InViewer) return; // user already navigated away
 
             var keep = Current?.Path ?? path;
+            // LoadFiles RE-SORTS BY NAME — feed its items back in the explorer order computed above,
+            // or the arrow keys walk alphabetically regardless of the folder's sort/grouping (the same
+            // trap PopulatePhotoPipelineFromCurrent works around the same way).
+            var byPath = _library.LoadFiles(siblings).ToDictionary(p => p.Path, StringComparer.OrdinalIgnoreCase);
             _allPhotos.Clear();
-            foreach (var p in _library.LoadFiles(siblings)) _allPhotos.Add(p);
+            foreach (var s in siblings)
+                if (byPath.TryGetValue(s, out var item)) _allPhotos.Add(item);
             RefreshView();
 
             // Re-anchor on the photo actually being shown — RefreshView rebuilt _view underneath us.
