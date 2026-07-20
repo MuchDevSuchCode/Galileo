@@ -69,6 +69,13 @@ public sealed class AppState
     /// <summary>Always open photos/videos in a separate window instead of the in-app viewer (off by default).</summary>
     public bool AlwaysOpenMediaInNewWindow { get; set; }
 
+    /// <summary>Last position/size of a photo/media viewer window ("open in new window"), so the next one
+    /// opens where the user left it (e.g. a second monitor). Width 0 = never saved.</summary>
+    public int PhotoWinX { get; set; }
+    public int PhotoWinY { get; set; }
+    public int PhotoWinW { get; set; }
+    public int PhotoWinH { get; set; }
+
     /// <summary>While viewing a single photo/video, the window's close button goes back to the explorer
     /// instead of quitting the app (off by default).</summary>
     public bool CloseToViewerBack { get; set; }

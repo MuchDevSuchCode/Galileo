@@ -73,6 +73,8 @@ public sealed partial class MainWindow : Window
 
     // One-shot: suppress "always open in new window" for the next programmatic open (startup / shell hand-off).
     private bool _bypassAlwaysNewWindow;
+    private bool _windowActive = true;      // tracked via Activated; gates the live folder refresh
+    private bool _pendingWatchRefresh;      // a folder change arrived while inactive — refresh on activation
 
     // In-app file clipboard — a reliable fallback for cut/copy/paste. The system clipboard's StorageItems
     // round-trip and its RequestedOperation (cut vs copy) flag are unreliable in unpackaged apps, so we
@@ -193,6 +195,22 @@ public sealed partial class MainWindow : Window
         try { _appWindow.SetIcon(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "galileo.ico")); } catch { }
         try { TitleLogo.Source = new BitmapImage(new Uri(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "galileo.png"))); } catch { }
 
+        // A photo window ("open in new window") re-opens at its last position/size — e.g. the monitor
+        // the user dragged the previous one to. Validated against the current displays so a spot saved
+        // on a since-unplugged monitor snaps to the nearest one instead of opening off-screen.
+        if (_secondaryWindow && _state.PhotoWinW > 0 && _state.PhotoWinH > 0)
+        {
+            try
+            {
+                var rect = new Windows.Graphics.RectInt32(_state.PhotoWinX, _state.PhotoWinY, _state.PhotoWinW, _state.PhotoWinH);
+                var area = DisplayArea.GetFromRect(rect, DisplayAreaFallback.Nearest).WorkArea;
+                rect.X = Math.Clamp(rect.X, area.X, Math.Max(area.X, area.X + area.Width - rect.Width));
+                rect.Y = Math.Clamp(rect.Y, area.Y, Math.Max(area.Y, area.Y + area.Height - rect.Height));
+                _appWindow.MoveAndResize(rect);
+            }
+            catch { /* display topology quirk — fall back to default placement */ }
+        }
+
         // Mica backdrop for a modern translucent window (cached; reused across theme changes).
         EnsureMica();
 
@@ -238,8 +256,19 @@ public sealed partial class MainWindow : Window
             if (_sharing?.HasActiveViewers == true) _ = _sharing.NotifyVaultChangedAsync();
         };
 
-        // Privacy: collapse app-hidden folders the moment Galileo loses focus (opt-in).
-        Activated += (_, e) => { if (e.WindowActivationState == WindowActivationState.Deactivated) ReHideOnBackground(); };
+        // Track activation: privacy re-hide, catch-up of deferred folder refreshes, and a diagnostic
+        // trail (CodeActivated on a window the user didn't click = something programmatic stole focus).
+        Activated += (_, e) =>
+        {
+            App.LogInfo($"win {(_secondaryWindow ? "photo" : "main")}#{GetHashCode():x8}: {e.WindowActivationState}{(InEditor ? " [editor]" : "")}");
+            _windowActive = e.WindowActivationState != WindowActivationState.Deactivated;
+            if (_windowActive && _pendingWatchRefresh && ExplorerView.Visibility == Visibility.Visible)
+            {
+                _pendingWatchRefresh = false;
+                RefreshFolderIncremental();
+            }
+            if (!_windowActive) ReHideOnBackground();
+        };
         // Idle tracking for remote-browse auto-disconnect: any pointer/key activity counts as "not idle".
         RootGrid.PointerMoved += (_, _) => { if (_remoteBrowse is not null) _lastRemoteActivity = DateTimeOffset.Now; };
         RootGrid.AddHandler(UIElement.KeyDownEvent,
@@ -276,7 +305,14 @@ public sealed partial class MainWindow : Window
             if (ExplorerView.Visibility == Visibility.Visible
                 && string.IsNullOrEmpty(_searchQuery)
                 && string.Equals(_currentFolder, _watchedPath, StringComparison.OrdinalIgnoreCase))
-                RefreshFolderIncremental();
+            {
+                // Refreshing reshuffles the list (grouped views even rebuild the ItemsSource), which can
+                // move focus — and moving focus in an INACTIVE window of this process pulls the foreground
+                // away from the window the user is actually working in (e.g. saving in the editor made the
+                // explorer behind it refresh and steal focus). Defer until this window is next activated.
+                if (_windowActive) { App.LogInfo($"watch: refresh {_currentFolder}"); RefreshFolderIncremental(); }
+                else { App.LogInfo($"watch: refresh deferred (window inactive) {_currentFolder}"); _pendingWatchRefresh = true; }
+            }
             // If the change was inside the unlocked vault, commit it to the encrypted store promptly.
             if (_vaults.Current?.WorkingDir is { } wd && _currentFolder is { } cf
                 && cf.StartsWith(wd, StringComparison.OrdinalIgnoreCase))
@@ -6518,6 +6554,19 @@ public sealed partial class MainWindow : Window
     private async void AppWindow_Closing(Microsoft.UI.Windowing.AppWindow sender,
         Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
     {
+        // Remember where the user keeps photo windows so the next one opens on the same spot/monitor.
+        // Only a normal (restored) window — a maximized/fullscreen rect would be wrong to re-apply.
+        if (_secondaryWindow && !_isFullScreen
+            && (_appWindow.Presenter as Microsoft.UI.Windowing.OverlappedPresenter)?.State
+                == Microsoft.UI.Windowing.OverlappedPresenterState.Restored)
+        {
+            _state.PhotoWinX = _appWindow.Position.X;
+            _state.PhotoWinY = _appWindow.Position.Y;
+            _state.PhotoWinW = _appWindow.Size.Width;
+            _state.PhotoWinH = _appWindow.Size.Height;
+            _state.Save();
+        }
+
         // Unsaved edits (including AI, which rewrites pixels) must never be lost to the X. Cancel the close
         // synchronously — it's too late once we've awaited — then ask, and only re-close if they let us.
         if (!_closingForVaultLock && InEditor && HasUnsavedEdits)
