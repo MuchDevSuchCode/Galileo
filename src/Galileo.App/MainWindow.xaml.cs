@@ -421,11 +421,13 @@ public sealed partial class MainWindow : Window
             if (string.IsNullOrEmpty(dir)) return;
 
             // Order the siblings the way the EXPLORER would show this folder — its remembered
-            // per-folder sort, else the current global sort — so the viewer's arrow keys walk the
-            // same sequence the user sees in the file list (this window may never have shown it).
-            var (sortBy, sortDesc) = _state.FolderSorts.TryGetValue(dir, out var pref)
-                ? (pref.SortBy, pref.SortDescending)
-                : (_state.SortBy, _state.SortDescending);
+            // per-folder sort AND grouping, else the current global ones — so the viewer's arrow keys
+            // walk the same sequence the user sees in the file list (this window may never have shown
+            // it). Grouped views display group-by-group, so the same grouping is applied here: a
+            // stable re-order by group rank/key that keeps the sort within each group.
+            var (sortBy, sortDesc, groupBy) = _state.FolderSorts.TryGetValue(dir, out var pref)
+                ? (pref.SortBy, pref.SortDescending, pref.GroupBy)
+                : (_state.SortBy, _state.SortDescending, _state.GroupBy);
             var siblings = await Task.Run(() =>
             {
                 try
@@ -436,7 +438,13 @@ public sealed partial class MainWindow : Window
                         .Select(f => new ExplorerItem(f.FullName, ExplorerItemKind.File, SafeLen(f),
                                                       f.LastWriteTime, FileSystemService.TypeName(f.Extension)))
                         .ToList();
-                    return SortItems(files, sortBy, sortDesc).Select(i => i.Path).ToList();
+                    var sorted = SortItems(files, sortBy, sortDesc);
+                    if (groupBy != "None")
+                        sorted = sorted
+                            .OrderBy(i => GroupKeyRank(i, groupBy).Rank)
+                            .ThenBy(i => GroupKeyRank(i, groupBy).Key, StringComparer.OrdinalIgnoreCase)
+                            .ToList(); // OrderBy is stable — within-group order stays the user's sort
+                    return sorted.Select(i => i.Path).ToList();
                 }
                 catch { return new List<string>(); }
             });
@@ -2012,7 +2020,7 @@ public sealed partial class MainWindow : Window
         var groups = new List<ExplorerGroup>();
         foreach (var it in sorted)
         {
-            var (key, rank) = GroupKeyRank(it);
+            var (key, rank) = GroupKeyRank(it, _state.GroupBy);
             if (!map.TryGetValue(key, out var g))
             {
                 g = new ExplorerGroup { Key = key, Rank = rank };
@@ -2031,9 +2039,9 @@ public sealed partial class MainWindow : Window
         return groups;
     }
 
-    private (string Key, double Rank) GroupKeyRank(ExplorerItem it)
+    private static (string Key, double Rank) GroupKeyRank(ExplorerItem it, string groupBy)
     {
-        switch (_state.GroupBy)
+        switch (groupBy)
         {
             case "Type":
                 return it.IsFolder ? ("File folder", -1) : (it.TypeName, 1);
@@ -2763,9 +2771,12 @@ public sealed partial class MainWindow : Window
 
     private void PopulatePhotoPipelineFromCurrent()
     {
-        // Preserve the explorer's current sort order (LoadFiles re-sorts by name) so the viewer's
-        // arrow-key navigation follows whatever sort the user has chosen.
-        var paths = _explorerItems.Where(i => i.IsImage).Select(i => i.Path).ToList();
+        // Follow the DISPLAYED order — the sequence the user actually sees (and Peek walks). The list
+        // control flattens grouped views group-by-group; _explorerItems only holds the flat sort and
+        // diverges from the screen whenever grouping is on.
+        var displayed = ActiveExplorerList().Items.OfType<ExplorerItem>().ToList();
+        if (displayed.Count == 0) displayed = _explorerItems.ToList();
+        var paths = displayed.Where(i => i.IsImage).Select(i => i.Path).ToList();
         var byPath = _library.LoadFiles(paths).ToDictionary(p => p.Path, StringComparer.OrdinalIgnoreCase);
         _allPhotos.Clear();
         foreach (var path in paths)
