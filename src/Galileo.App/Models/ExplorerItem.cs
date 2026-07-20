@@ -29,8 +29,8 @@ public partial class ExplorerItem : ObservableObject
     /// <summary>User-chosen folder thumbnails (folder path → image path), shared from app state.</summary>
     public static IReadOnlyDictionary<string, string>? FolderThumbnails;
 
-    public string Path { get; }
-    public string Name { get; }
+    public string Path { get; private set; }
+    public string Name { get; private set; }
 
     /// <summary>Shell parsing name for items that live in the shell namespace (MTP / portable
     /// devices) and have no filesystem path; null for ordinary filesystem items.</summary>
@@ -75,6 +75,18 @@ public partial class ExplorerItem : ObservableObject
         FreeBytes = freeBytes;
         Name = displayName ?? (kind == ExplorerItemKind.Drive ? path : System.IO.Path.GetFileName(path));
         if (string.IsNullOrEmpty(Name)) Name = path;
+    }
+
+    /// <summary>Adopts the item's new path after an on-disk rename, updating the displayed name in
+    /// place — the object (and its loaded icon) survives, so the list needn't reload or flicker.</summary>
+    public void Rename(string newPath)
+    {
+        Path = newPath;
+        Name = Kind == ExplorerItemKind.Drive ? newPath : System.IO.Path.GetFileName(newPath);
+        if (string.IsNullOrEmpty(Name)) Name = newPath;
+        OnPropertyChanged(nameof(Path));
+        OnPropertyChanged(nameof(Name));
+        OnPropertyChanged(nameof(DisplayName));
     }
 
     /// <summary>A fresh copy with no icon loaded. Views with different icon sizes must not share

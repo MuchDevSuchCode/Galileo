@@ -1840,8 +1840,25 @@ public sealed partial class MainWindow : Window
     {
         if (_currentFolder is null || !Directory.Exists(_currentFolder)) return;
 
-        // Grouped or search views: patching grouped sources in place is fiddly — reload (keeps selection).
-        if (_state.GroupBy != "None" || !string.IsNullOrEmpty(_searchQuery)) { ReloadKeepingSelection(); return; }
+        // Grouped or search views: patching grouped sources in place is fiddly — reload (keeps
+        // selection). But first compare against what's already shown: when the watcher is just
+        // echoing a change the UI applied in place (e.g. a rename), the listing matches and the
+        // reload — with its thumbnail flicker and scroll reset — is skipped entirely.
+        if (_state.GroupBy != "None" || !string.IsNullOrEmpty(_searchQuery))
+        {
+            var fresh = SortItems(_fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden));
+            var same = SameSequence(fresh, _explorerItems);
+            // Same flat order isn't enough when grouped: fresh metadata can move an item to another
+            // group without reordering (e.g. an extension change under Name sort, or a new Modified
+            // date under Date grouping) — compare group keys too before declaring it a no-op.
+            if (same && _state.GroupBy != "None")
+                for (var i = 0; i < fresh.Count && same; i++)
+                    same = string.Equals(GroupKeyRank(fresh[i], _state.GroupBy).Key,
+                                         GroupKeyRank(_explorerItems[i], _state.GroupBy).Key,
+                                         StringComparison.OrdinalIgnoreCase);
+            if (!same) ReloadKeepingSelection();
+            return;
+        }
 
         _explorerRaw = _fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden);
         var target = SortItems(_explorerRaw);
@@ -1850,6 +1867,15 @@ public sealed partial class MainWindow : Window
         if (ActiveExplorerList().SelectedItems.Count == 0)
             StatusText.Text = $"{_explorerRaw.Count} item(s)";
         UpdateExplorerEmptyState();
+    }
+
+    /// <summary>True when both lists hold the same paths in the same order.</summary>
+    private static bool SameSequence(List<ExplorerItem> a, IList<ExplorerItem> b)
+    {
+        if (a.Count != b.Count) return false;
+        for (var i = 0; i < a.Count; i++)
+            if (!string.Equals(a[i].Path, b[i].Path, StringComparison.OrdinalIgnoreCase)) return false;
+        return true;
     }
 
     /// <summary>Mutates <see cref="_explorerItems"/> to match <paramref name="target"/> (ordered by the
@@ -3287,9 +3313,30 @@ public sealed partial class MainWindow : Window
                 var file = await StorageFile.GetFileFromPathAsync(item.Path);
                 await file.RenameAsync(newName, NameCollisionOption.FailIfExists);
             }
-            LoadCurrentFolder();
+            // No folder reload: adopt the new name on the SAME item (loaded thumbnails, scroll and
+            // selection all survive) and just move it to its new sorted position.
+            var newPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(item.Path) ?? "", newName);
+            item.Rename(newPath);
+            ResortExplorerInPlace(item);
         }
         catch (Exception ex) { StatusText.Text = $"Rename failed: {ex.Message}"; }
+    }
+
+    /// <summary>Re-sorts the visible listing after an in-place change (rename) WITHOUT reloading the
+    /// folder: the same item objects stay in the list — their loaded thumbnails survive — and only
+    /// positions change. Grouped views rebuild their group wrappers around the same objects.</summary>
+    private void ResortExplorerInPlace(ExplorerItem? focus = null)
+    {
+        if (_state.GroupBy == "None" && string.IsNullOrEmpty(_searchQuery) && _currentFolder is not null)
+            ReconcileExplorerItems(SortItems(_explorerRaw));
+        else
+            ApplySortAndGroup();
+        if (focus is not null)
+        {
+            var list = ActiveExplorerList();
+            list.SelectedItem = focus;
+            list.ScrollIntoView(focus);
+        }
     }
 
     /// <summary>Bulk-renames a multi-selection like Explorer, but with dash numbering: the primary
@@ -3339,7 +3386,7 @@ public sealed partial class MainWindow : Window
         if (string.IsNullOrEmpty(baseName)) baseName = typed;
 
         // Resolve storage items + each one's extension.
-        var resolved = new List<(IStorageItem si, string ext)>();
+        var resolved = new List<(ExplorerItem it, IStorageItem si, string ext)>();
         foreach (var it in items)
         {
             try
@@ -3347,13 +3394,13 @@ public sealed partial class MainWindow : Window
                 IStorageItem si = it.IsFolder
                     ? await StorageFolder.GetFolderFromPathAsync(it.Path)
                     : await StorageFile.GetFileFromPathAsync(it.Path);
-                resolved.Add((si, it.IsFolder ? "" : System.IO.Path.GetExtension(it.Name)));
+                resolved.Add((it, si, it.IsFolder ? "" : System.IO.Path.GetExtension(it.Name)));
             }
             catch { /* skip unreadable */ }
         }
 
         // Phase 1: move everything to temp names so target names can't collide with current ones.
-        foreach (var (si, _) in resolved)
+        foreach (var (_, si, _) in resolved)
         {
             try { await si.RenameAsync("__galileo_" + Guid.NewGuid().ToString("N"), NameCollisionOption.GenerateUniqueName); }
             catch { }
@@ -3362,7 +3409,7 @@ public sealed partial class MainWindow : Window
         // Phase 2: assign final names with a monotonic counter, skipping names already on disk.
         var counter = 0;
         var ok = 0;
-        foreach (var (si, ext) in resolved)
+        foreach (var (it, si, ext) in resolved)
         {
             var useExt = string.IsNullOrEmpty(typedExt) ? ext : typedExt; // typed ext wins, else keep own
             string name;
@@ -3375,9 +3422,11 @@ public sealed partial class MainWindow : Window
             }
             try { await si.RenameAsync(name, NameCollisionOption.FailIfExists); ok++; }
             catch (Exception ex) { StatusText.Text = $"Rename failed: {ex.Message}"; }
+            it.Rename(si.Path);   // whatever landed on disk (final name, or the temp on failure)
         }
 
-        LoadCurrentFolder();
+        // One in-place re-sort instead of a full reload — same objects, thumbnails intact.
+        ResortExplorerInPlace();
         StatusText.Text = $"Renamed {ok} item(s)";
     }
 
