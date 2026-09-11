@@ -998,6 +998,9 @@
                                         ToolTipService.ToolTip="Remove noise and sharpen (Real-ESRGAN general)" />
                                 <Button x:Name="AiFacesBtn" Content="Faces" Click="AiFaces_Click"
                                         ToolTipService.ToolTip="Restore faces (CodeFormer)" />
+                                <Button x:Name="AiEyesBtn" Content="Fix eyes" Click="AiEyes_Click"
+                                        AutomationProperties.Name="Fix eyes"
+                                        ToolTipService.ToolTip="Repair malformed or asymmetric eyes — restores only the eye regions, the rest of the face is untouched" />
                             </StackPanel>
                             <TextBlock Text="Denoise strength" Foreground="White" FontSize="12" />
                             <Slider x:Name="AiStrength" Minimum="0" Maximum="100" Value="40" ValueChanged="AiStrength_Changed" AutomationProperties.Name="Denoise strength" />

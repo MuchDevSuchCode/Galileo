@@ -43,9 +43,14 @@ public static class FaceRestore
 
     /// <summary>Restores every detected face in-place on a copy of <paramref name="bgra"/>.
     /// <paramref name="fidelity"/> (CodeFormer's <c>w</c>): 0 = maximum quality/invention, 1 = stay closest
-    /// to the original face. Returns the new pixels and how many faces were touched.</summary>
+    /// to the original face. Returns the new pixels and how many faces were touched.
+    /// <paramref name="eyesOnly"/>: composite back ONLY soft elliptical regions around the two eyes —
+    /// the "fix the eyes" tool. The full restoration still runs (CodeFormer regenerates the whole
+    /// face), but everything outside the eye regions keeps the original pixels, so skin texture,
+    /// mouth and identity are untouched.</summary>
     public static byte[] Run(AiEngine engine, byte[] bgra, int w, int h, double fidelity,
-        out int facesRestored, IProgress<double>? progress = null, CancellationToken ct = default)
+        out int facesRestored, IProgress<double>? progress = null, CancellationToken ct = default,
+        bool eyesOnly = false)
     {
         var faces = DetectRestorable(engine, bgra, w, h, ct);
         facesRestored = 0;
@@ -95,17 +100,40 @@ public static class FaceRestore
             });
 
             // Warp the restored face back and feather it in, so the seam doesn't show.
-            PasteBack(outPix, w, h, restored, m);
+            PasteBack(outPix, w, h, restored, m, eyesOnly);
             facesRestored++;
             progress?.Report((double)(i + 1) / faces.Count);
         }
         return outPix;
     }
 
+    // Eye-only compositing (the "fix eyes" tool): soft elliptical windows around the TEMPLATE eye
+    // centres. Because every face is affine-aligned onto the template before restoration, the eyes
+    // sit at these fixed canonical positions regardless of the face's pose in the photo — so a mask
+    // defined once in template space lands exactly on the real eyes when warped back. Sized to
+    // cover the lids and lashes without reaching the brows (~y 205) or the nose bridge (the two
+    // ellipses stop short of each other at the centre line).
+    private const float EyeRx = 60f, EyeRy = 40f;
+
+    private static float EyeMaskAlpha(float u, float v)
+    {
+        float A((float X, float Y) c)
+        {
+            var dx = (u - c.X) / EyeRx;
+            var dy = (v - c.Y) / EyeRy;
+            var d = MathF.Sqrt(dx * dx + dy * dy);
+            if (d <= 0.6f) return 1f;                       // fully restored core
+            if (d >= 1f) return 0f;                         // untouched outside the rim
+            var t = (d - 0.6f) / 0.4f;
+            return 1f - t * t * (3f - 2f * t);              // smoothstep fade so no seam shows
+        }
+        return MathF.Max(A(Template[0]), A(Template[1]));   // template[0..1] are the two eyes
+    }
+
     /// <summary>Blends the restored 512 face back into the photo. Iterating over the destination and mapping
     /// forward (image -> template) means every output pixel is filled — a scatter from the 512 grid would
     /// leave holes wherever the face is upscaled.</summary>
-    private static void PasteBack(byte[] dest, int w, int h, ReadOnlySpan<float> face, in Sim m)
+    private static void PasteBack(byte[] dest, int w, int h, ReadOnlySpan<float> face, in Sim m, bool eyesOnly)
     {
 
         // Destination bounds = the 512 square's corners mapped back into image space.
@@ -130,6 +158,7 @@ public static class FaceRestore
             // Feather toward the edge of the aligned square so it melts into the surrounding photo.
             var edge = MathF.Min(MathF.Min(u, v), MathF.Min(Size - 1 - u, Size - 1 - v));
             var a = Math.Clamp(edge / 48f, 0f, 1f);
+            if (eyesOnly) a *= EyeMaskAlpha(u, v);   // fix-eyes mode: only the eye regions land
             if (a <= 0f) continue;
 
             BilinearPlanar(face, u, v, out var fr, out var fg, out var fb);

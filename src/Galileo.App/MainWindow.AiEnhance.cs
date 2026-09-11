@@ -101,9 +101,10 @@ public sealed partial class MainWindow
     private async void AiUpscale_Click(object sender, RoutedEventArgs e) => await RunAiAsync(AiJob.Upscale);
     private async void AiDenoise_Click(object sender, RoutedEventArgs e) => await RunAiAsync(AiJob.Denoise);
     private async void AiFaces_Click(object sender, RoutedEventArgs e) => await RunAiAsync(AiJob.Faces);
+    private async void AiEyes_Click(object sender, RoutedEventArgs e) => await RunAiAsync(AiJob.Eyes);
     private async void AiAuto_Click(object sender, RoutedEventArgs e) => await RunAutopilotAsync();
 
-    private enum AiJob { Enhance, Upscale, Denoise, Faces }
+    private enum AiJob { Enhance, Upscale, Denoise, Faces, Eyes }
 
     /// <summary>Turns the drawn lasso into the source-space selection mask, combining it with any
     /// existing selection per the Photoshop-style mode captured at drag start (add/subtract/intersect).</summary>
@@ -298,7 +299,7 @@ public sealed partial class MainWindow
     {
         _aiBusy = busy;
         if (busy) KeepModelsWarm();   // an idle release must not fire mid-operation
-        foreach (var b in new[] { AiEnhanceBtn, AiUpscaleBtn, AiDenoiseBtn, AiFacesBtn, AiAutoBtn, SelectTextBtn })
+        foreach (var b in new[] { AiEnhanceBtn, AiUpscaleBtn, AiDenoiseBtn, AiFacesBtn, AiEyesBtn, AiAutoBtn, SelectTextBtn })
             if (b is not null) b.IsEnabled = !busy;
         if (AiCancelBtn is not null) AiCancelBtn.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         UpdateLassoUi();   // Fill depends on both the busy state and whether a selection exists
@@ -419,14 +420,14 @@ public sealed partial class MainWindow
     {
         AiJob.Enhance or AiJob.Upscale => AiModel.Upscale,
         AiJob.Denoise => AiModel.General,
-        _ => AiModel.Face,
+        _ => AiModel.Face,   // Faces and Eyes both run CodeFormer
     };
 
     private async Task RunAiAsync(AiJob job)
     {
         if (_aiBusy || _editor.Source is null) return;
         if (!await EnsureModelAsync(ModelFor(job))) return;
-        if (job == AiJob.Faces && !await EnsureModelAsync(AiModel.FaceDetect)) return;
+        if (job is AiJob.Faces or AiJob.Eyes && !await EnsureModelAsync(AiModel.FaceDetect)) return;
 
         SetAiBusy(true);
         _aiCts = new CancellationTokenSource();
@@ -448,6 +449,7 @@ public sealed partial class MainWindow
                 AiJob.Upscale => $"Upscaling {w}×{h} → {w * 4}×{h * 4}…",
                 AiJob.Denoise => $"Denoising {w}×{h}…",
                 AiJob.Faces => "Finding and restoring faces…",
+                AiJob.Eyes => "Finding faces and fixing eyes…",
                 _ => $"Enhancing {w}×{h}…",
             });
 
@@ -470,11 +472,14 @@ public sealed partial class MainWindow
                         // then re-blend from the original instantly without another inference pass.
                         denoisedFull = engine.Denoise(pixels, w, h, 1.0, p, ct);
                         return AiEngine.Blend(pixels, denoisedFull, strength);
+                    case AiJob.Eyes:
+                        // Full CodeFormer restore, but only the eye regions are composited back.
+                        return FaceRestore.Run(engine, pixels, w, h, fidelity, out faces, p, ct, eyesOnly: true);
                     default: return FaceRestore.Run(engine, pixels, w, h, fidelity, out faces, p, ct);
                 }
             }, ct);
 
-            if (job == AiJob.Faces && faces == 0)
+            if (job is AiJob.Faces or AiJob.Eyes && faces == 0)
             {
                 AiSay("No faces found in this image.");
                 return;
@@ -492,6 +497,7 @@ public sealed partial class MainWindow
                 AiJob.Upscale => $"Upscaled → {outW}×{outH}",
                 AiJob.Denoise => $"Denoised (strength {strength:P0}) — drag the slider to fine-tune live",
                 AiJob.Faces => $"Restored {faces} face{(faces == 1 ? "" : "s")}",
+                AiJob.Eyes => $"Fixed eyes on {faces} face{(faces == 1 ? "" : "s")} — lower Fidelity for a stronger correction",
                 _ => $"Enhanced → {outW}×{outH}",
             } + $"  ·  {engine.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");
         }
