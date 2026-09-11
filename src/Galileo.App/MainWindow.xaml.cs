@@ -290,26 +290,11 @@ public sealed partial class MainWindow : Window
             if (!_windowActive) ReHideOnBackground();
         };
         // When the clipboard changes from OUTSIDE Galileo (another app, or a text/image copy), drop our
-        // in-app file clip so a later paste uses the new content — not a stale earlier file copy.
-        // Compare CONTENT rather than counting events: SetContent can raise zero or several
-        // ContentChanged notifications, so a one-shot suppress flag either swallowed a real external
-        // copy (stale paste) or nulled our own clip (cut degraded to copy).
-        Clipboard.ContentChanged += async (_, _) =>
-        {
-            if (_fileClip is not { } fc) return;
-            try
-            {
-                var content = Clipboard.GetContent();
-                if (content.Contains(StandardDataFormats.StorageItems))
-                {
-                    var items = await content.GetStorageItemsAsync();
-                    var paths = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
-                    if (SamePaths(paths, fc.Paths)) return; // still our clip — our own SetContent echoing
-                }
-            }
-            catch { return; } // clipboard busy/inaccessible — keep the in-app clip rather than guess
-            _fileClip = null;
-        };
+        // in-app file clip so a later paste uses the new content. A NAMED handler (not a lambda) so the
+        // close handler can detach it: Clipboard is a process-wide static, and an attached handler roots
+        // this whole window forever — every transient "open in new window" photo window would then leak,
+        // piling up on the single shared UI thread until copy/paste and input wedge.
+        Clipboard.ContentChanged += OnClipboardContentChanged;
         _appWindow.Closing += AppWindow_Closing;
 
         // Catch Ctrl+C/X/V/A even if the explorer list marks them handled first (handledEventsToo).
@@ -3599,6 +3584,26 @@ public sealed partial class MainWindow : Window
             StatusText.Text = msg;
         }
         catch (Exception ex) { StatusText.Text = $"Paste failed: {ex.Message}"; App.Log("Paste", ex); }
+    }
+
+    /// <summary>Drops the in-app file clip when the clipboard changes externally (see the ctor).
+    /// Compares CONTENT, not event counts: SetContent can raise zero or several ContentChanged
+    /// notifications, so a suppress flag would either swallow a real external copy or null our clip.</summary>
+    private async void OnClipboardContentChanged(object? sender, object e)
+    {
+        if (_fileClip is not { } fc) return;
+        try
+        {
+            var content = Clipboard.GetContent();
+            if (content.Contains(StandardDataFormats.StorageItems))
+            {
+                var items = await content.GetStorageItemsAsync();
+                var paths = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
+                if (SamePaths(paths, fc.Paths)) return; // still our clip — our own SetContent echoing
+            }
+        }
+        catch { return; } // clipboard busy/inaccessible — keep the in-app clip rather than guess
+        _fileClip = null;
     }
 
     private static bool SamePaths(List<string> a, IReadOnlyList<string> b)
@@ -7358,6 +7363,19 @@ public sealed partial class MainWindow : Window
         StopFolderWatch();
         RemoveTray();
         _backupTimer.Stop(); _driveWatcher.Stop();
+
+        // Release everything that would otherwise keep this window alive after it closes. The static
+        // Clipboard handler is the critical one — left attached it ROOTS the window forever, so every
+        // opened photo window leaks onto the shared UI thread (with its timers + decoded image) until
+        // the app goes unresponsive. This runs only on the real-close pass (the cancel-and-defer guards
+        // above returned early), so a window that stays open keeps working.
+        try { Clipboard.ContentChanged -= OnClipboardContentChanged; } catch { }
+        _chromeTimer.Stop();
+        _vaultIdleTimer.Stop(); _vaultFlushTimer.Stop(); _vaultFlushDebounce.Stop();
+        _watchDebounce.Stop(); _volSaveDebounce.Stop();
+        StopVideo();                                   // release the MediaSource (native pipeline)
+        try { _editor.Dispose(); } catch { }           // full-resolution edit bitmaps
+        try { _aiIdleTimer?.Stop(); _ai?.Dispose(); _ai = null; } catch { } // ONNX sessions + GPU arenas
 
         // Everything above is this window's own state. What follows is process-wide, and a guest window
         // ("open in new window", in-process OR spawned via --new-window) closing is not the app exiting —
