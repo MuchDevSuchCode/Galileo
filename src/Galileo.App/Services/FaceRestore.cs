@@ -43,14 +43,9 @@ public static class FaceRestore
 
     /// <summary>Restores every detected face in-place on a copy of <paramref name="bgra"/>.
     /// <paramref name="fidelity"/> (CodeFormer's <c>w</c>): 0 = maximum quality/invention, 1 = stay closest
-    /// to the original face. Returns the new pixels and how many faces were touched.
-    /// <paramref name="eyesOnly"/>: composite back ONLY soft elliptical regions around the two eyes —
-    /// the "fix the eyes" tool. The full restoration still runs (CodeFormer regenerates the whole
-    /// face), but everything outside the eye regions keeps the original pixels, so skin texture,
-    /// mouth and identity are untouched.</summary>
+    /// to the original face. Returns the new pixels and how many faces were touched.</summary>
     public static byte[] Run(AiEngine engine, byte[] bgra, int w, int h, double fidelity,
-        out int facesRestored, IProgress<double>? progress = null, CancellationToken ct = default,
-        bool eyesOnly = false)
+        out int facesRestored, IProgress<double>? progress = null, CancellationToken ct = default)
     {
         var faces = DetectRestorable(engine, bgra, w, h, ct);
         facesRestored = 0;
@@ -100,150 +95,12 @@ public static class FaceRestore
             });
 
             // Warp the restored face back and feather it in, so the seam doesn't show.
-            if (eyesOnly) PasteEyes(engine, outPix, w, h, restored, m, ct);
-            else PasteBack(outPix, w, h, restored, m);
+            PasteBack(outPix, w, h, restored, m);
             facesRestored++;
             progress?.Report((double)(i + 1) / faces.Count);
         }
         return outPix;
     }
-
-    // Eye-only compositing (the "fix eyes" tool): soft elliptical windows around the TEMPLATE eye
-    // centres. Because every face is affine-aligned onto the template before restoration, the eyes
-    // sit at these fixed canonical positions regardless of the face's pose in the photo — so a mask
-    // defined once in template space lands exactly on the real eyes when warped back. Sized to
-    // cover the lids and lashes without reaching the brows (~y 205) or the nose bridge (the two
-    // ellipses stop short of each other at the centre line).
-    private const float EyeRx = 60f, EyeRy = 40f;
-
-    private static float EyeMaskAlpha(float u, float v)
-    {
-        float A((float X, float Y) c)
-        {
-            var dx = (u - c.X) / EyeRx;
-            var dy = (v - c.Y) / EyeRy;
-            var d = MathF.Sqrt(dx * dx + dy * dy);
-            if (d <= 0.6f) return 1f;                       // fully restored core
-            if (d >= 1f) return 0f;                         // untouched outside the rim
-            var t = (d - 0.6f) / 0.4f;
-            return 1f - t * t * (3f - 2f * t);              // smoothstep fade so no seam shows
-        }
-        return MathF.Max(A(Template[0]), A(Template[1]));   // template[0..1] are the two eyes
-    }
-
-    /// <summary>The eye-fix compositor. The plain 512 paste made LARGE faces worse: an eye that is
-    /// 200px wide in the photo is only ~90px in the aligned 512 frame, so the regenerated eye came
-    /// back soft and glassy when stretched to its original size — plus CodeFormer's trademark
-    /// studio catchlight and tone shift. Three counter-measures:
-    ///  1. When the paste would UPSAMPLE (photo face larger than the template), the restored face
-    ///     is first super-resolved 4x with the small general model, so the paste downsamples.
-    ///  2. The pasted pixels are per-channel mean/std matched to the ORIGINAL eye region, taming
-    ///     invented highlights and keeping the photo's own exposure and color.
-    ///  3. Only the feathered eye ellipses land at all (see <see cref="EyeMaskAlpha"/>).</summary>
-    private static void PasteEyes(AiEngine engine, byte[] dest, int w, int h, float[] restored, in Sim m, CancellationToken ct)
-    {
-        // Tensor (-1..1 planar RGB) → BGRA bytes so the SR model / sampler can consume it.
-        const int plane = Size * Size;
-        var face = new byte[plane * 4];
-        for (var i = 0; i < plane; i++)
-        {
-            face[i * 4 + 2] = ToByte(restored[i]);
-            face[i * 4 + 1] = ToByte(restored[plane + i]);
-            face[i * 4] = ToByte(restored[2 * plane + i]);
-            face[i * 4 + 3] = 255;
-        }
-
-        // image→template scale; < 1 means the photo's face is LARGER than the 512 frame and a raw
-        // paste would upsample. Super-resolve first when the loss would be visible (>~18%).
-        var faceSize = Size;
-        var scale = MathF.Sqrt(m.C * m.C + m.S * m.S);
-        if (scale < 0.85f && AiEngine.IsReady(AiModel.General))
-        {
-            try
-            {
-                face = engine.Upscale4General(face, Size, Size, out var fw, out _, null, ct);
-                faceSize = fw;   // 2048
-            }
-            catch (OperationCanceledException) { throw; }
-            catch { faceSize = Size; } // SR failed — fall back to the plain 512 paste
-        }
-        var up = (float)faceSize / Size;   // template-uv → face-buffer coordinate factor
-
-        // Destination bounds = the 512 square's corners mapped back into image space.
-        float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
-        foreach (var (cu, cv) in new[] { (0f, 0f), (Size, 0f), (0f, (float)Size), ((float)Size, (float)Size) })
-        {
-            m.Invert(cu, cv, out var x, out var y);
-            minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
-            minY = Math.Min(minY, y); maxY = Math.Max(maxY, y);
-        }
-        var x0 = Math.Max(0, (int)MathF.Floor(minX));
-        var y0 = Math.Max(0, (int)MathF.Floor(minY));
-        var x1 = Math.Min(w - 1, (int)MathF.Ceiling(maxX));
-        var y1 = Math.Min(h - 1, (int)MathF.Ceiling(maxY));
-
-        // Pass 1 — tone statistics over the eye regions: original vs restored, per channel.
-        Span<double> sumO = stackalloc double[3], sumO2 = stackalloc double[3];
-        Span<double> sumR = stackalloc double[3], sumR2 = stackalloc double[3];
-        double n = 0;
-        for (var y = y0; y <= y1; y++)
-        for (var x = x0; x <= x1; x++)
-        {
-            m.Apply(x + 0.5f, y + 0.5f, out var u, out var v);
-            if (u < 0 || v < 0 || u >= Size - 1 || v >= Size - 1) continue;
-            if (EyeMaskAlpha(u, v) < 0.5f) continue;
-            SampleBytes(face, faceSize, faceSize, u * up, v * up, out var fr, out var fg, out var fb);
-            var d = (y * w + x) * 4;
-            sumO[0] += dest[d]; sumO2[0] += dest[d] * dest[d];
-            sumO[1] += dest[d + 1]; sumO2[1] += dest[d + 1] * dest[d + 1];
-            sumO[2] += dest[d + 2]; sumO2[2] += dest[d + 2] * dest[d + 2];
-            sumR[0] += fb; sumR2[0] += fb * fb;
-            sumR[1] += fg; sumR2[1] += fg * fg;
-            sumR[2] += fr; sumR2[2] += fr * fr;
-            n++;
-        }
-        Span<float> gain = stackalloc float[3], offset = stackalloc float[3];
-        gain[0] = gain[1] = gain[2] = 1;
-        if (n > 64)   // enough pixels for stable statistics
-        {
-            for (var c = 0; c < 3; c++)
-            {
-                var meanO = sumO[c] / n;
-                var meanR = sumR[c] / n;
-                var stdO = Math.Sqrt(Math.Max(1, sumO2[c] / n - meanO * meanO));
-                var stdR = Math.Sqrt(Math.Max(1, sumR2[c] / n - meanR * meanR));
-                // Capped so the match can never invert or crush the restored structure.
-                gain[c] = (float)Math.Clamp(stdO / stdR, 0.6, 1.4);
-                offset[c] = (float)(meanO - gain[c] * meanR);
-            }
-        }
-
-        // Pass 2 — feathered, tone-matched paste of the eye regions only.
-        for (var y = y0; y <= y1; y++)
-        for (var x = x0; x <= x1; x++)
-        {
-            m.Apply(x + 0.5f, y + 0.5f, out var u, out var v);
-            if (u < 0 || v < 0 || u >= Size - 1 || v >= Size - 1) continue;
-            var a = EyeMaskAlpha(u, v);
-            if (a <= 0f) continue;
-
-            SampleBytes(face, faceSize, faceSize, u * up, v * up, out var fr, out var fg, out var fb);
-            fb = fb * gain[0] + offset[0];
-            fg = fg * gain[1] + offset[1];
-            fr = fr * gain[2] + offset[2];
-
-            var d = (y * w + x) * 4;
-            dest[d] = (byte)Math.Clamp(dest[d] + (fb - dest[d]) * a, 0, 255);
-            dest[d + 1] = (byte)Math.Clamp(dest[d + 1] + (fg - dest[d + 1]) * a, 0, 255);
-            dest[d + 2] = (byte)Math.Clamp(dest[d + 2] + (fr - dest[d + 2]) * a, 0, 255);
-        }
-    }
-
-    private static byte ToByte(float v) => (byte)Math.Clamp((int)MathF.Round((v + 1f) * 127.5f), 0, 255);
-
-    /// <summary>Bilinear sample of a BGRA byte buffer (same convention as <see cref="Sample"/>).</summary>
-    private static void SampleBytes(byte[] bgra, int w, int h, float x, float y, out float r, out float g, out float b)
-        => Sample(bgra, w, h, x, y, out r, out g, out b);
 
     /// <summary>Blends the restored 512 face back into the photo. Iterating over the destination and mapping
     /// forward (image -> template) means every output pixel is filled — a scatter from the 512 grid would

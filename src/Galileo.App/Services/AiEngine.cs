@@ -211,12 +211,6 @@ public sealed class AiEngine : IDisposable
         return Blend(bgra, processed, strength);
     }
 
-    /// <summary>4x super-resolution with the small general model, KEEPING the upscale. Used by the
-    /// eye-fix pipeline: pasting CodeFormer's 512px face back onto a larger-than-512 face upsamples
-    /// mush, so the restored face is super-resolved first and the paste downsamples instead.</summary>
-    public byte[] Upscale4General(byte[] bgra, int w, int h, out int outW, out int outH,
-        IProgress<double>? progress = null, CancellationToken ct = default)
-        => RunSr(AiModel.General, bgra, w, h, keepUpscale: true, out outW, out outH, progress, ct);
 
     private byte[] RunSr(AiModel model, byte[] bgra, int w, int h, bool keepUpscale, out int outW, out int outH,
         IProgress<double>? progress, CancellationToken ct)

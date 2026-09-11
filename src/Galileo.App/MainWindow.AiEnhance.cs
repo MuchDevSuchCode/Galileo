@@ -420,17 +420,15 @@ public sealed partial class MainWindow
     {
         AiJob.Enhance or AiJob.Upscale => AiModel.Upscale,
         AiJob.Denoise => AiModel.General,
-        _ => AiModel.Face,   // Faces and Eyes both run CodeFormer
+        AiJob.Eyes => AiModel.FaceDetect,   // the eye fix only needs landmarks (0.2 MB) — no CodeFormer
+        _ => AiModel.Face,
     };
 
     private async Task RunAiAsync(AiJob job)
     {
         if (_aiBusy || _editor.Source is null) return;
         if (!await EnsureModelAsync(ModelFor(job))) return;
-        if (job is AiJob.Faces or AiJob.Eyes && !await EnsureModelAsync(AiModel.FaceDetect)) return;
-        // The eye fix super-resolves the rebuilt face before pasting onto large faces — it needs the
-        // small general SR model too (5 MB; skippable only by cancelling, which cancels the job).
-        if (job == AiJob.Eyes && !await EnsureModelAsync(AiModel.General)) return;
+        if (job == AiJob.Faces && !await EnsureModelAsync(AiModel.FaceDetect)) return;
 
         SetAiBusy(true);
         _aiCts = new CancellationTokenSource();
@@ -476,15 +474,28 @@ public sealed partial class MainWindow
                         denoisedFull = engine.Denoise(pixels, w, h, 1.0, p, ct);
                         return AiEngine.Blend(pixels, denoisedFull, strength);
                     case AiJob.Eyes:
-                        // Full CodeFormer restore, but only the eye regions are composited back.
-                        return FaceRestore.Run(engine, pixels, w, h, fidelity, out faces, p, ct, eyesOnly: true);
+                    {
+                        // Retoucher's technique: mirror the sharper eye onto the other, at native
+                        // resolution, gaze-preserving and tone-matched (see EyeFix). No 512px face
+                        // model in the loop — the earlier CodeFormer approach wrecked close-ups.
+                        var detected = FaceRestore.DetectRestorable(engine, pixels, w, h, ct);
+                        var pix = (byte[])pixels.Clone();
+                        foreach (var face in detected)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            if (EyeFix.MirrorFix(pix, w, h, face.Landmarks[0], face.Landmarks[1])) faces++;
+                        }
+                        return pix;
+                    }
                     default: return FaceRestore.Run(engine, pixels, w, h, fidelity, out faces, p, ct);
                 }
             }, ct);
 
             if (job is AiJob.Faces or AiJob.Eyes && faces == 0)
             {
-                AiSay("No faces found in this image.");
+                AiSay(job == AiJob.Eyes
+                    ? "No usable face found — the eye fix needs the whole face (both eyes and mouth) in frame."
+                    : "No faces found in this image.");
                 return;
             }
 
@@ -510,7 +521,7 @@ public sealed partial class MainWindow
                 AiJob.Upscale => $"Upscaled → {outW}×{outH}",
                 AiJob.Denoise => $"Denoised (strength {strength:P0}) — drag the slider to fine-tune live",
                 AiJob.Faces => $"Restored {faces} face{(faces == 1 ? "" : "s")}",
-                AiJob.Eyes => $"Fixed eyes on {faces} face{(faces == 1 ? "" : "s")} — drag Strength to dial it; lower Fidelity rebuilds harder",
+                AiJob.Eyes => $"Fixed eyes on {faces} face{(faces == 1 ? "" : "s")} (mirrored the sharper eye) — drag Strength to dial it",
                 _ => $"Enhanced → {outW}×{outH}",
             } + $"  ·  {engine.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");
         }
