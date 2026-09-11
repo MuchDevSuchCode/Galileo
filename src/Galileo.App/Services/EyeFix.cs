@@ -29,6 +29,14 @@ public static class EyeFix
         float ux = dx / d, uy = dy / d;
         float vx = -uy, vy = ux;
 
+        // SAFETY GATE. YuNet's landmarks drift badly on tilted / partially-cropped faces — a wrong
+        // pair once put a mirrored mini-eye on the subject's nose bridge. Refuse unless BOTH supplied
+        // positions actually sit on an iris (a dark disc ringed by brighter sclera/skin): the disc
+        // mean must be clearly darker than the surrounding annulus. No confident iris → do nothing.
+        var probe = 0.11f * d;
+        if (DiscContrast(bgra, w, h, eyeL.X, eyeL.Y, probe) > -8f) return false;
+        if (DiscContrast(bgra, w, h, eyeR.X, eyeR.Y, probe) > -8f) return false;
+
         // Region ellipse (in the local frame), sized from the interocular distance.
         var rx = 0.33f * d;
         var ry = 0.24f * d;
@@ -124,6 +132,29 @@ public static class EyeFix
     {
         var na = a / rx; var nb = b / ry;
         return MathF.Sqrt(na * na + nb * nb);
+    }
+
+    /// <summary>Mean luminance inside a disc of radius <paramref name="r"/> minus the mean of the
+    /// surrounding annulus. Strongly negative over a real iris (dark centre, bright surround); near
+    /// zero over skin or a brow. The safety gate for whether a claimed eye position is really an eye.</summary>
+    private static float DiscContrast(byte[] bgra, int w, int h, float cx, float cy, float r)
+    {
+        float discSum = 0, annSum = 0; int discN = 0, annN = 0;
+        var r2 = r * r; var a1 = 1.35f * r; var a2 = 2.0f * r;
+        float a1s = a1 * a1, a2s = a2 * a2;
+        var bound = (int)MathF.Ceiling(a2);
+        for (var y = (int)cy - bound; y <= (int)cy + bound; y++)
+        for (var x = (int)cx - bound; x <= (int)cx + bound; x++)
+        {
+            if (x < 0 || y < 0 || x >= w || y >= h) continue;
+            float ddx = x - cx, ddy = y - cy; var dd = ddx * ddx + ddy * ddy;
+            var i = (y * w + x) * 4;
+            var l = 0.114f * bgra[i] + 0.587f * bgra[i + 1] + 0.299f * bgra[i + 2];
+            if (dd <= r2) { discSum += l; discN++; }
+            else if (dd >= a1s && dd <= a2s) { annSum += l; annN++; }
+        }
+        if (discN < 8 || annN < 8) return 0f;   // not enough pixels to judge → treat as "not an eye"
+        return discSum / discN - annSum / annN;
     }
 
     private static float Smooth(float t) => t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
