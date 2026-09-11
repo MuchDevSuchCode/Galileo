@@ -4929,7 +4929,7 @@ public sealed partial class MainWindow : Window
             StatusText.Text = "Another operation is still running — wait for it to finish or cancel it first.";
             return new TransferResult { Canceled = true };
         }
-        var transfer = new FileTransfer();
+        using var transfer = new FileTransfer();
         var token = new object();
         BeginProgressOp(token,
             title: (move ? "Moving " : "Copying ") + (paths.Count == 1 ? "1 item" : $"{paths.Count} items"),
@@ -4962,7 +4962,7 @@ public sealed partial class MainWindow : Window
         var progress = new Progress<TransferProgress>(p => { if (ReferenceEquals(_activeOp, token)) UpdateTransferUi(p); });
         WipeSummary summary;
         try { summary = await SecureWipe.WipePathsAsync(paths, method, progress, cts.Token); }
-        finally { EndProgressOp(token, null); }
+        finally { EndProgressOp(token, null); cts.Dispose(); }
 
         // Report what ACTUALLY happened — "erased with overwrites" and "deleted but the overwrite
         // failed" are different privacy outcomes, and a failure must never read as success.
@@ -5015,6 +5015,7 @@ public sealed partial class MainWindow : Window
     private void EndProgressOp(object token, System.Threading.CancellationTokenSource? revealCts)
     {
         revealCts?.Cancel();
+        revealCts?.Dispose();   // the Task.Delay registered a WaitHandle on its token — release it
         if (!ReferenceEquals(_activeOp, token)) return;
         _activeOp = null;
         _progressCancel = null;
@@ -7373,9 +7374,11 @@ public sealed partial class MainWindow : Window
         _chromeTimer.Stop();
         _vaultIdleTimer.Stop(); _vaultFlushTimer.Stop(); _vaultFlushDebounce.Stop();
         _watchDebounce.Stop(); _volSaveDebounce.Stop();
-        StopVideo();                                   // release the MediaSource (native pipeline)
+        StopVideo();                                   // release the main MediaSource (native pipeline)
+        try { StopPeekVideo(); } catch { }             // and the Peek preview's, if one is open
         try { _editor.Dispose(); } catch { }           // full-resolution edit bitmaps
         try { _aiIdleTimer?.Stop(); _ai?.Dispose(); _ai = null; } catch { } // ONNX sessions + GPU arenas
+        try { _drive.Dispose(); } catch { }            // per-window Drive service + its HttpClient
 
         // Everything above is this window's own state. What follows is process-wide, and a guest window
         // ("open in new window", in-process OR spawned via --new-window) closing is not the app exiting —

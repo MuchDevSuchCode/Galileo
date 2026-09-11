@@ -337,7 +337,7 @@ public sealed partial class MainWindow
             App.Log("VideoExport", ex);
             try { if (File.Exists(staging)) File.Delete(staging); } catch { }
         }
-        finally { EndProgressOp(token, null); }
+        finally { EndProgressOp(token, null); cts.Dispose(); }
     }
 
     // ---- Timeline (filmstrip + scrub) ----

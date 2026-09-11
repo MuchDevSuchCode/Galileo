@@ -24,8 +24,17 @@ public sealed record RemoteVault(string Id, string FolderId, int FileCount);
 /// (which stays wrapped behind the passphrase/Hello). Uses the drive.file scope, so the app can
 /// only ever touch files it created.
 /// </summary>
-public sealed class GoogleDriveBackup
+public sealed class GoogleDriveBackup : IDisposable
 {
+    /// <summary>Releases the Drive service (and its HttpClient) WITHOUT signing out — used when a window
+    /// closes, so a per-window instance doesn't leak its HTTP stack. The stored token is left intact so
+    /// the next launch stays signed in (that's what <see cref="DisconnectAsync"/> is for).</summary>
+    public void Dispose()
+    {
+        try { _service?.Dispose(); } catch { }
+        _service = null;
+    }
+
     private const string RootFolderName = "Galileo Vault Backups";
     private const string FolderMime = "application/vnd.google-apps.folder";
 

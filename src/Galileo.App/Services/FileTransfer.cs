@@ -62,7 +62,7 @@ public sealed class ConflictChoice
 /// so the user can Overwrite / Skip / Keep both (with "apply to all"); identical files are detected by
 /// hashing both sides first so the choice is informed. Existing folders are merged (per-file conflicts).
 /// </summary>
-public sealed class FileTransfer
+public sealed class FileTransfer : IDisposable
 {
     private const int Chunk = 1 << 20; // 1 MiB
 
@@ -76,6 +76,11 @@ public sealed class FileTransfer
     public void Resume() { if (IsCanceled) return; IsPaused = false; _gate.Set(); }
     public void TogglePause() { if (IsPaused) Resume(); else Pause(); }
     public void Cancel() { _cts.Cancel(); _gate.Set(); } // release the gate so a paused copy can observe the cancel
+
+    // A ManualResetEventSlim allocates a kernel event handle the first time a copy pauses/waits, and the
+    // CancellationTokenSource holds one too. One FileTransfer is created per copy/move/paste — leaving
+    // them undisposed leaked a handle per operation, so a long copy/paste session slowly bled handles.
+    public void Dispose() { _gate.Dispose(); _cts.Dispose(); }
 
     private sealed class CopyOp { public string Src = ""; public string Dest = ""; public long Size; public bool Overwrite; }
 
