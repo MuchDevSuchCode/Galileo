@@ -54,7 +54,8 @@ public sealed class ShellBrowser
     }
 
     /// <summary>Children of a shell folder (by parsing name) as ExplorerItems carrying their ShellId.
-    /// Size/date are left blank for v1 (property-store reads are deferred).</summary>
+    /// File size and modified date come from the shell property store (so sorting by size/date works
+    /// in device views too); folders read as 0/blank, matching filesystem folders.</summary>
     public List<ExplorerItem> List(string parsingName)
     {
         var folders = new List<ExplorerItem>();
@@ -79,7 +80,8 @@ public sealed class ShellBrowser
 
                     var kind = isFolder ? ExplorerItemKind.Folder : ExplorerItemKind.File;
                     var type = isFolder ? "Folder" : TypeName(System.IO.Path.GetExtension(name));
-                    var item = new ExplorerItem(pn, kind, 0, default, type, displayName: name, shellId: pn);
+                    var (size, modified) = isFolder ? (0L, default(DateTime)) : ReadSizeAndDate(child);
+                    var item = new ExplorerItem(pn, kind, size, modified, type, displayName: name, shellId: pn);
                     (isFolder ? folders : files).Add(item);
                 }
                 finally { Marshal.ReleaseComObject(child); }
@@ -141,8 +143,9 @@ public sealed class ShellBrowser
         AppPaths.Root, ".mtp");
 
     /// <summary>Streams a device file (by parsing name) to a temp copy and returns its path, so the
-    /// existing path-based image/video/default openers can use it.</summary>
-    public Task<string> CopyToTempAsync(string parsingName, string fileName) => Task.Run(() =>
+    /// existing path-based image/video/default openers can use it. Reports 0..1 progress when the
+    /// stream's size is known — a multi-GB phone video used to look hung with no feedback at all.</summary>
+    public Task<string> CopyToTempAsync(string parsingName, string fileName, IProgress<double>? progress = null) => Task.Run(() =>
     {
         IShellItem? item = null;
         try
@@ -160,6 +163,9 @@ public sealed class ShellBrowser
             Marshal.Release(ptr);
             try
             {
+                long total = 0;
+                try { stm.Stat(out var stat, 1 /* STATFLAG_NONAME */); total = stat.cbSize; } catch { }
+
                 Directory.CreateDirectory(TempRoot);
                 var dest = Path.Combine(TempRoot, Guid.NewGuid().ToString("N") + "_" + Sanitize(fileName));
                 using var fs = File.Create(dest);
@@ -167,12 +173,15 @@ public sealed class ShellBrowser
                 var read = Marshal.AllocHGlobal(sizeof(int));
                 try
                 {
+                    long copied = 0;
                     while (true)
                     {
                         stm.Read(buf, buf.Length, read);
                         var n = Marshal.ReadInt32(read);
                         if (n <= 0) break;
                         fs.Write(buf, 0, n);
+                        copied += n;
+                        if (total > 0) progress?.Report(Math.Min(1.0, (double)copied / total));
                     }
                 }
                 finally { Marshal.FreeHGlobal(read); }
@@ -266,7 +275,10 @@ public sealed class ShellBrowser
     {
         var t = Type.GetTypeFromCLSID(CLSID_FileOperation) ?? throw new IOException("FileOperation unavailable.");
         var op = (IFileOperation)Activator.CreateInstance(t)!;
-        op.SetOperationFlags(FOF_NOCONFIRMATION); // we confirm destructive actions ourselves
+        // Silent: these ops now run on a background STA thread (a large MTP transfer used to block
+        // the UI thread for its whole duration), so the shell must not try to raise its own
+        // confirmation/progress UI there — the app shows its own status instead.
+        op.SetOperationFlags(FOF_NOCONFIRMATION | FOF_SILENT);
         if (owner != IntPtr.Zero) op.SetOwnerWindow(owner);
         return op;
     }
@@ -290,6 +302,30 @@ public sealed class ShellBrowser
         finally { Marshal.ReleaseComObject(en); }
     }
 
+    /// <summary>File size + modified date from the shell property store (IShellItem2), so device
+    /// views can sort by size/date like filesystem views. Best-effort — missing values stay blank.</summary>
+    private static (long Size, DateTime Modified) ReadSizeAndDate(IShellItem item)
+    {
+        long size = 0;
+        DateTime modified = default;
+        try
+        {
+            if (item is IShellItem2 i2)
+            {
+                var pkSize = PKEY_Size;
+                if (i2.GetUInt64(ref pkSize, out var sz) == 0) size = (long)sz;
+                var pkDate = PKEY_DateModified;
+                if (i2.GetFileTime(ref pkDate, out var ft) == 0)
+                {
+                    var ticks = ((long)ft.dwHighDateTime << 32) | (uint)ft.dwLowDateTime;
+                    if (ticks > 0) modified = DateTime.FromFileTimeUtc(ticks).ToLocalTime();
+                }
+            }
+        }
+        catch { /* property store unavailable on this item — leave blank */ }
+        return (size, modified);
+    }
+
     private static string GetName(IShellItem item, SIGDN kind)
     {
         if (item.GetDisplayName(kind, out var p) != 0 || p == IntPtr.Zero) return "";
@@ -311,7 +347,7 @@ public sealed class ShellBrowser
 
     private const uint SFGAO_STORAGE = 0x00080000, SFGAO_STREAM = 0x00400000,
                        SFGAO_FOLDER = 0x20000000, SFGAO_FILESYSTEM = 0x40000000;
-    private const uint FOF_NOCONFIRMATION = 0x0010;
+    private const uint FOF_NOCONFIRMATION = 0x0010, FOF_SILENT = 0x0004;
     private const uint FILE_ATTRIBUTE_DIRECTORY = 0x0010;
 
     private enum SIGDN : uint
@@ -338,6 +374,38 @@ public sealed class ShellBrowser
         [PreserveSig] int GetDisplayName(SIGDN sigdnName, out IntPtr ppszName);
         [PreserveSig] int GetAttributes(uint sfgaoMask, out uint psfgao);
         [PreserveSig] int Compare(IShellItem psi, uint hint, out int piOrder);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PROPERTYKEY { public Guid fmtid; public uint pid; }
+
+    // Canonical storage property keys (System.Size / System.DateModified).
+    private static readonly PROPERTYKEY PKEY_Size = new() { fmtid = new Guid("B725F130-47EF-101A-A5F1-02608C9EEBAC"), pid = 12 };
+    private static readonly PROPERTYKEY PKEY_DateModified = new() { fmtid = new Guid("B725F130-47EF-101A-A5F1-02608C9EEBAC"), pid = 14 };
+
+    // IShellItem2: full vtable in exact order (IShellItem's 5 methods first); members we don't call
+    // are declared with IntPtr parameters — all pointer-sized, so the layout stays correct.
+    [ComImport, Guid("7e9fb0d3-919f-4307-ab2e-9b1860310c93"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IShellItem2
+    {
+        [PreserveSig] int BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);
+        [PreserveSig] int GetParent(out IntPtr ppsi);
+        [PreserveSig] int GetDisplayName(SIGDN sigdnName, out IntPtr ppszName);
+        [PreserveSig] int GetAttributes(uint sfgaoMask, out uint psfgao);
+        [PreserveSig] int Compare(IntPtr psi, uint hint, out int piOrder);
+        [PreserveSig] int GetPropertyStore(int flags, ref Guid riid, out IntPtr ppv);
+        [PreserveSig] int GetPropertyStoreWithCreateObject(int flags, IntPtr punkCreateObject, ref Guid riid, out IntPtr ppv);
+        [PreserveSig] int GetPropertyStoreForKeys(IntPtr rgKeys, uint cKeys, int flags, ref Guid riid, out IntPtr ppv);
+        [PreserveSig] int GetPropertyDescriptionList(ref PROPERTYKEY keyType, ref Guid riid, out IntPtr ppv);
+        [PreserveSig] int Update(IntPtr pbc);
+        [PreserveSig] int GetProperty(ref PROPERTYKEY key, IntPtr ppropvar);
+        [PreserveSig] int GetCLSID(ref PROPERTYKEY key, out Guid pclsid);
+        [PreserveSig] int GetFileTime(ref PROPERTYKEY key, out System.Runtime.InteropServices.ComTypes.FILETIME pft);
+        [PreserveSig] int GetInt32(ref PROPERTYKEY key, out int pi);
+        [PreserveSig] int GetString(ref PROPERTYKEY key, out IntPtr ppsz);
+        [PreserveSig] int GetUInt32(ref PROPERTYKEY key, out uint pui);
+        [PreserveSig] int GetUInt64(ref PROPERTYKEY key, out ulong pull);
+        [PreserveSig] int GetBool(ref PROPERTYKEY key, out int pf);
     }
 
     [ComImport, Guid("70629033-e363-4a28-a567-0db78006e6d7"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

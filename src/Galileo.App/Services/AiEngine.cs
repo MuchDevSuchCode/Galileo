@@ -29,8 +29,10 @@ public enum AiModel
 }
 
 /// <param name="Cpu">Force the CPU provider — for models DirectML loads happily but then fails to run.</param>
+/// <param name="Sha256">Pinned SHA-256 (hex) of the model file — verified after download so a
+/// corrupted or tampered payload can never be loaded and executed.</param>
 public sealed record ModelSpec(AiModel Model, string File, string Url, string Input, int Scale, long MinBytes,
-    string Label, bool Cpu = false);
+    string Label, bool Cpu = false, string? Sha256 = null);
 
 /// <summary>
 /// On-device AI image restoration, run on the GPU through DirectML (any DX12 card — no CUDA install).
@@ -49,27 +51,33 @@ public sealed class AiEngine : IDisposable
     {
         [AiModel.Upscale] = new(AiModel.Upscale, "realesrgan-x4plus.onnx",
             "https://huggingface.co/fernandotonon/QtMeshEditor-realesrgan-onnx/resolve/main/RealESRGAN_x4plus.onnx",
-            "input", 4, 50_000_000, "Real-ESRGAN x4plus (64 MB)"),
+            "input", 4, 50_000_000, "Real-ESRGAN x4plus (64 MB)",
+            Sha256: "c999e5e3365a23cda6d627c407005076c160f420d6b122a0ef7c9d4210aee96a"),
 
         [AiModel.General] = new(AiModel.General, "realesr-general-x4v3.onnx",
             "https://huggingface.co/Samo629/real-esrgan-onnx/resolve/main/realesr-general-x4v3.onnx",
-            "input", 4, 3_000_000, "Real-ESRGAN general (5 MB)"),
+            "input", 4, 3_000_000, "Real-ESRGAN general (5 MB)",
+            Sha256: "ee28b94a5d06ff32c4920370417e094d1dc7aae4e568e2502afb3371377e41fd"),
 
         [AiModel.Face] = new(AiModel.Face, "codeformer.onnx",
             "https://huggingface.co/bluefoxcreation/Codeformer-ONNX/resolve/main/codeformer.onnx",
-            "x", 1, 300_000_000, "CodeFormer face restoration (360 MB)"),
+            "x", 1, 300_000_000, "CodeFormer face restoration (360 MB)",
+            Sha256: "91e7e881c5001fea4a535e8f96eaeaa672d30c963a678a3e27f0429a6620f57a"),
 
         [AiModel.FaceDetect] = new(AiModel.FaceDetect, "face_yunet.onnx",
             "https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2023mar.onnx",
-            "input", 1, 100_000, "YuNet face detection (0.2 MB)"),
+            "input", 1, 100_000, "YuNet face detection (0.2 MB)",
+            Sha256: "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"),
 
         [AiModel.Inpaint] = new(AiModel.Inpaint, "inpaint_lama.onnx",
             "https://huggingface.co/opencv/inpainting_lama/resolve/main/inpainting_lama_2025jan.onnx",
-            "image", 1, 50_000_000, "LaMa content-aware fill (88 MB)", Cpu: true),
+            "image", 1, 50_000_000, "LaMa content-aware fill (88 MB)", Cpu: true,
+            Sha256: "7df918ac3921d3daf0aae1d219776cf0dc4e4935f035af81841b40adcf74fdf2"),
 
         [AiModel.TextDetect] = new(AiModel.TextDetect, "text_detect.onnx",
             "https://huggingface.co/opencv/text_detection_ppocr/resolve/main/text_detection_en_ppocrv3_2023may.onnx",
-            "x", 1, 1_000_000, "PP-OCR text detection (2 MB)"),
+            "x", 1, 1_000_000, "PP-OCR text detection (2 MB)",
+            Sha256: "03f550c6b406fda8bf54bd8327815f6c7e2edd98cea02348c93d879254366587"),
     };
 
     /// <summary>Long-edge cap on the input when keeping a 4x result (the output has 16x the pixels).</summary>
@@ -112,6 +120,20 @@ public sealed class AiEngine : IDisposable
                 await dst.WriteAsync(buf.AsMemory(0, n), ct);
                 read += n;
                 if (total > 0) progress?.Report((double)read / total);
+            }
+        }
+        // Integrity gate: the model is executable-adjacent content — never install a payload whose
+        // hash doesn't match the pinned value (corrupt download, moved URL, or tampering).
+        if (spec.Sha256 is not null)
+        {
+            string actual;
+            using (var fs = File.OpenRead(tmp))
+                actual = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(fs, ct));
+            if (!string.Equals(actual, spec.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                try { File.Delete(tmp); } catch { }
+                throw new InvalidOperationException(
+                    $"The downloaded {spec.Label} failed its integrity check — the file was corrupt or altered. Try again later.");
             }
         }
         if (File.Exists(dest)) File.Delete(dest);
@@ -286,12 +308,15 @@ public sealed class AiEngine : IDisposable
             var validW = Math.Min(step, w - tx);
             var validH = Math.Min(step, h - ty);
 
+            // Alpha: the nets are RGB-only, so the source's alpha channel is carried across (nearest
+            // source pixel when upscaling) — forcing it opaque silently flattened transparent PNGs.
             if (keepUpscale)
             {
                 for (var y = 0; y < validH * scale; y++)
                 {
                     var srcRow = (cy + y) * os;
                     var dstRow = (ty * scale + y) * outW;
+                    var srcY = ty + y / scale;
                     for (var x = 0; x < validW * scale; x++)
                     {
                         var si = srcRow + cx + x;
@@ -299,7 +324,7 @@ public sealed class AiEngine : IDisposable
                         dest[d] = ToByte(ob[2 * oPlane + si]);
                         dest[d + 1] = ToByte(ob[oPlane + si]);
                         dest[d + 2] = ToByte(ob[si]);
-                        dest[d + 3] = 255;
+                        dest[d + 3] = bgra[(srcY * w + tx + x / scale) * 4 + 3];
                     }
                 }
             }
@@ -326,7 +351,7 @@ public sealed class AiEngine : IDisposable
                     dest[d] = ToByte(b * n);
                     dest[d + 1] = ToByte(g * n);
                     dest[d + 2] = ToByte(r * n);
-                    dest[d + 3] = 255;
+                    dest[d + 3] = bgra[((ty + y) * w + tx + x) * 4 + 3];
                 }
             }
 
@@ -352,7 +377,7 @@ public sealed class AiEngine : IDisposable
             outp[i] = (byte)(original[i] + (processed[i] - original[i]) * t);
             outp[i + 1] = (byte)(original[i + 1] + (processed[i + 1] - original[i + 1]) * t);
             outp[i + 2] = (byte)(original[i + 2] + (processed[i + 2] - original[i + 2]) * t);
-            outp[i + 3] = 255;
+            outp[i + 3] = original[i + 3]; // alpha isn't processed — keep the source's (transparency survives)
         }
         return outp;
     }

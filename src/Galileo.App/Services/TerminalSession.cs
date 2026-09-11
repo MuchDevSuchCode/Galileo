@@ -35,7 +35,11 @@ public sealed class TerminalSession : IDisposable
         var startup = ConfigureStartupInfo(_hPC);
         try
         {
-            var cmd = string.IsNullOrEmpty(args) ? exe : $"{exe} {args}";
+            // Quote the exe: CreateProcess parses an unquoted path with spaces ambiguously
+            // ("C:\Program Files\PowerShell\7\pwsh.exe" would try C:\Program first) — the classic
+            // unquoted-path problem, both a break and a planting risk.
+            var quoted = exe.Contains(' ') && !exe.StartsWith('"') ? $"\"{exe}\"" : exe;
+            var cmd = string.IsNullOrEmpty(args) ? quoted : $"{quoted} {args}";
             if (!CreateProcess(null, new StringBuilder(cmd), IntPtr.Zero, IntPtr.Zero, false,
                     EXTENDED_STARTUPINFO_PRESENT, IntPtr.Zero,
                     string.IsNullOrEmpty(cwd) ? null : cwd, ref startup, out _proc))

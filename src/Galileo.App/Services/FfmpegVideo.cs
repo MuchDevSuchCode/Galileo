@@ -369,7 +369,10 @@ public static class FfmpegVideo
         await WaitOrKillAsync(proc, ct);
         var outText = await stdout;
         var errText = await stderr;
-        if (proc.ExitCode != 0 && !captureStdErr) throw new InvalidOperationException(TailLines(errText, 5));
+        // A nonzero exit ALWAYS throws — captureStdErr only widens what text is returned. It used to
+        // also skip this check, so a failed frame snapshot / segment concat / thumbnail run reported
+        // success with nothing (or garbage) on disk.
+        if (proc.ExitCode != 0) throw new InvalidOperationException(TailLines(errText, 5));
         return captureStdErr ? outText + errText : outText;
     }
 

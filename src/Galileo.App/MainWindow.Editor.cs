@@ -360,9 +360,19 @@ public sealed partial class MainWindow
     private void EditCanvas_Draw(CanvasControl sender, CanvasDrawEventArgs args)
     {
         if (_editor.Source is null) return;
+        // Win2D effects are native COM objects; a fresh chain is built EVERY draw (60/s during slider
+        // drags), so they're tracked and disposed at the end of the frame instead of piling up on the
+        // finalizer queue.
+        var fxTrack = new List<IDisposable>();
+        try { EditCanvasDrawCore(sender, args, fxTrack); }
+        finally { foreach (var fx in fxTrack) fx.Dispose(); }
+    }
+
+    private void EditCanvasDrawCore(CanvasControl sender, CanvasDrawEventArgs args, List<IDisposable> fxTrack)
+    {
         var ds = args.DrawingSession;
 
-        var oriented = _editor.BuildOriented(_edit, out var bounds);
+        var oriented = _editor.BuildOriented(_edit, fxTrack, out var bounds);
         double ow = bounds.Width, oh = bounds.Height;
         _orientedW = ow; _orientedH = oh;
         double cw = sender.Size.Width, ch = sender.Size.Height;
@@ -384,7 +394,7 @@ public sealed partial class MainWindow
         // ---- Before / after comparison (Topaz-style) ----
         if (_compareMode != "off")
         {
-            DrawCompare(ds, oriented, src, ox, oy, dw, dh, cw, ch, scale);
+            DrawCompare(ds, oriented, src, ox, oy, dw, dh, cw, ch, scale, fxTrack);
             return;
         }
 
@@ -468,7 +478,7 @@ public sealed partial class MainWindow
         {
             try
             {
-                var selImg = _editor.BuildOrientedOverlay(_edit, _selOverlay, _selOverlayScaleX, _selOverlayScaleY, out _);
+                var selImg = _editor.BuildOrientedOverlay(_edit, _selOverlay, _selOverlayScaleX, _selOverlayScaleY, fxTrack, out _);
                 ds.DrawImage(selImg, new Rect(ox, oy, dw, dh), src);
             }
             catch (Exception ex) { App.Log("SelDraw", ex); }
@@ -509,10 +519,11 @@ public sealed partial class MainWindow
     /// <summary>Draws the pristine image against the edited one. "before" is put through the same geometry
     /// (and scaled to the current source size) so the two line up even after an AI upscale.</summary>
     private void DrawCompare(CanvasDrawingSession ds, ICanvasImage after, Rect src,
-        double ox, double oy, double dw, double dh, double cw, double ch, double scale)
+        double ox, double oy, double dw, double dh, double cw, double ch, double scale,
+        List<IDisposable> fxTrack)
     {
         ICanvasImage before;
-        try { before = _editor.BuildBeforeOriented(_edit, out _); }
+        try { before = _editor.BuildBeforeOriented(_edit, fxTrack, out _); }
         catch { ds.DrawImage(after, new Rect(ox, oy, dw, dh), src); return; }
 
         var label = CompareLabelFormat;
@@ -1042,6 +1053,49 @@ public sealed partial class MainWindow
         if (_cropMode) CropApply_Click(sender, e);
     }
 
+    /// <summary>Keyboard path for the crop tool: arrows MOVE the selection, Shift+arrows RESIZE the
+    /// right/bottom edge, Ctrl multiplies the step ×10. Undo entries are debounced like slider drags,
+    /// so holding a key doesn't spray one undo step per pixel.</summary>
+    private bool HandleCropKey(Windows.System.VirtualKey key)
+    {
+        if (!InEditor || !_cropMode || IsTextInputFocused()) return false;
+        if ((_pendingCrop ?? _edit.Crop) is not Rect c || c.Width <= 0 || c.Height <= 0) return false;
+
+        double step = IsCtrlDown() ? 10 : 1;
+        double dx = 0, dy = 0;
+        switch (key)
+        {
+            case Windows.System.VirtualKey.Left: dx = -step; break;
+            case Windows.System.VirtualKey.Right: dx = step; break;
+            case Windows.System.VirtualKey.Up: dy = -step; break;
+            case Windows.System.VirtualKey.Down: dy = step; break;
+            default: return false;
+        }
+
+        Rect r;
+        if (IsShiftDown())
+        {
+            var w = Math.Clamp(c.Width + dx, 10, Math.Max(10, _orientedW - c.X));
+            var h = Math.Clamp(c.Height + dy, 10, Math.Max(10, _orientedH - c.Y));
+            r = new Rect(c.X, c.Y, w, h);
+        }
+        else
+        {
+            var x = Math.Clamp(c.X + dx, 0, Math.Max(0, _orientedW - c.Width));
+            var y = Math.Clamp(c.Y + dy, 0, Math.Max(0, _orientedH - c.Height));
+            r = new Rect(x, y, c.Width, c.Height);
+        }
+
+        if (r != c)
+        {
+            DebounceUndo();
+            _edit.Crop = r;
+            _pendingCrop = null;
+            _editCanvas?.Invalidate();
+        }
+        return true;
+    }
+
     private async Task AddTextAsync(Point at)
     {
         var box = new TextBox { PlaceholderText = "Text", AcceptsReturn = false, MinWidth = 240 };
@@ -1134,7 +1188,7 @@ public sealed partial class MainWindow
         if (_editCanvas is null) return;
         SetCanvasMode("crop");
         _editCanvas.Invalidate();
-        StatusText.Text = "Drag to draw a crop; drag inside it to move. Then Apply.";
+        StatusText.Text = "Drag to draw a crop; drag inside it to move (arrows nudge, Shift+arrows resize). Then Apply.";
     }
 
     private void CropApply_Click(object sender, RoutedEventArgs e)

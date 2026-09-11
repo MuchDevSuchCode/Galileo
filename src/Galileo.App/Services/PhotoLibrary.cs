@@ -48,15 +48,22 @@ public sealed class PhotoLibrary
     /// <summary>Audio or video — anything the embedded media player handles.</summary>
     public static bool IsMedia(string path) => IsVideo(path) || IsAudio(path);
 
-    /// <summary>Loads all supported images in a folder, newest first.</summary>
-    public List<PhotoItem> Load(string folder)
+    /// <summary>Loads all supported images in a folder, newest first. Windows-hidden/system files
+    /// are excluded — the explorer listing hides them, so arrow-key navigation in the viewer must
+    /// not walk through them either. <paramref name="alwaysInclude"/> keeps one specific file even
+    /// if hidden (an explicitly opened hidden image should still open as itself).</summary>
+    public List<PhotoItem> Load(string folder, string? alwaysInclude = null)
     {
         var items = new List<PhotoItem>();
         IEnumerable<string> files;
         try
         {
-            files = Directory.EnumerateFiles(folder)
-                .Where(IsSupported);
+            files = new DirectoryInfo(folder).EnumerateFiles()
+                .Where(f => IsSupported(f.FullName)
+                            && ((f.Attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0
+                                || string.Equals(f.FullName, alwaysInclude, StringComparison.OrdinalIgnoreCase)))
+                .Select(f => f.FullName)
+                .ToList();
         }
         catch
         {

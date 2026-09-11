@@ -36,6 +36,12 @@ public sealed class ImageEditor : IDisposable
     public uint PixelWidth => Source?.SizeInPixels.Width ?? 0;
     public uint PixelHeight => Source?.SizeInPixels.Height ?? 0;
 
+    /// <summary>Long-edge cap on the editing bitmap. Uncapped decodes exceeded the GPU's max texture
+    /// size on big panoramas (~16384 D3D limit) so the editor failed to open them at all — and the
+    /// editor holds the image TWICE (source + before reference), so the cap also bounds memory.
+    /// The viewer uses the same figure.</summary>
+    private const uint MaxEditSide = 8000;
+
     public async Task LoadAsync(string path)
     {
         Source?.Dispose();
@@ -43,18 +49,29 @@ public sealed class ImageEditor : IDisposable
         Before?.Dispose();
         Before = null;
         var file = await StorageFile.GetFileFromPathAsync(path);
-        try
+
+        // Cheap header sniff first: oversized images go straight to the scaled WIC decode instead of
+        // letting CanvasBitmap.LoadAsync fail against the texture limit (or succeed at a huge size).
+        var dims = ImageInfo.GetDimensions(path);
+        if (dims is { } d && Math.Max(d.Width, d.Height) > MaxEditSide)
         {
             using var stream = await file.OpenReadAsync();
-            Source = await CanvasBitmap.LoadAsync(_device, stream);
+            Source = await DecodeViaWicAsync(stream);
         }
-        catch
+        else
         {
-            // Some HEIC/RAW formats won't load through Win2D directly — decode via WIC and convert.
-            using var stream = await file.OpenReadAsync();
-            var decoder = await BitmapDecoder.CreateAsync(stream);
-            using var sb = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
-            Source = CanvasBitmap.CreateFromSoftwareBitmap(_device, sb);
+            try
+            {
+                using var stream = await file.OpenReadAsync();
+                Source = await CanvasBitmap.LoadAsync(_device, stream);
+            }
+            catch
+            {
+                // Some HEIC/RAW formats won't load through Win2D directly — decode via WIC and convert
+                // (which also applies the size cap for formats the header sniff can't read).
+                using var stream = await file.OpenReadAsync();
+                Source = await DecodeViaWicAsync(stream);
+            }
         }
 
         // Snapshot the untouched pixels as the "before" reference.
@@ -62,6 +79,29 @@ public sealed class ImageEditor : IDisposable
             (int)Source.SizeInPixels.Width, (int)Source.SizeInPixels.Height,
             Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized);
         SourceModified = false;
+    }
+
+    /// <summary>WIC decode capped at <see cref="MaxEditSide"/> on the long edge (Fant resampling).</summary>
+    private async Task<CanvasBitmap> DecodeViaWicAsync(Windows.Storage.Streams.IRandomAccessStream stream)
+    {
+        var decoder = await BitmapDecoder.CreateAsync(stream);
+        uint w = decoder.PixelWidth, h = decoder.PixelHeight;
+        if (Math.Max(w, h) > MaxEditSide)
+        {
+            var f = (double)MaxEditSide / Math.Max(w, h);
+            var transform = new BitmapTransform
+            {
+                ScaledWidth = (uint)Math.Max(1, Math.Round(w * f)),
+                ScaledHeight = (uint)Math.Max(1, Math.Round(h * f)),
+                InterpolationMode = BitmapInterpolationMode.Fant,
+            };
+            using var scaled = await decoder.GetSoftwareBitmapAsync(
+                BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, transform,
+                ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.ColorManageToSRgb);
+            return CanvasBitmap.CreateFromSoftwareBitmap(_device, scaled);
+        }
+        using var sb = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+        return CanvasBitmap.CreateFromSoftwareBitmap(_device, sb);
     }
 
     /// <summary>Puts the untouched pixels back (undoing any AI, which rewrites the source bitmap rather than
@@ -78,6 +118,12 @@ public sealed class ImageEditor : IDisposable
     /// the current source size — so a before/after comparison lines up pixel-for-pixel even after an AI
     /// upscale changed the dimensions.</summary>
     public ICanvasImage BuildBeforeOriented(EditState s, out Rect orientedBounds)
+        => BuildBeforeOriented(s, null, out orientedBounds);
+
+    /// <summary>Every Win2D effect created is added to <paramref name="track"/> (when given) so the
+    /// caller can dispose the chain after drawing — effects are native COM objects, and per-frame
+    /// chains left to the finalizer pile up badly during slider drags.</summary>
+    public ICanvasImage BuildBeforeOriented(EditState s, System.Collections.Generic.List<IDisposable>? track, out Rect orientedBounds)
     {
         ICanvasImage img = Before ?? Source!;
         var bw = (Before ?? Source!).SizeInPixels.Width;
@@ -86,24 +132,28 @@ public sealed class ImageEditor : IDisposable
         var sh = Source.SizeInPixels.Height;
         if (bw != sw || bh != sh)
         {
-            img = new Transform2DEffect
+            var scaleFx = new Transform2DEffect
             {
                 Source = img,
                 TransformMatrix = Matrix3x2.CreateScale((float)sw / bw, (float)sh / bh),
                 InterpolationMode = CanvasImageInterpolation.HighQualityCubic,
             };
+            track?.Add(scaleFx);
+            img = scaleFx;
         }
         var geo = new EditState
         {
             Quarter = s.Quarter, FlipH = s.FlipH, FlipV = s.FlipV, StraightenDeg = s.StraightenDeg,
         };
         var m = OrientMatrix(geo, out orientedBounds);
-        return new Transform2DEffect
+        var fx = new Transform2DEffect
         {
             Source = img,
             TransformMatrix = m,
             InterpolationMode = CanvasImageInterpolation.HighQualityCubic,
         };
+        track?.Add(fx);
+        return fx;
     }
 
     /// <summary>Source pixels as BGRA8, optionally downscaled so the long edge is at most
@@ -153,16 +203,22 @@ public sealed class ImageEditor : IDisposable
     /// <paramref name="preScaleX"/>/<paramref name="preScaleY"/> first scale it up to source-pixel
     /// dimensions, then the normal orientation geometry applies.</summary>
     public ICanvasImage BuildOrientedOverlay(EditState s, ICanvasImage overlay, float preScaleX, float preScaleY, out Rect orientedBounds)
+        => BuildOrientedOverlay(s, overlay, preScaleX, preScaleY, null, out orientedBounds);
+
+    public ICanvasImage BuildOrientedOverlay(EditState s, ICanvasImage overlay, float preScaleX, float preScaleY,
+        System.Collections.Generic.List<IDisposable>? track, out Rect orientedBounds)
     {
         var m = OrientMatrix(s, out orientedBounds);
         if (preScaleX != 1f || preScaleY != 1f)
             m = Matrix3x2.CreateScale(preScaleX, preScaleY) * m;
-        return new Transform2DEffect
+        var fx = new Transform2DEffect
         {
             Source = overlay,
             TransformMatrix = m,
             InterpolationMode = CanvasImageInterpolation.NearestNeighbor,
         };
+        track?.Add(fx);
+        return fx;
     }
 
     /// <summary>Maps a point from oriented-image space (what the user sees and draws on) back to raw source
@@ -182,22 +238,37 @@ public sealed class ImageEditor : IDisposable
     /// <summary>The full color + orientation effect graph. <paramref name="orientedBounds"/> is the
     /// post-transform image rectangle (origin 0,0); crop coordinates are relative to it.</summary>
     public ICanvasImage BuildOriented(EditState s, out Rect orientedBounds)
+        => BuildOriented(s, null, out orientedBounds);
+
+    /// <summary>See <see cref="BuildBeforeOriented(EditState, System.Collections.Generic.List{IDisposable}?, out Rect)"/>
+    /// for the <paramref name="track"/> contract.</summary>
+    public ICanvasImage BuildOriented(EditState s, System.Collections.Generic.List<IDisposable>? track, out Rect orientedBounds)
     {
-        var colored = BuildColorPipeline(Source!, s);
+        var colored = BuildColorPipeline(Source!, s, track);
         var m = OrientMatrix(s, out orientedBounds);
-        return new Transform2DEffect
+        var fx = new Transform2DEffect
         {
             Source = colored,
             TransformMatrix = m,
             InterpolationMode = CanvasImageInterpolation.HighQualityCubic,
         };
+        track?.Add(fx);
+        return fx;
     }
 
     /// <summary>Renders the edit (plus an optional overlay) to a file. <paramref name="bakeOverlay"/>
     /// is given the drawing session and the crop rect (in oriented-image space) to draw markup.</summary>
     public async Task ExportAsync(EditState s, string destPath, float quality, Action<CanvasDrawingSession, Rect>? bakeOverlay)
     {
-        var oriented = BuildOriented(s, out var bounds);
+        var track = new System.Collections.Generic.List<IDisposable>();
+        try { await ExportCoreAsync(s, destPath, quality, bakeOverlay, track); }
+        finally { foreach (var fx in track) fx.Dispose(); }
+    }
+
+    private async Task ExportCoreAsync(EditState s, string destPath, float quality,
+        Action<CanvasDrawingSession, Rect>? bakeOverlay, System.Collections.Generic.List<IDisposable> track)
+    {
+        var oriented = BuildOriented(s, track, out var bounds);
         var crop = s.Crop ?? new Rect(0, 0, bounds.Width, bounds.Height);
 
         // The crop lives in oriented space and can be stale relative to the CURRENT source — an AI upscale
@@ -223,30 +294,35 @@ public sealed class ImageEditor : IDisposable
 
     // ---- effect graph ----
 
-    private static ICanvasImage BuildColorPipeline(ICanvasImage src, EditState s)
+    private static ICanvasImage BuildColorPipeline(ICanvasImage src, EditState s, System.Collections.Generic.List<IDisposable>? track)
     {
         var img = src;
-        if (s.Exposure != 0) img = new ExposureEffect { Source = img, Exposure = (float)s.Exposure };
-        if (s.Temperature != 0 || s.Tint != 0) img = new TemperatureAndTintEffect { Source = img, Temperature = (float)s.Temperature, Tint = (float)s.Tint };
-        if (s.Contrast != 0) img = new ContrastEffect { Source = img, Contrast = (float)s.Contrast };
-        if (s.Brightness != 0) img = new LinearTransferEffect { Source = img, RedOffset = (float)s.Brightness, GreenOffset = (float)s.Brightness, BlueOffset = (float)s.Brightness };
-        if (s.Saturation != 0) img = new ColorMatrixEffect { Source = img, ColorMatrix = SaturationMatrix(1f + (float)s.Saturation) };
-        img = ApplyFilter(img, s.Filter);
-        if (s.Sharpness > 0) img = new SharpenEffect { Source = img, Amount = (float)(s.Sharpness * 10), Threshold = 0 };
+        ICanvasImage Add<T>(T fx) where T : class, ICanvasImage, IDisposable { track?.Add(fx); return fx; }
+        if (s.Exposure != 0) img = Add(new ExposureEffect { Source = img, Exposure = (float)s.Exposure });
+        if (s.Temperature != 0 || s.Tint != 0) img = Add(new TemperatureAndTintEffect { Source = img, Temperature = (float)s.Temperature, Tint = (float)s.Tint });
+        if (s.Contrast != 0) img = Add(new ContrastEffect { Source = img, Contrast = (float)s.Contrast });
+        if (s.Brightness != 0) img = Add(new LinearTransferEffect { Source = img, RedOffset = (float)s.Brightness, GreenOffset = (float)s.Brightness, BlueOffset = (float)s.Brightness });
+        if (s.Saturation != 0) img = Add(new ColorMatrixEffect { Source = img, ColorMatrix = SaturationMatrix(1f + (float)s.Saturation) });
+        img = ApplyFilter(img, s.Filter, track);
+        if (s.Sharpness > 0) img = Add(new SharpenEffect { Source = img, Amount = (float)(s.Sharpness * 10), Threshold = 0 });
         return img;
     }
 
-    private static ICanvasImage ApplyFilter(ICanvasImage img, ImageFilter filter) => filter switch
+    private static ICanvasImage ApplyFilter(ICanvasImage img, ImageFilter filter, System.Collections.Generic.List<IDisposable>? track)
     {
-        ImageFilter.Auto => new ColorMatrixEffect { Source = new ContrastEffect { Source = img, Contrast = 0.12f }, ColorMatrix = SaturationMatrix(1.12f) },
-        ImageFilter.BlackWhite => new GrayscaleEffect { Source = img },
-        ImageFilter.Sepia => new SepiaEffect { Source = img, Intensity = 1f },
-        ImageFilter.Vivid => new ContrastEffect { Source = new ColorMatrixEffect { Source = img, ColorMatrix = SaturationMatrix(1.45f) }, Contrast = 0.15f },
-        ImageFilter.Warm => new TemperatureAndTintEffect { Source = img, Temperature = 0.25f, Tint = 0.05f },
-        ImageFilter.Cool => new TemperatureAndTintEffect { Source = img, Temperature = -0.25f, Tint = -0.03f },
-        ImageFilter.Invert => new InvertEffect { Source = img },
-        _ => img,
-    };
+        ICanvasImage Add<T>(T fx) where T : class, ICanvasImage, IDisposable { track?.Add(fx); return fx; }
+        return filter switch
+        {
+            ImageFilter.Auto => Add(new ColorMatrixEffect { Source = Add(new ContrastEffect { Source = img, Contrast = 0.12f }), ColorMatrix = SaturationMatrix(1.12f) }),
+            ImageFilter.BlackWhite => Add(new GrayscaleEffect { Source = img }),
+            ImageFilter.Sepia => Add(new SepiaEffect { Source = img, Intensity = 1f }),
+            ImageFilter.Vivid => Add(new ContrastEffect { Source = Add(new ColorMatrixEffect { Source = img, ColorMatrix = SaturationMatrix(1.45f) }), Contrast = 0.15f }),
+            ImageFilter.Warm => Add(new TemperatureAndTintEffect { Source = img, Temperature = 0.25f, Tint = 0.05f }),
+            ImageFilter.Cool => Add(new TemperatureAndTintEffect { Source = img, Temperature = -0.25f, Tint = -0.03f }),
+            ImageFilter.Invert => Add(new InvertEffect { Source = img }),
+            _ => img,
+        };
+    }
 
     // Luminance-preserving saturation matrix (sat: 0 = grayscale, 1 = original, >1 = boosted).
     private static Matrix5x4 SaturationMatrix(float sat)

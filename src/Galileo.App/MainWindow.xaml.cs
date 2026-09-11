@@ -498,7 +498,9 @@ public sealed partial class MainWindow : Window
                 {
                     long SafeLen(System.IO.FileInfo f) { try { return f.Length; } catch { return 0; } }
                     var files = new System.IO.DirectoryInfo(dir).EnumerateFiles()
-                        .Where(f => PhotoLibrary.IsSupported(f.FullName))
+                        .Where(f => PhotoLibrary.IsSupported(f.FullName)
+                                    && ((f.Attributes & (System.IO.FileAttributes.Hidden | System.IO.FileAttributes.System)) == 0
+                                        || string.Equals(f.FullName, path, StringComparison.OrdinalIgnoreCase)))
                         .Select(f => new ExplorerItem(f.FullName, ExplorerItemKind.File, SafeLen(f),
                                                       f.LastWriteTime, FileSystemService.TypeName(f.Extension)))
                         .ToList();
@@ -538,6 +540,15 @@ public sealed partial class MainWindow : Window
     private void OpenPathInCurrentTab(string path)
     {
         var match = _explorerItems.FirstOrDefault(i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase));
+        if (match is null && System.IO.File.Exists(path))
+        {
+            // The folder listing loads asynchronously, so a shell-activated file (double-clicked in
+            // Explorer while Galileo is running) usually arrives BEFORE the listing has items —
+            // waiting on the list meant the file silently never opened. Open it directly instead.
+            var fi = new System.IO.FileInfo(path);
+            match = new ExplorerItem(path, ExplorerItemKind.File, fi.Length, fi.LastWriteTime,
+                FileSystemService.TypeName(fi.Extension));
+        }
         if (match is not null) { _bypassAlwaysNewWindow = true; OpenExplorerItem(match); }
     }
 
@@ -628,7 +639,7 @@ public sealed partial class MainWindow : Window
 
         _state.LastFolder = folder;
         _state.Save();
-        await LoadFolderAsync(folder);
+        await LoadFolderAsync(folder, alwaysInclude: path);
 
         var match = _view.FirstOrDefault(p => string.Equals(p.Path, path, StringComparison.OrdinalIgnoreCase));
         if (match is not null)
@@ -717,12 +728,12 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task LoadFolderAsync(string folder)
+    private async Task LoadFolderAsync(string folder, string? alwaysInclude = null)
     {
         StatusText.Text = "Loading…";
         ShowExplorer();
 
-        var items = await Task.Run(() => _library.Load(folder));
+        var items = await Task.Run(() => _library.Load(folder, alwaysInclude));
         _allPhotos.Clear();
         _allPhotos.AddRange(items);
         RefreshView();
@@ -1964,11 +1975,11 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Reloads the current folder while preserving the current selection (by path).</summary>
-    private void ReloadKeepingSelection()
+    private async void ReloadKeepingSelection()
     {
         var selected = ActiveExplorerList().SelectedItems.OfType<ExplorerItem>()
             .Select(i => i.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        LoadCurrentFolder();
+        await LoadCurrentFolderAsync(); // the listing loads async — restore selection AFTER it lands
         if (selected.Count == 0) return;
         var list = ActiveExplorerList();
         foreach (var it in _explorerItems)
@@ -2396,21 +2407,10 @@ public sealed partial class MainWindow : Window
         if (ShellLoc.IsShell(_currentFolder))
         {
             AddCrumb("This PC", null);
-            var chain = new List<(string Name, string Loc)>();
-            string? pn = ShellLoc.Unwrap(_currentFolder!);
-            var guard = 0;
-            while (pn is not null && guard++ < 64)
-            {
-                chain.Insert(0, (_shell.DisplayName(pn), ShellLoc.Wrap(pn)));
-                pn = _shell.GetParentParsingName(pn);
-            }
-            foreach (var (name, loc) in chain)
-            {
-                Breadcrumb.Children.Add(new TextBlock { Text = "›", Opacity = 0.5, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 2, 0) });
-                AddCrumb(name, loc);
-            }
-            BreadcrumbScroller.UpdateLayout();
-            BreadcrumbScroller.ChangeView(BreadcrumbScroller.ScrollableWidth, null, null, true);
+            // The parent-chain walk is COM against a (possibly flaky) USB device — doing it here
+            // stalled the UI thread on every navigation inside the device. Walk it on the STA
+            // worker and fill the crumbs in when they land (dropped if the user navigated away).
+            _ = BuildShellBreadcrumbAsync(_currentFolder!);
             return;
         }
 
@@ -2450,6 +2450,37 @@ public sealed partial class MainWindow : Window
         }
 
         // Keep the current (right-most) folder visible when the path is long.
+        BreadcrumbScroller.UpdateLayout();
+        BreadcrumbScroller.ChangeView(BreadcrumbScroller.ScrollableWidth, null, null, true);
+    }
+
+    /// <summary>Async completion of the MTP breadcrumb (see the shell branch in BuildBreadcrumb).</summary>
+    private async Task BuildShellBreadcrumbAsync(string loc)
+    {
+        List<(string Name, string Loc)> chain;
+        try
+        {
+            chain = await StaTask.RunAsync(() =>
+            {
+                var list = new List<(string Name, string Loc)>();
+                string? pn = ShellLoc.Unwrap(loc);
+                var guard = 0;
+                while (pn is not null && guard++ < 64)
+                {
+                    list.Insert(0, (_shell.DisplayName(pn), ShellLoc.Wrap(pn)));
+                    pn = _shell.GetParentParsingName(pn);
+                }
+                return list;
+            });
+        }
+        catch { return; } // device unplugged mid-walk — leave the "This PC" crumb
+        if (!string.Equals(_currentFolder, loc, StringComparison.OrdinalIgnoreCase)) return; // navigated away
+
+        foreach (var (name, crumbLoc) in chain)
+        {
+            Breadcrumb.Children.Add(new TextBlock { Text = "›", Opacity = 0.5, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 2, 0) });
+            AddCrumb(name, crumbLoc);
+        }
         BreadcrumbScroller.UpdateLayout();
         BreadcrumbScroller.ChangeView(BreadcrumbScroller.ScrollableWidth, null, null, true);
     }
@@ -2509,11 +2540,13 @@ public sealed partial class MainWindow : Window
             var path = AddressBox.Text.Trim();
             EndEditPath();
             if (Directory.Exists(path)) NavigateTo(path);
-            else if (File.Exists(path) && PhotoLibrary.IsSupported(path))
+            else if (File.Exists(path))
             {
+                // ANY file path routes to its right surface (image → viewer, media → player, other →
+                // default app), and via OpenPathInCurrentTab so it doesn't depend on the async folder
+                // listing having landed yet (the old lookup raced it and silently opened nothing).
                 NavigateTo(Directory.GetParent(path)?.FullName);
-                var m = _explorerItems.FirstOrDefault(i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase));
-                if (m is not null) OpenImageFromExplorer(m);
+                OpenPathInCurrentTab(path);
             }
             else StatusText.Text = "Path not found.";
             e.Handled = true;
@@ -2672,7 +2705,18 @@ public sealed partial class MainWindow : Window
     {
         StatusText.Text = $"Opening {item.Name}…";
         string temp;
-        try { temp = await _shell.CopyToTempAsync(item.ShellId!, item.Name); }
+        try
+        {
+            // Live percentage while the file streams off the device — big videos take a while and
+            // used to sit on a static "Opening…" that read as hung.
+            var lastPct = -1;
+            var progress = new Progress<double>(p =>
+            {
+                var pct = (int)(p * 100);
+                if (pct != lastPct) { lastPct = pct; StatusText.Text = $"Opening {item.Name}… {pct}%"; }
+            });
+            temp = await _shell.CopyToTempAsync(item.ShellId!, item.Name, progress);
+        }
         catch (Exception ex) { StatusText.Text = "Couldn't open from device: " + ex.Message; App.Log("MtpOpen", ex); return; }
 
         if (PhotoLibrary.IsSupported(temp)) OpenSingleImage(temp);
@@ -2716,7 +2760,11 @@ public sealed partial class MainWindow : Window
         try
         {
             StatusText.Text = $"Copying {sel.Count} item(s) to {folder.Name}…";
-            _shell.Download(sel.Select(s => s.ShellId!), folder.Path, WinRT.Interop.WindowNative.GetWindowHandle(this));
+            // Off the UI thread (dedicated STA for the COM work) — a multi-GB device transfer used to
+            // block the window for its whole duration.
+            var ids = sel.Select(s => s.ShellId!).ToList();
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            await StaTask.RunAsync(() => { _shell.Download(ids, folder.Path, hwnd); return true; });
             StatusText.Text = "Copied to " + folder.Path;
         }
         catch (Exception ex) { StatusText.Text = "Copy failed: " + ex.Message; App.Log("MtpDownload", ex); }
@@ -2733,7 +2781,10 @@ public sealed partial class MainWindow : Window
         try
         {
             StatusText.Text = $"Uploading {files.Count} file(s)…";
-            _shell.Upload(files.Select(f => f.Path), ShellLoc.Unwrap(_currentFolder!), WinRT.Interop.WindowNative.GetWindowHandle(this));
+            var paths = files.Select(f => f.Path).ToList();
+            var dest = ShellLoc.Unwrap(_currentFolder!);
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            await StaTask.RunAsync(() => { _shell.Upload(paths, dest, hwnd); return true; });
             StatusText.Text = "Uploaded.";
             LoadCurrentFolder();
         }
@@ -2749,7 +2800,13 @@ public sealed partial class MainWindow : Window
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         var name = box.Text.Trim();
         if (name.Length == 0) return;
-        try { _shell.NewFolder(ShellLoc.Unwrap(_currentFolder!), name, WinRT.Interop.WindowNative.GetWindowHandle(this)); LoadCurrentFolder(); }
+        try
+        {
+            var parent = ShellLoc.Unwrap(_currentFolder!);
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            await StaTask.RunAsync(() => { _shell.NewFolder(parent, name, hwnd); return true; });
+            LoadCurrentFolder();
+        }
         catch (Exception ex) { StatusText.Text = "Couldn't create folder: " + ex.Message; App.Log("MtpNewFolder", ex); }
     }
 
@@ -2766,7 +2823,12 @@ public sealed partial class MainWindow : Window
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         var name = box.Text.Trim();
         if (name.Length == 0 || name == item.Name) return;
-        try { _shell.Rename(item.ShellId!, name, WinRT.Interop.WindowNative.GetWindowHandle(this)); LoadCurrentFolder(); }
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            await StaTask.RunAsync(() => { _shell.Rename(item.ShellId!, name, hwnd); return true; });
+            LoadCurrentFolder();
+        }
         catch (Exception ex) { StatusText.Text = "Rename failed: " + ex.Message; App.Log("MtpRename", ex); }
     }
 
@@ -2780,7 +2842,15 @@ public sealed partial class MainWindow : Window
             PrimaryButtonText = "Delete", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = RootGrid.XamlRoot,
         };
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
-        try { _shell.Delete(sel.Select(s => s.ShellId!), WinRT.Interop.WindowNative.GetWindowHandle(this)); LoadCurrentFolder(); StatusText.Text = "Deleted."; }
+        try
+        {
+            StatusText.Text = sel.Count == 1 ? "Deleting…" : $"Deleting {sel.Count} items…";
+            var ids = sel.Select(s => s.ShellId!).ToList();
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            await StaTask.RunAsync(() => { _shell.Delete(ids, hwnd); return true; });
+            LoadCurrentFolder();
+            StatusText.Text = "Deleted.";
+        }
         catch (Exception ex) { StatusText.Text = "Delete failed: " + ex.Message; App.Log("MtpDelete", ex); }
     }
 
@@ -3251,18 +3321,23 @@ public sealed partial class MainWindow : Window
                 menu.ShowAt(target, new FlyoutShowOptions { Position = position });
                 return;
             }
-            menu.Items.Add(SMI(item.IsFolder ? "Open" : "Open", Symbol.OpenFile, (_, _) => OpenExplorerItem(item)));
+            // Inside an extracted archive everything is read-only: offering Cut/Paste/Rename/Delete
+            // only to refuse them at execution is dishonest UI — those entries are omitted here.
+            var inArchive = IsInArchive(item.Path);
+
+            menu.Items.Add(SMI("Open", Symbol.OpenFile, (_, _) => OpenExplorerItem(item)));
             if (item.IsImage)
                 menu.Items.Add(SMI("Open in new window", null, (_, _) => OpenInNewWindow(item.Path)));
             if (!item.IsFolder)
                 menu.Items.Add(SMI("Open with…", null, (_, _) => OpenWithItem2(item.Path)));
             menu.Items.Add(new MenuFlyoutSeparator());
-            menu.Items.Add(SMI("Cut", Symbol.Cut, async (_, _) =>
-            {
-                var sel = SelectedExplorerItems();
-                if (sel.All(s => s != item)) sel = new List<ExplorerItem> { item };
-                await CopyItemsToClipboardAsync(sel, cut: true);
-            }));
+            if (!inArchive)
+                menu.Items.Add(SMI("Cut", Symbol.Cut, async (_, _) =>
+                {
+                    var sel = SelectedExplorerItems();
+                    if (sel.All(s => s != item)) sel = new List<ExplorerItem> { item };
+                    await CopyItemsToClipboardAsync(sel, cut: true);
+                }));
             menu.Items.Add(SMI("Copy", Symbol.Copy, async (_, _) =>
             {
                 var sel = SelectedExplorerItems();
@@ -3270,7 +3345,8 @@ public sealed partial class MainWindow : Window
                 await CopyItemsToClipboardAsync(sel, cut: false);
             }));
             menu.Items.Add(SMI("Copy path", Symbol.Link, (_, _) => CopyTextToClipboard(item.Path)));
-            menu.Items.Add(SMI("Paste", Symbol.Paste, async (_, _) => await PasteIntoCurrentAsync()));
+            if (!inArchive)
+                menu.Items.Add(SMI("Paste", Symbol.Paste, async (_, _) => await PasteIntoCurrentAsync()));
             if (item.IsImage)
             {
                 menu.Items.Add(new MenuFlyoutSeparator());
@@ -3300,44 +3376,47 @@ public sealed partial class MainWindow : Window
                 menu.Items.Add(SMI("Extract Here", null, async (_, _) => await ExtractArchiveHereAsync(item)));
                 menu.Items.Add(SMI("Extract All…", null, async (_, _) => await ExtractArchiveToAsync(item)));
             }
-            menu.Items.Add(new MenuFlyoutSeparator());
-            if (_vaults.IsAnyUnlocked && !ItemInsideOpenVault(item))
+            if (!inArchive)
             {
-                menu.Items.Add(SMI("Send to Vault", null, async (_, _) =>
+                menu.Items.Add(new MenuFlyoutSeparator());
+                if (_vaults.IsAnyUnlocked && !ItemInsideOpenVault(item))
+                {
+                    menu.Items.Add(SMI("Send to Vault", null, async (_, _) =>
+                    {
+                        var sel = SelectedExplorerItems();
+                        if (sel.All(s => s != item)) sel = new List<ExplorerItem> { item };
+                        await SendToVaultAsync(sel);
+                    }));
+                }
+                menu.Items.Add(SMI("Move to new vault…", null, async (_, _) =>
                 {
                     var sel = SelectedExplorerItems();
                     if (sel.All(s => s != item)) sel = new List<ExplorerItem> { item };
-                    await SendToVaultAsync(sel);
+                    await MoveToNewVaultAsync(sel);
+                }));
+                menu.Items.Add(new MenuFlyoutSeparator());
+                if (item.IsFolder)
+                {
+                    var hidden = _state.HiddenFolders.Contains(item.Path);
+                    menu.Items.Add(SMI(hidden ? "Unhide folder" : "Hide folder", null, (_, _) => { ToggleFolderHidden(item.Path); LoadCurrentFolder(); }));
+                    menu.Items.Add(SMI("Pin to sidebar", Symbol.Pin, (_, _) => AddPinnedPath(item.Path)));
+                    if (_state.DeveloperMode)
+                        menu.Items.Add(SMI("Open terminal here", null, async (_, _) => await OpenTerminalHereAsync(item.Path)));
+                }
+                menu.Items.Add(SMI("Rename…", Symbol.Rename, async (_, _) =>
+                {
+                    var sel = SelectedExplorerItems();
+                    if (sel.Count > 1 && sel.Any(s => s == item)) await BulkRenameExplorerAsync(item, sel);
+                    else await RenameExplorerAsync(item);
+                }));
+                menu.Items.Add(SMI("Delete", Symbol.Delete, async (_, _) => await DeleteExplorerAsync(item)));
+                menu.Items.Add(SMI("Secure delete (shred)…", null, async (_, _) =>
+                {
+                    var sel = SelectedExplorerItems();
+                    if (sel.All(s => s != item)) sel = new List<ExplorerItem> { item };
+                    await SecureShredAsync(sel);
                 }));
             }
-            menu.Items.Add(SMI("Move to new vault…", null, async (_, _) =>
-            {
-                var sel = SelectedExplorerItems();
-                if (sel.All(s => s != item)) sel = new List<ExplorerItem> { item };
-                await MoveToNewVaultAsync(sel);
-            }));
-            menu.Items.Add(new MenuFlyoutSeparator());
-            if (item.IsFolder)
-            {
-                var hidden = _state.HiddenFolders.Contains(item.Path);
-                menu.Items.Add(SMI(hidden ? "Unhide folder" : "Hide folder", null, (_, _) => { ToggleFolderHidden(item.Path); LoadCurrentFolder(); }));
-                menu.Items.Add(SMI("Pin to sidebar", Symbol.Pin, (_, _) => AddPinnedPath(item.Path)));
-                if (_state.DeveloperMode)
-                    menu.Items.Add(SMI("Open terminal here", null, async (_, _) => await OpenTerminalHereAsync(item.Path)));
-            }
-            menu.Items.Add(SMI("Rename…", Symbol.Rename, async (_, _) =>
-            {
-                var sel = SelectedExplorerItems();
-                if (sel.Count > 1 && sel.Any(s => s == item)) await BulkRenameExplorerAsync(item, sel);
-                else await RenameExplorerAsync(item);
-            }));
-            menu.Items.Add(SMI("Delete", Symbol.Delete, async (_, _) => await DeleteExplorerAsync(item)));
-            menu.Items.Add(SMI("Secure delete (shred)…", null, async (_, _) =>
-            {
-                var sel = SelectedExplorerItems();
-                if (sel.All(s => s != item)) sel = new List<ExplorerItem> { item };
-                await SecureShredAsync(sel);
-            }));
             menu.Items.Add(new MenuFlyoutSeparator());
             menu.Items.Add(SMI("Properties", null, (_, _) => { var h = WinRT.Interop.WindowNative.GetWindowHandle(this); ShellOps.ShowProperties(h, item.Path); }));
         }
@@ -3345,6 +3424,12 @@ public sealed partial class MainWindow : Window
         {
             menu.Items.Add(SMI("New folder", Symbol.NewFolder, async (_, _) => await DeviceNewFolderAsync()));
             menu.Items.Add(SMI("Upload files…", Symbol.Upload, async (_, _) => await DeviceUploadAsync()));
+            menu.Items.Add(SMI("Refresh", Symbol.Refresh, (_, _) => LoadCurrentFolder()));
+        }
+        else if (IsInArchive(_currentFolder))
+        {
+            // Read-only surface: say so instead of offering New folder/Paste just to refuse them.
+            menu.Items.Add(new MenuFlyoutItem { Text = "Archive (read-only) — use Extract to edit", IsEnabled = false });
             menu.Items.Add(SMI("Refresh", Symbol.Refresh, (_, _) => LoadCurrentFolder()));
         }
         else
@@ -3496,7 +3581,9 @@ public sealed partial class MainWindow : Window
                 var files = existing.Where(File.Exists).ToList(); // shell upload handles files, not folders
                 if (files.Count == 0) { StatusText.Text = "Only files can be pasted to a device."; return; }
                 StatusText.Text = $"Uploading {files.Count} file(s)…";
-                _shell.Upload(files, ShellLoc.Unwrap(_currentFolder), WinRT.Interop.WindowNative.GetWindowHandle(this));
+                var shellDest = ShellLoc.Unwrap(_currentFolder);
+                var shellHwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                await StaTask.RunAsync(() => { _shell.Upload(files, shellDest, shellHwnd); return true; });
                 StatusText.Text = files.Count == existing.Count
                     ? "Uploaded."
                     : $"Uploaded {files.Count} file(s) — folders can't be pasted to a device.";
@@ -4782,7 +4869,14 @@ public sealed partial class MainWindow : Window
         // ("Copied 0 item(s), N failed"). Route through the shell uploader like the Upload button does.
         if (ShellLoc.IsShell(target))
         {
-            try { _shell.Upload(paths, ShellLoc.Unwrap(target), WinRT.Interop.WindowNative.GetWindowHandle(this)); }
+            try
+            {
+                StatusText.Text = $"Uploading {paths.Count} file(s)…";
+                var shellDest = ShellLoc.Unwrap(target);
+                var shellHwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                await StaTask.RunAsync(() => { _shell.Upload(paths, shellDest, shellHwnd); return true; });
+                StatusText.Text = "Uploaded.";
+            }
             catch (Exception ex) { StatusText.Text = $"Upload failed: {ex.Message}"; }
             return;
         }
@@ -6441,6 +6535,11 @@ public sealed partial class MainWindow : Window
                 Navigate(-1); e.Handled = true; break;
             case VirtualKey.Right when InViewer:
                 Navigate(+1); e.Handled = true; break;
+            // Keyboard crop: arrows nudge, Shift+arrows resize, Ctrl ×10 (see HandleCropKey).
+            case VirtualKey.Left or VirtualKey.Right or VirtualKey.Up or VirtualKey.Down when InEditor:
+                if (HandleCropKey(e.Key)) e.Handled = true;
+                break;
+
             case VirtualKey.D when InEditor && IsCtrlDown() && !IsTextInputFocused():
                 ClearSelection(); e.Handled = true; break;      // Photoshop's Deselect
             case VirtualKey.Escape when InEditor:
