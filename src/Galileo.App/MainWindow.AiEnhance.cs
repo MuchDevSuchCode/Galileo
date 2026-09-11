@@ -384,7 +384,7 @@ public sealed partial class MainWindow
         if (_aiBusy || _denoiseBase is null || _denoiseProcessed is null) return;
         var blended = AiEngine.Blend(_denoiseBase, _denoiseProcessed, Strength);
         _editor.ReplaceSource(blended, _denoiseW, _denoiseH);
-        AiSay($"Denoise strength {Strength:P0}");
+        AiSay($"Strength {Strength:P0}");
         InvalidateEditImage();
     }
 
@@ -428,6 +428,9 @@ public sealed partial class MainWindow
         if (_aiBusy || _editor.Source is null) return;
         if (!await EnsureModelAsync(ModelFor(job))) return;
         if (job is AiJob.Faces or AiJob.Eyes && !await EnsureModelAsync(AiModel.FaceDetect)) return;
+        // The eye fix super-resolves the rebuilt face before pasting onto large faces — it needs the
+        // small general SR model too (5 MB; skippable only by cancelling, which cancels the job).
+        if (job == AiJob.Eyes && !await EnsureModelAsync(AiModel.General)) return;
 
         SetAiBusy(true);
         _aiCts = new CancellationTokenSource();
@@ -491,13 +494,23 @@ public sealed partial class MainWindow
                 // Arm the live slider (after ApplyAiResult, which clears any previous pair).
                 _denoiseBase = pixels; _denoiseProcessed = denoisedFull; _denoiseW = w; _denoiseH = h;
             }
+            else if (job == AiJob.Eyes)
+            {
+                // The eye fix applies at full strength; arm the SAME live-blend pair so the Strength
+                // slider dials it back instantly (the differences are confined to the eye regions,
+                // so the global blend IS an eye-strength control). Snap the slider to 100 first so
+                // its position reflects what is on screen — while the pair is unarmed the handler
+                // no-ops, so this doesn't re-render.
+                if (AiStrength is not null) AiStrength.Value = 100;
+                _denoiseBase = pixels; _denoiseProcessed = result; _denoiseW = outW; _denoiseH = outH;
+            }
             sw.Stop();
             AiSay(job switch
             {
                 AiJob.Upscale => $"Upscaled → {outW}×{outH}",
                 AiJob.Denoise => $"Denoised (strength {strength:P0}) — drag the slider to fine-tune live",
                 AiJob.Faces => $"Restored {faces} face{(faces == 1 ? "" : "s")}",
-                AiJob.Eyes => $"Fixed eyes on {faces} face{(faces == 1 ? "" : "s")} — lower Fidelity for a stronger correction",
+                AiJob.Eyes => $"Fixed eyes on {faces} face{(faces == 1 ? "" : "s")} — drag Strength to dial it; lower Fidelity rebuilds harder",
                 _ => $"Enhanced → {outW}×{outH}",
             } + $"  ·  {engine.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");
         }
