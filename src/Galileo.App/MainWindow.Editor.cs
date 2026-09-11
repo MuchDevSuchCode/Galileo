@@ -181,7 +181,7 @@ public sealed partial class MainWindow
         try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true; _editCacheFailed = false; // fresh image → fresh cache
         ResetEditSliders();
         _editLoading = true;
-        if (CropAspectCombo.Items.Count > 0) CropAspectCombo.SelectedIndex = 0;
+        if (CropAspectCombo.Items.Count > 1) CropAspectCombo.SelectedIndex = 1; // default aspect: Original (resolved when crop engages)
         if (CompareCombo.Items.Count > 0) CompareCombo.SelectedIndex = 0;
         AiStatus.Text = "";
         _lastEditChangeTick = 0;   // a fresh image starts a fresh debounce window
@@ -1144,9 +1144,19 @@ public sealed partial class MainWindow
         Rect r;
         if (IsShiftDown())
         {
-            var w = Math.Clamp(c.Width + dx, 10, Math.Max(10, _orientedW - c.X));
-            var h = Math.Clamp(c.Height + dy, 10, Math.Max(10, _orientedH - c.Y));
-            r = new Rect(c.X, c.Y, w, h);
+            double w, h;
+            if (_cropAspect > 0)
+            {
+                // Aspect locked: whichever axis the key drives, the other follows the ratio.
+                if (dx != 0) { w = Math.Clamp(c.Width + dx, 10, Math.Max(10, _orientedW - c.X)); h = w / _cropAspect; }
+                else { h = Math.Clamp(c.Height + dy, 10, Math.Max(10, _orientedH - c.Y)); w = h * _cropAspect; }
+            }
+            else
+            {
+                w = Math.Clamp(c.Width + dx, 10, Math.Max(10, _orientedW - c.X));
+                h = Math.Clamp(c.Height + dy, 10, Math.Max(10, _orientedH - c.Y));
+            }
+            r = ClampCropToImage(new Rect(c.X, c.Y, w, h));
         }
         else
         {
@@ -1214,18 +1224,23 @@ public sealed partial class MainWindow
         InvalidateEditImage();
     }
 
+    /// <summary>The aspect ratio the combo currently asks for. "Original" resolves against the
+    /// CURRENT oriented image size, so this must be (re)read whenever crop mode engages — at
+    /// editor-open time (where the combo's default is applied) the dimensions aren't known yet.</summary>
+    private double AspectFromCombo() => ((CropAspectCombo.SelectedItem as ComboBoxItem)?.Content as string) switch
+    {
+        "Original" => _orientedH > 0 ? _orientedW / _orientedH : 0,
+        "1:1" => 1.0,
+        "4:3" => 4.0 / 3,
+        "3:2" => 3.0 / 2,
+        "16:9" => 16.0 / 9,
+        _ => 0,
+    };
+
     private void CropAspect_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_editCanvas is null || _editLoading) return; // ignore events fired during XAML load
-        _cropAspect = ((CropAspectCombo.SelectedItem as ComboBoxItem)?.Content as string) switch
-        {
-            "Original" => _orientedH > 0 ? _orientedW / _orientedH : 0,
-            "1:1" => 1.0,
-            "4:3" => 4.0 / 3,
-            "3:2" => 3.0 / 2,
-            "16:9" => 16.0 / 9,
-            _ => 0,
-        };
+        _cropAspect = AspectFromCombo();
         SetCanvasMode("crop");
         // Apply the new ratio to an existing crop immediately (reshaped around its center) — the
         // combo used to change only FUTURE drags, which read as the control doing nothing.
@@ -1255,6 +1270,9 @@ public sealed partial class MainWindow
     private void CropEnter_Click(object sender, RoutedEventArgs e)
     {
         if (_editCanvas is null) return;
+        // Resolve the combo's aspect NOW — the default ("Original") depends on the image's own
+        // dimensions, which weren't known when the editor opened and selected it.
+        _cropAspect = AspectFromCombo();
         SetCanvasMode("crop");
         _editCanvas.Invalidate();
         StatusText.Text = "Drag to draw a crop; drag inside it to move (arrows nudge, Shift+arrows resize). Then Apply.";
