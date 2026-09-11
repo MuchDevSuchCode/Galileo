@@ -14,8 +14,7 @@ public enum VaultUnlockOutcome { Success, WrongPassphrase, Wiped }
 /// </summary>
 public sealed class VaultManager
 {
-    public static string AppDataRoot =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo");
+    public static string AppDataRoot => AppPaths.Root;
 
     public static string VaultsRoot => Path.Combine(AppDataRoot, "Vaults");
 
@@ -106,13 +105,24 @@ public sealed class VaultManager
     /// <summary>Marks a vault as the active unlocked one after it was opened via another keyslot (Hello).</summary>
     public void SetCurrent(Vault v) => Current = v;
 
-    public async Task LockCurrentAsync()
+    /// <summary>Locks the current vault. Returns TRUE when its plaintext was completely removed
+    /// (see <see cref="Vault.LockAsync"/>); true too when nothing was unlocked.</summary>
+    public async Task<bool> LockCurrentAsync()
     {
         var c = Current;
-        if (c is null) return;
+        if (c is null) return true;
         // LockAsync can throw with the vault still unlocked (commit failed) — keep Current set in
         // that case so the vault isn't orphaned in an unlocked state the app no longer tracks.
-        await c.LockAsync();
+        var clean = await c.LockAsync();
+        Current = null;
+        return clean;
+    }
+
+    /// <summary>Locks the current vault WITHOUT committing (secure-wipes plaintext, keeps the last
+    /// committed generation). Only for an explicit user decision after a failed commit.</summary>
+    public void DiscardCurrentWorkingAndLock()
+    {
+        Current?.DiscardWorkingAndLock();
         Current = null;
     }
 

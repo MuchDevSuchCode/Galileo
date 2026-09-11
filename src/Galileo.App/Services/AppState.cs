@@ -153,9 +153,7 @@ public sealed class AppState
     {
         get
         {
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Galileo");
+            var dir = AppPaths.Root;
             Directory.CreateDirectory(dir);
             return Path.Combine(dir, "state.json");
         }
@@ -192,40 +190,47 @@ public sealed class AppState
         try
         {
             MigrateLegacyState();
-            if (File.Exists(StatePath))
+            if (ReadStateFile() is { } state)
             {
-                var json = File.ReadAllText(StatePath);
-                var state = JsonSerializer.Deserialize<AppState>(json, Options);
-                if (state is not null)
+                // Prune per-folder prefs for folders that are really gone (the map otherwise grows
+                // forever) — but never for UNC/offline volumes, which are merely unreachable now.
+                foreach (var k in state.FolderSorts.Keys.ToList())
                 {
-                    // Rehydrate sets as case-insensitive (deserializer loses the comparer).
-                    state.HiddenPaths = new HashSet<string>(state.HiddenPaths, StringComparer.OrdinalIgnoreCase);
-                    state.FavoritePaths = new HashSet<string>(state.FavoritePaths, StringComparer.OrdinalIgnoreCase);
-                    state.HiddenFolders = new HashSet<string>(state.HiddenFolders ?? new(), StringComparer.OrdinalIgnoreCase);
-                    state.FolderThumbnails = new Dictionary<string, string>(state.FolderThumbnails ?? new(), StringComparer.OrdinalIgnoreCase);
-                    state.FolderSorts = new Dictionary<string, FolderSortPref>(state.FolderSorts ?? new(), StringComparer.OrdinalIgnoreCase);
-                    // Prune per-folder prefs for folders that are really gone (the map otherwise grows
-                    // forever) — but never for UNC/offline volumes, which are merely unreachable now.
-                    foreach (var k in state.FolderSorts.Keys.ToList())
+                    try
                     {
-                        try
-                        {
-                            var root = Path.GetPathRoot(k);
-                            if (!string.IsNullOrEmpty(root) && !k.StartsWith(@"\\", StringComparison.Ordinal)
-                                && Directory.Exists(root) && !Directory.Exists(k))
-                                state.FolderSorts.Remove(k);
-                        }
-                        catch { /* leave the entry */ }
+                        var root = Path.GetPathRoot(k);
+                        if (!string.IsNullOrEmpty(root) && !k.StartsWith(@"\\", StringComparison.Ordinal)
+                            && Directory.Exists(root) && !Directory.Exists(k))
+                            state.FolderSorts.Remove(k);
                     }
-                    return state;
+                    catch { /* leave the entry */ }
                 }
+                state._baseline = state.Clone();
+                return state;
             }
         }
         catch
         {
             // Corrupt state — fall back to defaults rather than crash.
         }
-        return new AppState();
+        var fresh = new AppState();
+        fresh._baseline = fresh.Clone();
+        return fresh;
+    }
+
+    /// <summary>Reads and rehydrates state.json (case-insensitive sets restored); null if absent/corrupt.</summary>
+    private static AppState? ReadStateFile()
+    {
+        if (!File.Exists(StatePath)) return null;
+        var state = JsonSerializer.Deserialize<AppState>(File.ReadAllText(StatePath), Options);
+        if (state is null) return null;
+        // Rehydrate sets as case-insensitive (deserializer loses the comparer).
+        state.HiddenPaths = new HashSet<string>(state.HiddenPaths, StringComparer.OrdinalIgnoreCase);
+        state.FavoritePaths = new HashSet<string>(state.FavoritePaths, StringComparer.OrdinalIgnoreCase);
+        state.HiddenFolders = new HashSet<string>(state.HiddenFolders ?? new(), StringComparer.OrdinalIgnoreCase);
+        state.FolderThumbnails = new Dictionary<string, string>(state.FolderThumbnails ?? new(), StringComparer.OrdinalIgnoreCase);
+        state.FolderSorts = new Dictionary<string, FolderSortPref>(state.FolderSorts ?? new(), StringComparer.OrdinalIgnoreCase);
+        return state;
     }
 
     // Cross-process guard: "open in new window" can run as a second process sharing this file. A plain
@@ -274,20 +279,43 @@ public sealed class AppState
         Save();
     }
 
+    // Snapshot of the state as of the last load/save. Lets Save() do a 3-way merge: what changed on
+    // disk since (another process) vs what changed in memory since (this process). Never serialized.
+    [JsonIgnore]
+    private AppState? _baseline;
+
     public void Save()
     {
         if (SuppressSave) return;
         try
         {
             var owned = false;
-            try { owned = SaveMutex.WaitOne(2000); }
+            try
+            {
+                owned = SaveMutex.WaitOne(2000);
+                if (!owned) owned = SaveMutex.WaitOne(3000); // one longer retry while contention drains
+            }
             catch (System.Threading.AbandonedMutexException) { owned = true; } // prior holder died — lock is ours
             try
             {
-                var tmp = StatePath + ".tmp";
+                // Adopt changes other processes have saved since our last load/save (3-way merge
+                // against the baseline snapshot). A plain write-out of this process's copy silently
+                // rolled the other window's favorites/pins/settings back to our stale view of them.
+                try
+                {
+                    if (_baseline is not null && ReadStateFile() is { } disk)
+                        MergeExternalChanges(_baseline, disk);
+                }
+                catch { /* merge is best-effort; worst case is the old last-writer-wins */ }
+
+                // Per-process temp name: even if the mutex could not be acquired (another writer is
+                // wedged), two processes never scribble into the SAME .tmp — each write stays atomic
+                // (worst case is last-writer-wins on content, never a torn state file).
+                var tmp = $"{StatePath}.{Environment.ProcessId}.tmp";
                 File.WriteAllText(tmp, JsonSerializer.Serialize(this, Options));
                 if (File.Exists(StatePath)) File.Replace(tmp, StatePath, null);
                 else File.Move(tmp, StatePath);
+                _baseline = Clone(); // what's on disk now IS this state — future diffs start here
             }
             finally { if (owned) SaveMutex.ReleaseMutex(); }
         }
@@ -297,11 +325,84 @@ public sealed class AppState
         }
     }
 
-    /// <summary>A snapshot used to revert edits when the user cancels the Settings dialog.</summary>
+    /// <summary>Element-level 3-way merge: for every set entry, dictionary key, pin, and scalar
+    /// setting, a change made on disk (by another process) since <paramref name="baseline"/> is
+    /// adopted into this state UNLESS this process changed the same element itself (ours wins).</summary>
+    private void MergeExternalChanges(AppState baseline, AppState disk)
+    {
+        MergeSet(HiddenPaths, baseline.HiddenPaths, disk.HiddenPaths);
+        MergeSet(FavoritePaths, baseline.FavoritePaths, disk.FavoritePaths);
+        MergeSet(HiddenFolders, baseline.HiddenFolders, disk.HiddenFolders);
+
+        MergeDict(FolderThumbnails, baseline.FolderThumbnails, disk.FolderThumbnails,
+            (a, b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase));
+        MergeDict(FolderSorts, baseline.FolderSorts, disk.FolderSorts,
+            (a, b) => a.SortBy == b.SortBy && a.SortDescending == b.SortDescending && a.GroupBy == b.GroupBy);
+
+        // Pins: set semantics with this process's ordering preserved; their additions append.
+        var cmp = StringComparer.OrdinalIgnoreCase;
+        var basePins = new HashSet<string>(baseline.PinnedPaths, cmp);
+        var minePins = new HashSet<string>(PinnedPaths, cmp);
+        foreach (var p in disk.PinnedPaths)
+            if (!basePins.Contains(p) && !minePins.Contains(p)) PinnedPaths.Add(p);          // they added
+        foreach (var p in basePins)
+            if (!disk.PinnedPaths.Contains(p, cmp) && minePins.Contains(p))
+                PinnedPaths.RemoveAll(x => cmp.Equals(x, p));                                // they removed, we didn't touch
+
+        // Scalar settings (bool/number/string/enum properties): theirs wins only where we didn't change it.
+        foreach (var prop in typeof(AppState).GetProperties())
+        {
+            if (!prop.CanRead || !prop.CanWrite) continue;
+            if (prop.GetCustomAttributes(typeof(JsonIgnoreAttribute), inherit: false).Length > 0) continue;
+            var t = prop.PropertyType;
+            if (!(t.IsPrimitive || t.IsEnum || t == typeof(string))) continue;
+            var mine = prop.GetValue(this);
+            var bas = prop.GetValue(baseline);
+            var theirs = prop.GetValue(disk);
+            if (Equals(mine, bas) && !Equals(theirs, bas)) prop.SetValue(this, theirs);
+        }
+    }
+
+    private static void MergeSet(HashSet<string> mine, HashSet<string> baseline, HashSet<string> theirs)
+    {
+        var bas = new HashSet<string>(baseline, StringComparer.OrdinalIgnoreCase);
+        var oth = new HashSet<string>(theirs, StringComparer.OrdinalIgnoreCase);
+        foreach (var e in oth)
+            if (!bas.Contains(e)) mine.Add(e);                          // they added
+        foreach (var e in bas)
+            if (!oth.Contains(e) && mine.Contains(e)) mine.Remove(e);   // they removed, we didn't
+    }
+
+    private static void MergeDict<T>(Dictionary<string, T> mine, Dictionary<string, T> baseline,
+        Dictionary<string, T> theirs, Func<T, T, bool> eq)
+    {
+        var keys = new HashSet<string>(baseline.Keys.Concat(theirs.Keys).Concat(mine.Keys), StringComparer.OrdinalIgnoreCase);
+        foreach (var k in keys)
+        {
+            var hasB = baseline.TryGetValue(k, out var bv);
+            var hasT = theirs.TryGetValue(k, out var tv);
+            var hasM = mine.TryGetValue(k, out var mv);
+            var theirsChanged = hasB != hasT || (hasB && hasT && !eq(bv!, tv!));
+            var mineChanged = hasB != hasM || (hasB && hasM && !eq(bv!, mv!));
+            if (theirsChanged && !mineChanged)
+            {
+                if (hasT) mine[k] = tv!; else mine.Remove(k);
+            }
+        }
+    }
+
+    /// <summary>A snapshot used to revert edits when the user cancels the Settings dialog (and as the
+    /// merge baseline in <see cref="Save"/>).</summary>
     public AppState Clone()
     {
         var copy = JsonSerializer.Deserialize<AppState>(JsonSerializer.Serialize(this, Options), Options) ?? new AppState();
         copy.SuppressSave = false;
+        // Rehydrate the case-insensitive comparers the round-trip loses.
+        copy.HiddenPaths = new HashSet<string>(copy.HiddenPaths, StringComparer.OrdinalIgnoreCase);
+        copy.FavoritePaths = new HashSet<string>(copy.FavoritePaths, StringComparer.OrdinalIgnoreCase);
+        copy.HiddenFolders = new HashSet<string>(copy.HiddenFolders, StringComparer.OrdinalIgnoreCase);
+        copy.FolderThumbnails = new Dictionary<string, string>(copy.FolderThumbnails, StringComparer.OrdinalIgnoreCase);
+        copy.FolderSorts = new Dictionary<string, FolderSortPref>(copy.FolderSorts, StringComparer.OrdinalIgnoreCase);
         return copy;
     }
 

@@ -76,7 +76,7 @@ public sealed class AiEngine : IDisposable
     public const int MaxUpscaleInputEdge = 1600;
 
     public static string ModelDir { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo", "models");
+        Path.Combine(AppPaths.Root, "models");
 
     public static string PathFor(AiModel m) => Path.Combine(ModelDir, Catalog[m].File);
 

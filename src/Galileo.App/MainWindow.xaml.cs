@@ -403,9 +403,17 @@ public sealed partial class MainWindow : Window
         // does not consult the command line, which is the primary's and says nothing about this window.
         if (!_secondaryWindow && !LaunchedNewWindow())
         {
-            _shell.WipeTemp();            // device temp copies are process-wide — a guest must not wipe the primary's
-            _vaults.WipeOrphanWorkDirs();
-            ArchiveService.WipeOrphans(); // clear any leftover extracted-zip temp dirs from a prior run
+            // Crash-recovery cleanup of the SHARED temp/work roots is only safe when no other Galileo
+            // process is alive — a second ordinary launch (single-instance off) otherwise wipes the
+            // first instance's live vault working folder and open archive/device temp files.
+            if (App.IsOnlyInstance)
+            {
+                _shell.WipeTemp();            // device temp copies are process-wide — a guest must not wipe the primary's
+                _vaults.WipeOrphanWorkDirs();
+                ArchiveService.WipeOrphans(); // clear any leftover extracted-zip temp dirs from a prior run
+            }
+            else
+                App.LogInfo("startup: another Galileo instance is running — skipping shared temp/work cleanup");
             RecoverRenameJournal();       // restore names stranded by a crash mid bulk-rename
             _ = Task.Run(() => ThumbDiskCache.Sweep()); // keep the thumbnail cache under its size cap
         }
@@ -1777,7 +1785,13 @@ public sealed partial class MainWindow : Window
         SyncActiveTab();
     }
 
-    private void LoadCurrentFolder()
+    private void LoadCurrentFolder() => _ = LoadCurrentFolderAsync();
+
+    // Guards stale completions: only the newest load may publish its results (typing through folders
+    // quickly, or a slow share resolving after the user already navigated away).
+    private int _folderLoadGen;
+
+    private async Task LoadCurrentFolderAsync()
     {
         HiddenFolderPlaceholder.Visibility = Visibility.Collapsed;
         ExplorerEmpty.Visibility = Visibility.Collapsed;
@@ -1837,13 +1851,36 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _explorerRaw = _fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden);
+        // Ordinary directory listing runs OFF the UI thread: a sleeping network share or a huge
+        // folder must never freeze the window for the SMB timeout. A generation check drops stale
+        // results, and enumeration failures are reported as errors — not shown as an empty folder.
+        var gen = ++_folderLoadGen;
+        var folder = _currentFolder;
+        StatusText.Text = "Loading…";
+        List<ExplorerItem> items;
+        string? listError;
+        try
+        {
+            (items, listError) = await Task.Run(() =>
+            {
+                var l = _fs.List(folder, showWindowsHidden: _showWindowsHidden, _showAppHidden, out var err);
+                return (l, err);
+            });
+        }
+        catch (Exception ex) { items = new List<ExplorerItem>(); listError = ex.Message; }
+
+        if (gen != _folderLoadGen || !string.Equals(folder, _currentFolder, StringComparison.OrdinalIgnoreCase))
+            return; // superseded by a newer navigation
+
+        _explorerRaw = items;
         if (_vaults.Current?.WorkingDir is { } vwd && _currentFolder.StartsWith(vwd, StringComparison.OrdinalIgnoreCase))
             App.LogInfo($"vault folder load: {_explorerRaw.Count} item(s) at {_currentFolder}");
         ApplySortAndGroup();
         ApplyViewMode();
         UpdateHideFolderButton();
-        StatusText.Text = $"{_explorerRaw.Count} item(s)";
+        StatusText.Text = listError is not null
+            ? $"Couldn't open this folder: {listError}"
+            : $"{_explorerRaw.Count} item(s)" + (IsInArchive(_currentFolder) ? "  ·  archive (read-only)" : "");
     }
 
     // ---- Live folder refresh ----
@@ -1952,10 +1989,21 @@ public sealed partial class MainWindow : Window
         StatusText.Text = "That folder no longer exists.";
     }
 
-    private void RefreshFolderIncremental()
+    private void RefreshFolderIncremental() => _ = RefreshFolderIncrementalAsync();
+
+    private async Task RefreshFolderIncrementalAsync()
     {
         if (_currentFolder is null) return;
         if (!Directory.Exists(_currentFolder)) { NavigateToNearestExisting(); return; }
+
+        // Enumerate OFF the UI thread (a watcher tick on a slow/network folder must not stall the
+        // window) and drop the result if a newer navigation/refresh superseded this one.
+        var gen = ++_folderLoadGen;
+        var folder = _currentFolder;
+        List<ExplorerItem> listed;
+        try { listed = await Task.Run(() => _fs.List(folder, showWindowsHidden: _showWindowsHidden, _showAppHidden)); }
+        catch { return; }
+        if (gen != _folderLoadGen || !string.Equals(folder, _currentFolder, StringComparison.OrdinalIgnoreCase)) return;
 
         // Grouped or search views: patching grouped sources in place is fiddly — reload (keeps
         // selection). But first compare against what's already shown: when the watcher is just
@@ -1963,7 +2011,7 @@ public sealed partial class MainWindow : Window
         // reload — with its thumbnail flicker and scroll reset — is skipped entirely.
         if (_groupBy != "None" || !string.IsNullOrEmpty(_searchQuery))
         {
-            var fresh = SortItems(_fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden));
+            var fresh = SortItems(listed);
             var same = SameSequence(fresh, _explorerItems);
             // Same flat order isn't enough when grouped: fresh metadata can move an item to another
             // group without reordering (e.g. an extension change under Name sort, or a new Modified
@@ -1973,14 +2021,13 @@ public sealed partial class MainWindow : Window
                     same = string.Equals(GroupKeyRank(fresh[i], _groupBy).Key,
                                          GroupKeyRank(_explorerItems[i], _groupBy).Key,
                                          StringComparison.OrdinalIgnoreCase);
-            if (!same) RefreshFolderInPlace();
+            if (!same) ApplyRefreshedListing(listed);
             return;
         }
 
-        // Adopt already-shown objects for surviving paths (same trick as RefreshFolderInPlace): taking
+        // Adopt already-shown objects for surviving paths (same trick as ApplyRefreshedListing): taking
         // the fresh listing verbatim desyncs _explorerRaw from _explorerItems — a later in-place rename
         // would then reconcile against stale objects and visibly revert.
-        var listed = _fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden);
         var current = new Dictionary<string, ExplorerItem>(StringComparer.OrdinalIgnoreCase);
         foreach (var it in _explorerItems) current[it.Path] = it;
         _explorerRaw = listed.Select(f => current.TryGetValue(f.Path, out var old) ? old : f).ToList();
@@ -2511,6 +2558,22 @@ public sealed partial class MainWindow : Window
         _vaults.Current?.WorkingDir is { } wd && !string.IsNullOrEmpty(path)
         && path.StartsWith(wd, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>True when a path is inside an extracted-archive temp folder. Archive browsing is
+    /// READ-ONLY: nothing is ever written back into the .zip, and the extracted copy is wiped at
+    /// startup — so a "successful" edit/rename/paste there would silently evaporate. Every mutating
+    /// command checks this and refuses with an explanation instead.</summary>
+    private static bool IsInArchive(string? path) =>
+        !string.IsNullOrEmpty(path)
+        && path.StartsWith(ArchiveService.ZipTempRoot, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Shared refusal for mutating commands aimed at archive contents.</summary>
+    private bool RefuseArchiveWrite(string? path)
+    {
+        if (!IsInArchive(path)) return false;
+        StatusText.Text = "Archives are read-only — use Extract to edit their contents.";
+        return true;
+    }
+
     /// <summary>Launches a fresh Galileo instance to open the path in its own window (works even in
     /// single-instance mode via the --new-window flag). Vault files open in-process instead — a second
     /// instance would wipe the vault working folder and read decrypted files outside the vault session.</summary>
@@ -2797,7 +2860,12 @@ public sealed partial class MainWindow : Window
             _currentVideoPath = item.IsShellItem ? null : item.Path;
             VideoEditBtn.Visibility = (!isAudio && !item.IsShellItem && FfmpegVideo.Available)
                 ? Visibility.Visible : Visibility.Collapsed;
+            // Release the source of any video already open (video → video without passing through
+            // StopVideo) — each MediaSource pins a native media pipeline, and undisposed ones
+            // accumulate until the process runs out of memory.
+            var previousSource = VideoPlayer.Source as MediaSource;
             VideoPlayer.Source = MediaSource.CreateFromStorageFile(file);
+            previousSource?.Dispose();
             var mp = VideoPlayer.MediaPlayer;
             if (mp is not null)
             {
@@ -3079,6 +3147,7 @@ public sealed partial class MainWindow : Window
     private async void NewFolder_Click(object sender, RoutedEventArgs e)
     {
         if (_currentFolder is null) { StatusText.Text = "Pick a folder first."; return; }
+        if (RefuseArchiveWrite(_currentFolder)) return;
         try
         {
             var name = "New folder";
@@ -3086,7 +3155,7 @@ public sealed partial class MainWindow : Window
             while (Directory.Exists(Path.Combine(_currentFolder, name))) name = $"New folder ({n++})";
             var full = Path.Combine(_currentFolder, name);
             Directory.CreateDirectory(full);
-            LoadCurrentFolder();
+            await LoadCurrentFolderAsync(); // wait for the listing so the new folder is findable below
 
             // Immediately prompt to name it, like Explorer's inline rename.
             var item = _explorerItems.FirstOrDefault(i => string.Equals(i.Path, full, StringComparison.OrdinalIgnoreCase));
@@ -3094,6 +3163,10 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex) { StatusText.Text = $"Couldn't create folder: {ex.Message}"; }
     }
+
+    /// <summary>Lets the app-level unhandled-exception hook surface an error in this window's status
+    /// bar (the alternative was a silently "handled" exception the user never learns about).</summary>
+    public void ReportBackgroundError(string message) => StatusText.Text = message;
 
     /// <summary>Simple OK dialog for error/info messages.</summary>
     private async Task MessageAsync(string title, string message)
@@ -3378,7 +3451,8 @@ public sealed partial class MainWindow : Window
     private async System.Threading.Tasks.Task PasteIntoCurrentAsync()
     {
         if (_currentFolder is null) { StatusText.Text = "Pick a folder first."; return; }
-        if (_currentFolder == RecycleBin.Location || ShellLoc.IsShell(_currentFolder)) { StatusText.Text = "Can't paste here."; return; }
+        if (_currentFolder == RecycleBin.Location) { StatusText.Text = "Can't paste here."; return; }
+        if (RefuseArchiveWrite(_currentFolder)) return;
         try
         {
             // Read the system clipboard (so files copied in Explorer paste too).
@@ -3415,6 +3489,20 @@ public sealed partial class MainWindow : Window
             var missing = paths.Count - existing.Count;
             if (existing.Count == 0) { StatusText.Text = "Nothing to paste."; return; }
 
+            // Device (MTP/portable) folder: no filesystem path, so the copy engine can't write there —
+            // route through the shell uploader exactly like drag-drop and the Upload button do.
+            if (ShellLoc.IsShell(_currentFolder))
+            {
+                var files = existing.Where(File.Exists).ToList(); // shell upload handles files, not folders
+                if (files.Count == 0) { StatusText.Text = "Only files can be pasted to a device."; return; }
+                StatusText.Text = $"Uploading {files.Count} file(s)…";
+                _shell.Upload(files, ShellLoc.Unwrap(_currentFolder), WinRT.Interop.WindowNative.GetWindowHandle(this));
+                StatusText.Text = files.Count == existing.Count
+                    ? "Uploaded."
+                    : $"Uploaded {files.Count} file(s) — folders can't be pasted to a device.";
+                LoadCurrentFolder();
+                return;
+            }
 
             var result = await RunTransferWithUiAsync(_currentFolder, existing, move);
             if (move && !result.Canceled && result.Errors == 0) _fileClip = null; // a cut is consumed only on a clean paste
@@ -3435,6 +3523,7 @@ public sealed partial class MainWindow : Window
 
     private async System.Threading.Tasks.Task RenameExplorerAsync(ExplorerItem item)
     {
+        if (RefuseArchiveWrite(item.Path)) return;
         var box = new TextBox { Text = item.Name };
         box.Loaded += (_, _) =>
         {
@@ -3481,22 +3570,37 @@ public sealed partial class MainWindow : Window
     /// loaded thumbnails), the selection, and the scroll position — unlike LoadCurrentFolder, which
     /// rebuilds everything. New files slot in at their sorted spots; removed ones disappear. Grouped
     /// views rebuild their lightweight group wrappers around the same objects and restore scroll.</summary>
-    private void RefreshFolderInPlace()
+    private void RefreshFolderInPlace() => _ = RefreshFolderInPlaceAsync();
+
+    private async Task RefreshFolderInPlaceAsync()
     {
         if (_currentFolder is null || _currentFolder == RecycleBin.Location || ShellLoc.IsShell(_currentFolder))
         { LoadCurrentFolder(); return; }
         if (!Directory.Exists(_currentFolder)) { NavigateToNearestExisting(); return; }
         if (!string.IsNullOrEmpty(_searchQuery)) { ReloadKeepingSelection(); return; } // search results: old path
 
-        var fresh = _fs.List(_currentFolder, showWindowsHidden: _showWindowsHidden, _showAppHidden);
+        // Enumerate off the UI thread; a newer navigation/refresh supersedes this one.
+        var gen = ++_folderLoadGen;
+        var folder = _currentFolder;
+        List<ExplorerItem> fresh;
+        try { fresh = await Task.Run(() => _fs.List(folder, showWindowsHidden: _showWindowsHidden, _showAppHidden)); }
+        catch { return; }
+        if (gen != _folderLoadGen || !string.Equals(folder, _currentFolder, StringComparison.OrdinalIgnoreCase)) return;
 
+        ApplyRefreshedListing(fresh);
+    }
+
+    /// <summary>Applies a freshly-enumerated listing in place: existing item objects are adopted (their
+    /// loaded thumbnails, selection and scroll survive); new files slot into their sorted spots.</summary>
+    private void ApplyRefreshedListing(List<ExplorerItem> fresh)
+    {
         // Adopt the already-shown object for every path that still exists (keeps its loaded icon);
         // only genuinely new files use the freshly-listed object.
         var shown = new Dictionary<string, ExplorerItem>(StringComparer.OrdinalIgnoreCase);
         foreach (var it in _explorerItems) shown[it.Path] = it;
         _explorerRaw = fresh.Select(f => shown.TryGetValue(f.Path, out var old) ? old : f).ToList();
 
-        if (_groupBy == "None")
+        if (_groupBy == "None" && string.IsNullOrEmpty(_searchQuery))
         {
             ReconcileExplorerItems(SortItems(_explorerRaw));
             UpdateExplorerEmptyState();
@@ -3543,7 +3647,7 @@ public sealed partial class MainWindow : Window
     }
 
     private static readonly string RenameJournalPath = System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo", "rename-journal.json");
+        Galileo.Services.AppPaths.Root, "rename-journal.json");
 
     /// <summary>Crash recovery: restores original names for files stranded mid bulk-rename (the
     /// journal survives a crash between the temp-rename and final-rename phases).</summary>
@@ -3580,6 +3684,7 @@ public sealed partial class MainWindow : Window
         if (items.Count <= 1) { await RenameExplorerAsync(primary); return; }
         var dir = _currentFolder;
         if (string.IsNullOrEmpty(dir)) return;
+        if (RefuseArchiveWrite(dir)) return;
 
         // Primary first, then the rest in their current order.
         items = new[] { primary }.Concat(items.Where(i => i != primary)).ToList();
@@ -3757,6 +3862,9 @@ public sealed partial class MainWindow : Window
     {
         // Bin entries are GUID store files — cutting/copying them out corrupts the bin's index.
         if (_currentFolder == RecycleBin.Location) return;
+        // Cut from an archive is a delete-from-archive in disguise — copy is fine, cut is not.
+        if (cut && selection.Any(i => IsInArchive(i.Path)))
+        { StatusText.Text = "Archives are read-only — copy the items out, or use Extract."; return; }
         // Drives can't be copied/moved — only real files and folders.
         selection = selection.Where(i => i.Kind != ExplorerItemKind.Drive).ToList();
         if (selection.Count == 0) return;
@@ -3810,9 +3918,27 @@ public sealed partial class MainWindow : Window
         {
             var m = SecureWipe.Parse(_state.WipeMethod);
             await SecureWipe.WipePathAsync(path, m == WipeMethod.None ? WipeMethod.Random : m);
-            return true;
+            // The wipe is best-effort — report success only if the item is actually gone, and record
+            // the deletion so the vault's next commit knows an empty working folder is intentional.
+            var gone = !System.IO.File.Exists(path) && !System.IO.Directory.Exists(path);
+            if (gone) _vaults.Current?.NoteExplicitDeletion();
+            return gone;
         }
-        return _bin.MoveToBin(path);
+        // Off the UI thread: a cross-volume recycle degrades to a full copy+delete, which used to
+        // freeze the window for the duration.
+        return await System.Threading.Tasks.Task.Run(() => _bin.MoveToBin(path));
+    }
+
+    /// <summary>After a permanent wipe, records deletions that removed current-vault plaintext, so the
+    /// vault commits an intentionally-emptied working folder instead of treating it as transient.</summary>
+    private void NoteVaultDeletions(IEnumerable<string> paths)
+    {
+        foreach (var p in paths)
+            if (IsInCurrentVault(p) && !System.IO.File.Exists(p) && !System.IO.Directory.Exists(p))
+            {
+                _vaults.Current?.NoteExplicitDeletion();
+                return;
+            }
     }
 
     private async System.Threading.Tasks.Task DeleteExplorerAsync(ExplorerItem item)
@@ -3821,13 +3947,14 @@ public sealed partial class MainWindow : Window
         if (_currentFolder == RecycleBin.Location) { await ShredBinEntriesAsync(new() { item }); return; }
 
         if (IsUndeletableRoot(item)) { StatusText.Text = "Drives can't be deleted."; return; }
+        if (RefuseArchiveWrite(item.Path)) return;
 
         var permanent = IsShiftDown();
         var dialog = new ContentDialog
         {
             Title = permanent ? "Securely delete" : "Delete",
             Content = permanent
-                ? $"Securely erase \"{item.Name}\" with overwrites? This can't be undone."
+                ? $"Securely erase \"{item.Name}\" with overwrites? This can't be undone.\n\nNote: on SSDs and some drives, overwriting is best-effort — the hardware may retain old blocks."
                 : $"Move \"{item.Name}\" to the Recycle Bin?",
             PrimaryButtonText = permanent ? "Erase" : "Delete",
             CloseButtonText = "Cancel",
@@ -3839,7 +3966,11 @@ public sealed partial class MainWindow : Window
         try
         {
             if (permanent)
+            {
                 await RunWipeWithUiAsync(new[] { item.Path }, CurrentWipeMethod, "Securely deleting 1 item");
+                NoteVaultDeletions(new[] { item.Path });
+                ThumbDiskCache.Invalidate(item.Path); // a shredded file must not live on as a cached preview
+            }
             else if (!await BinOrShredVaultAwareAsync(item.Path))
                 StatusText.Text = "Delete failed: item not found.";
             LoadCurrentFolder();
@@ -3858,13 +3989,15 @@ public sealed partial class MainWindow : Window
 
         // In the bin view, "delete" means permanently shred the selected entries.
         if (_currentFolder == RecycleBin.Location) { await ShredBinEntriesAsync(selection); return; }
+        if (selection.Any(i => IsInArchive(i.Path)))
+        { StatusText.Text = "Archives are read-only — use Extract to edit their contents."; return; }
 
         var permanent = IsShiftDown();
         var dialog = new ContentDialog
         {
             Title = permanent ? "Securely delete" : "Delete",
             Content = permanent
-                ? $"Securely erase {selection.Count} item(s) with overwrites? This can't be undone."
+                ? $"Securely erase {selection.Count} item(s) with overwrites? This can't be undone.\n\nNote: on SSDs and some drives, overwriting is best-effort — the hardware may retain old blocks."
                 : $"Move {selection.Count} item(s) to the Recycle Bin?",
             PrimaryButtonText = permanent ? "Erase" : "Delete",
             CloseButtonText = "Cancel",
@@ -3878,6 +4011,8 @@ public sealed partial class MainWindow : Window
             var paths = selection.Select(i => i.Path).ToList();
             try { await RunWipeWithUiAsync(paths, CurrentWipeMethod, selection.Count == 1 ? "Securely deleting 1 item" : $"Securely deleting {selection.Count} items"); }
             catch (Exception ex) { StatusText.Text = $"Delete failed: {ex.Message}"; }
+            NoteVaultDeletions(paths);
+            foreach (var p in paths) ThumbDiskCache.Invalidate(p); // shredded files must not survive as cached previews
         }
         else
         {
@@ -3898,7 +4033,7 @@ public sealed partial class MainWindow : Window
         var dialog = new ContentDialog
         {
             Title = "Delete permanently",
-            Content = $"Permanently erase {selection.Count} item(s) from the Recycle Bin with overwrites? This can't be undone.",
+            Content = $"Permanently erase {selection.Count} item(s) from the Recycle Bin with overwrites? This can't be undone.\n\nNote: on SSDs and some drives, overwriting is best-effort — the hardware may retain old blocks.",
             PrimaryButtonText = "Erase",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
@@ -3918,12 +4053,15 @@ public sealed partial class MainWindow : Window
     {
         selection = selection.Where(s => !s.IsShellItem && !IsUndeletableRoot(s)).ToList();
         if (selection.Count == 0) return;
+        if (selection.Any(i => IsInArchive(i.Path)))
+        { StatusText.Text = "Archives are read-only — use Extract to edit their contents."; return; }
         var effective = CurrentWipeMethod == WipeMethod.None ? WipeMethod.Random : CurrentWipeMethod; // shred always overwrites
         var what = selection.Count == 1 ? $"\"{selection[0].Name}\"" : $"{selection.Count} item(s)";
         var dialog = new ContentDialog
         {
             Title = "Secure delete (shred)",
-            Content = $"Securely erase {what} with overwrites ({WipeMethodLabel(effective)})? This bypasses the Recycle Bin and can't be undone.",
+            Content = $"Securely erase {what} with overwrites ({WipeMethodLabel(effective)})? This bypasses the Recycle Bin and can't be undone.\n\n"
+                    + "Note: on SSDs and some drives, overwriting is best-effort — the hardware may retain old blocks.",
             PrimaryButtonText = "Shred",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
@@ -3934,6 +4072,8 @@ public sealed partial class MainWindow : Window
         var paths = selection.Select(i => i.Path).ToList();
         try { await RunWipeWithUiAsync(paths, effective, selection.Count == 1 ? "Securely deleting 1 item" : $"Securely deleting {selection.Count} items"); }
         catch (Exception ex) { StatusText.Text = $"Shred failed: {ex.Message}"; }
+        NoteVaultDeletions(paths);
+        foreach (var p in paths) ThumbDiskCache.Invalidate(p); // shredded files must not survive as cached previews
         LoadCurrentFolder();
     }
 
@@ -4260,6 +4400,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Clears the search box quietly (no reload); callers reload as needed.</summary>
     private void ClearSearch()
     {
+        _searchCts?.Cancel(); // navigating away must stop a recursive scan, not leave it walking the tree
         _searchResults = new();
         if (string.IsNullOrEmpty(_searchQuery) && (SearchBox is null || SearchBox.Text.Length == 0)) return;
         _searchQuery = "";
@@ -4271,8 +4412,13 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // Cancels the in-flight recursive scan when a newer query/folder supersedes it — stale scans
+    // used to keep walking the whole tree per keystroke with no way to stop them.
+    private System.Threading.CancellationTokenSource? _searchCts;
+
     private async Task RunSearchAsync()
     {
+        _searchCts?.Cancel();
         if (string.IsNullOrEmpty(_searchQuery))
         {
             _searchResults = new();
@@ -4282,19 +4428,40 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        var truncated = false;
         if (_searchRecursive && _currentFolder is not null && _currentFolder != RecycleBin.Location && !ShellLoc.IsShell(_currentFolder))
         {
+            var cts = new System.Threading.CancellationTokenSource();
+            _searchCts = cts;
             var q = _searchQuery;
             var root = _currentFolder;
+
+            // Debounce: typing "report" shouldn't launch six recursive scans — only the pause matters.
+            try { await Task.Delay(250, cts.Token); } catch (TaskCanceledException) { return; }
+            if (q != _searchQuery || root != _currentFolder) return;
+
             StatusText.Text = $"Searching {System.IO.Path.GetFileName(root.TrimEnd('\\'))}…";
-            var results = await Task.Run(() => _fs.Search(root, q, _showWindowsHidden, _showAppHidden));
+            List<ExplorerItem> results;
+            bool trunc = false;
+            try
+            {
+                results = await Task.Run(() =>
+                {
+                    var r = _fs.Search(root, q, _showWindowsHidden, _showAppHidden, cts.Token, out var t);
+                    trunc = t;
+                    return r;
+                });
+            }
+            catch (OperationCanceledException) { return; } // superseded — the newer search owns the UI
             if (q != _searchQuery || root != _currentFolder) return; // a newer query/folder superseded us
             _searchResults = results;
+            truncated = trunc;
         }
 
         ApplySortAndGroup();
         ApplyViewMode();
-        StatusText.Text = $"{_explorerItems.Count} result(s) for “{_searchQuery}”";
+        StatusText.Text = $"{_explorerItems.Count} result(s) for “{_searchQuery}”"
+            + (truncated ? " — more exist; showing the first matches, narrow the search to see the rest" : "");
     }
 
     // ===================== Folder tabs =====================
@@ -4610,6 +4777,7 @@ public sealed partial class MainWindow : Window
 
         paths = paths.Where(p => File.Exists(p) || Directory.Exists(p)).ToList(); // only transfer what's actually there
         if (paths.Count == 0) return;
+        if (RefuseArchiveWrite(target)) return; // dropping INTO an archive would silently evaporate
         // MTP/portable-device targets have no filesystem path — the copy engine would fail every file
         // ("Copied 0 item(s), N failed"). Route through the shell uploader like the Upload button does.
         if (ShellLoc.IsShell(target))
@@ -4655,7 +4823,13 @@ public sealed partial class MainWindow : Window
     /// caller can report skipped/failed items instead of silently dropping them.</summary>
     private async System.Threading.Tasks.Task<TransferResult> RunTransferWithUiAsync(string destDir, List<string> paths, bool move)
     {
-        _progressCancel?.Invoke(); // only one panel at a time
+        // One operation at a time — but starting a new one must never silently CANCEL the current one
+        // (a copy used to abort a running export/shred just to take over the progress card).
+        if (_activeOp is not null)
+        {
+            StatusText.Text = "Another operation is still running — wait for it to finish or cancel it first.";
+            return new TransferResult { Canceled = true };
+        }
         var transfer = new FileTransfer();
         var token = new object();
         BeginProgressOp(token,
@@ -4676,15 +4850,37 @@ public sealed partial class MainWindow : Window
     /// wiping can't pause. Used by Empty Recycle Bin, right-click shred, and Shift+Delete.</summary>
     private async System.Threading.Tasks.Task RunWipeWithUiAsync(IReadOnlyList<string> paths, WipeMethod method, string title)
     {
-        _progressCancel?.Invoke();
+        if (_activeOp is not null)
+        {
+            StatusText.Text = "Another operation is still running — wait for it to finish or cancel it first.";
+            return;
+        }
         var cts = new System.Threading.CancellationTokenSource();
         var token = new object();
         BeginProgressOp(token, title, cancel: cts.Cancel, pauseToggle: null, isPaused: null, hideable: true);
         ShowTransferPanel(); // always show for wipes
 
         var progress = new Progress<TransferProgress>(p => { if (ReferenceEquals(_activeOp, token)) UpdateTransferUi(p); });
-        try { await SecureWipe.WipePathsAsync(paths, method, progress, cts.Token); }
+        WipeSummary summary;
+        try { summary = await SecureWipe.WipePathsAsync(paths, method, progress, cts.Token); }
         finally { EndProgressOp(token, null); }
+
+        // Report what ACTUALLY happened — "erased with overwrites" and "deleted but the overwrite
+        // failed" are different privacy outcomes, and a failure must never read as success.
+        var parts = new List<string>();
+        if (summary.Overwritten > 0)
+            parts.Add(method == WipeMethod.None ? $"deleted {summary.Overwritten} item(s)" : $"securely erased {summary.Overwritten} item(s)");
+        if (summary.PlainDeleted > 0)
+            parts.Add($"{summary.PlainDeleted} deleted WITHOUT overwrite (file in use?)");
+        if (summary.Failed > 0)
+            parts.Add($"{summary.Failed} could not be deleted");
+        if (summary.Cancelled)
+            parts.Add("cancelled — remaining items untouched");
+        if (parts.Count > 0)
+        {
+            var msg = string.Join("; ", parts) + ".";
+            StatusText.Text = char.ToUpperInvariant(msg[0]) + msg[1..];
+        }
     }
 
     private void BeginProgressOp(object token, string title, Action cancel, Action? pauseToggle, Func<bool>? isPaused, bool hideable)
@@ -4782,7 +4978,7 @@ public sealed partial class MainWindow : Window
         body.Children.Add(new TextBlock
         {
             Text = info.Identical
-                ? "These files are identical — same size and contents (verified by hash)."
+                ? "These files are identical — same size and contents (compared byte for byte)."
                 : "A different file with this name is already here. Compare and choose:",
             FontSize = 12.5,
             TextWrapping = TextWrapping.Wrap,
@@ -5094,8 +5290,11 @@ public sealed partial class MainWindow : Window
         try
         {
             var n = 0;
-            foreach (var v in vaults)
+            foreach (var listed in vaults)
             {
+                // List() loads fresh Vault objects — for the currently-unlocked vault, use the LIVE
+                // instance instead, so the backup's flush + commit-gate hold act on the real state.
+                var v = _vaults.Current?.Id == listed.Id ? _vaults.Current : listed;
                 if (!silent) BackupStatusText.Text = $"Backing up “{v.Name}” ({++n}/{vaults.Count})…";
                 // Isolate each vault so one failure doesn't abort the rest or strand the timestamp.
                 try { await _drive.BackupVaultAsync(v, progress); ok++; }
@@ -5159,6 +5358,36 @@ public sealed partial class MainWindow : Window
         if (await dlg.ShowAsync() != ContentDialogResult.Primary || list.SelectedIndex < 0) return;
 
         var chosen = backups[list.SelectedIndex];
+
+        // Never write over the store of a vault that is unlocked right now — its in-memory index/key
+        // and working folder would no longer agree with what's on disk.
+        if (_vaults.Current?.Id == chosen.Id && _vaults.Current.IsUnlocked)
+        {
+            BackupStatusText.Text = "That vault is currently unlocked — lock it first, then restore.";
+            return;
+        }
+
+        // Replacing a vault that already exists locally is a destructive decision of its own —
+        // "Restore" alone must not silently overwrite newer local contents with an older backup.
+        if (Directory.Exists(System.IO.Path.Combine(VaultManager.VaultsRoot, chosen.Id)))
+        {
+            var confirm = new ContentDialog
+            {
+                Title = "Replace the vault on this PC?",
+                Content = "This vault already exists on this PC. Restoring will replace its local contents "
+                        + "with the backup — any changes made since that backup will be lost.",
+                PrimaryButtonText = "Replace with backup",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = RootGrid.XamlRoot,
+            };
+            if (await confirm.ShowAsync() != ContentDialogResult.Primary)
+            {
+                BackupStatusText.Text = "Restore cancelled.";
+                return;
+            }
+        }
+
         BackupStatusText.Text = "Restoring…";
         try
         {
@@ -5290,9 +5519,20 @@ public sealed partial class MainWindow : Window
             TerminalWeb.CoreWebView2.WebMessageReceived += Terminal_WebMessageReceived;
             TerminalWeb.CoreWebView2.Navigate("https://galileo.terminal/index.html");
             _termWebReady = true;
+
+            // Handshake: "navigated" is not "working". The page posts {t:'ready'} once xterm is
+            // actually up; if that never arrives, say so instead of leaving a silent blank pane.
+            _termPageReady = false;
+            _ = Task.Delay(TimeSpan.FromSeconds(10)).ContinueWith(_ => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_termPageReady && TerminalPane.Visibility == Visibility.Visible)
+                    StatusText.Text = "The terminal didn't initialize — its bundled scripts may be missing. Try reinstalling Galileo.";
+            }));
         }
         catch (Exception ex) { StatusText.Text = "Terminal failed to start: " + ex.Message; App.Log("Terminal", ex); }
     }
+
+    private bool _termPageReady;
 
     private void Terminal_WebMessageReceived(Microsoft.Web.WebView2.Core.CoreWebView2 sender,
         Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs args)
@@ -5314,6 +5554,9 @@ public sealed partial class MainWindow : Window
                     _termRows = (short)root.GetProperty("rows").GetInt32();
                     if (_term is null) StartTerminalSession(_termCols, _termRows);
                     else _term.Resize(_termCols, _termRows);
+                    break;
+                case "ready":
+                    _termPageReady = true;
                     break;
             }
         }
@@ -5570,8 +5813,10 @@ public sealed partial class MainWindow : Window
         _loadingSettings = false;
 
         // Cap the card to the current window height (so it scrolls on short windows) using a
-        // known-laid-out element — ActualHeight bindings don't update reliably in WinUI.
-        SettingsCard.MaxHeight = Math.Max(320, RootGrid.ActualHeight - 40);
+        // known-laid-out element — ActualHeight bindings don't update reliably in WinUI. The floor is
+        // only a guard against degenerate layout sizes: it must stay BELOW any usable window height,
+        // or the card would overflow a short window and clip the Save/Cancel row off-screen.
+        SettingsCard.MaxHeight = Math.Max(120, RootGrid.ActualHeight - 40);
         SettingsOverlay.Visibility = Visibility.Visible;
         // Focus-modal: the card's TabFocusNavigation=Cycle traps Tab, but only once focus is INSIDE —
         // otherwise Tab keeps walking the dimmed UI behind the scrim (address bar included).
@@ -5584,7 +5829,7 @@ public sealed partial class MainWindow : Window
     private void RootGrid_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (SettingsOverlay.Visibility == Visibility.Visible)
-            SettingsCard.MaxHeight = Math.Max(320, RootGrid.ActualHeight - 40);
+            SettingsCard.MaxHeight = Math.Max(120, RootGrid.ActualHeight - 40);
     }
 
     private void SingleInstanceSwitch_Toggled(object sender, RoutedEventArgs e)
@@ -6008,8 +6253,11 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var dir = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Pictures", "Galileo");
+            // Known-folder lookup, not a guessed profile path — Pictures can be relocated/redirected.
+            var pictures = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+            if (string.IsNullOrEmpty(pictures))
+                pictures = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Pictures");
+            var dir = System.IO.Path.Combine(pictures, "Galileo");
             Directory.CreateDirectory(dir);
             var path = System.IO.Path.Combine(dir, $"Galileo_{DateTimeOffset.Now:yyyy-MM-dd_HH-mm-ss}.png");
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
@@ -6108,6 +6356,7 @@ public sealed partial class MainWindow : Window
     private void ExplorerClipboard_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (PeekOverlay.Visibility == Visibility.Visible) return;
+        if (SettingsOverlay.Visibility == Visibility.Visible) return; // Settings owns the keyboard — never paste/cut behind it
         if (ExplorerView.Visibility != Visibility.Visible) return;
         // Let Ctrl+Alt+V (open vault) fall through to RootGrid_KeyDown — don't treat it as paste.
         if (!IsCtrlDown() || IsAltDown() || IsTextInputFocused()) return;
@@ -6125,6 +6374,15 @@ public sealed partial class MainWindow : Window
         // While the Peek overlay is open it owns the keyboard (handled in Peek_KeyDown) — don't let
         // the explorer/viewer shortcuts below also fire (e.g. Enter opening the item a second time).
         if (PeekOverlay.Visibility == Visibility.Visible) return;
+
+        // Settings looks modal (scrim + focus cycle) — make it BE modal for the keyboard too. With a
+        // toggle/button focused inside the card, Delete/F5/Enter/etc. below must never operate on the
+        // file view dimmed behind it. Escape (cancel Settings) is the only shortcut that applies.
+        if (SettingsOverlay.Visibility == Visibility.Visible)
+        {
+            if (e.Key == VirtualKey.Escape) { CancelSettings(); e.Handled = true; }
+            return;
+        }
 
         switch (e.Key)
         {
@@ -6183,8 +6441,6 @@ public sealed partial class MainWindow : Window
                 Navigate(-1); e.Handled = true; break;
             case VirtualKey.Right when InViewer:
                 Navigate(+1); e.Handled = true; break;
-            case VirtualKey.Escape when SettingsOverlay.Visibility == Visibility.Visible:
-                CancelSettings(); e.Handled = true; break;
             case VirtualKey.D when InEditor && IsCtrlDown() && !IsTextInputFocused():
                 ClearSelection(); e.Handled = true; break;      // Photoshop's Deselect
             case VirtualKey.Escape when InEditor:
@@ -6691,6 +6947,24 @@ public sealed partial class MainWindow : Window
         ShowExplorer();
         NavigateTo(v.WorkingDir);
         StatusText.Text = $"Vault “{v.Name}” unlocked";
+
+        // Integrity damage (e.g. an incomplete restore or disk corruption) must be reported, not
+        // silently browsed around — these entries exist in the index but their encrypted data is gone.
+        if (v.MissingFilesOnUnlock.Count > 0)
+        {
+            var names = string.Join("\n", v.MissingFilesOnUnlock.Take(10));
+            if (v.MissingFilesOnUnlock.Count > 10) names += $"\n… and {v.MissingFilesOnUnlock.Count - 10} more";
+            _ = new ContentDialog
+            {
+                Title = "Some vault files are damaged",
+                Content = $"{v.MissingFilesOnUnlock.Count} file(s) in this vault are listed in its index but their "
+                        + "encrypted data is missing (a damaged or incomplete vault store):\n\n" + names
+                        + "\n\nThey are kept in the index so they can be recovered from a backup. "
+                        + "Consider restoring this vault from its latest backup.",
+                CloseButtonText = "OK",
+                XamlRoot = RootGrid.XamlRoot,
+            }.ShowAsync();
+        }
     }
 
     private async Task CreateVaultDialogAsync(IList<string>? importPaths)
@@ -6772,7 +7046,11 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { StatusText.Text = "Vault creation failed: " + ex.Message; App.Log("VaultCreate", ex); return; }
 
         RefreshVaults();
-        if (importPaths is not null) LoadCurrentFolder(); // originals were removed
+        if (importPaths is not null)
+        {
+            foreach (var p in importPaths) ThumbDiskCache.Invalidate(p); // originals were securely wiped
+            LoadCurrentFolder(); // originals were removed
+        }
         StatusText.Text = "Vault created.";
     }
 
@@ -6797,6 +7075,8 @@ public sealed partial class MainWindow : Window
         try { n = await _vaults.AddToCurrentAsync(paths); }
         catch (Exception ex) { StatusText.Text = "Send to vault failed: " + ex.Message; App.Log("SendToVault", ex); return; }
 
+        // The originals were securely wiped — their cached thumbnails must not outlive them.
+        foreach (var p in paths) ThumbDiskCache.Invalidate(p);
         LoadCurrentFolder(); // originals are gone; new items appear if browsing the vault
         ResetVaultIdle();
         StatusText.Text = $"Sent {n} item(s) to vault “{cur.Name}” — encrypted, originals wiped.";
@@ -6844,7 +7124,8 @@ public sealed partial class MainWindow : Window
         var work = _vaults.Current?.WorkingDir;
         StopVaultIdle();
         StopVaultFlush();
-        try { await _vaults.LockCurrentAsync(); }
+        bool clean;
+        try { clean = await _vaults.LockCurrentAsync(); }
         catch (Exception ex)
         {
             // A transient lock failure must not leave the vault unlocked with the idle timer stopped —
@@ -6861,7 +7142,11 @@ public sealed partial class MainWindow : Window
             if (InViewer || InCollage) ShowExplorer();
             NavigateTo(null);
         }
-        StatusText.Text = "Vault locked.";
+        // Never claim a clean lock while decrypted files remain on disk (e.g. one held open by
+        // another program) — the changes are committed, but the residue is a privacy issue.
+        StatusText.Text = clean
+            ? "Vault locked."
+            : "Vault locked, but some decrypted files couldn't be removed (still in use?). Close other programs and lock again.";
     }
 
     private void UpdateVaultLockButton()
@@ -6980,7 +7265,39 @@ public sealed partial class MainWindow : Window
         if (_secondaryWindow || LaunchedNewWindow()) return;
         if (!_vaults.IsAnyUnlocked) return;
         args.Cancel = true;                      // defer close until the vault is secured
-        try { await _vaults.LockCurrentAsync(); } catch (Exception ex) { App.Log("VaultCloseLock", ex); }
+        while (true)
+        {
+            try { await _vaults.LockCurrentAsync(); break; }
+            catch (Exception ex)
+            {
+                // A failed commit means plaintext (and unsaved changes) are still on disk. Exiting
+                // anyway would leave them behind for the next launch's crash cleanup to destroy —
+                // so stay open and let the user retry, keep working, or explicitly discard.
+                App.Log("VaultCloseLock", ex);
+                if (_exitingFromTray) { try { RestoreFromBackground(); } catch { } } // never show a modal on a hidden window
+                var dlg = new ContentDialog
+                {
+                    Title = "Vault couldn't be secured",
+                    Content = "Saving the vault's changes failed:\n" + ex.Message +
+                              "\n\nRetry, stay open to fix the problem (e.g. free up disk space), " +
+                              "or close anyway and discard the changes made since the last successful save.",
+                    PrimaryButtonText = "Retry",
+                    SecondaryButtonText = "Discard changes and close",
+                    CloseButtonText = "Stay open",
+                    DefaultButton = ContentDialogButton.Primary,
+                    XamlRoot = RootGrid.XamlRoot,
+                };
+                var res = await dlg.ShowAsync();
+                if (res == ContentDialogResult.Primary) continue;   // retry the commit
+                if (res == ContentDialogResult.Secondary)
+                {
+                    // Explicit discard: wipe the plaintext and keep the last committed generation.
+                    try { _vaults.DiscardCurrentWorkingAndLock(); } catch (Exception ex2) { App.Log("VaultDiscard", ex2); }
+                    break;
+                }
+                return; // stay open — the close was already cancelled
+            }
+        }
         _closingForVaultLock = true;
         Close();
     }

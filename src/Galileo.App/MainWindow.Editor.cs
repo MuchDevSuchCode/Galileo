@@ -75,26 +75,45 @@ public sealed partial class MainWindow
     private byte[]? _selMask;
     private CanvasBitmap? _selOverlay;
 
-    /// <summary>Adopts a source-space selection mask and builds the tinted overlay shown on the canvas.</summary>
+    // The overlay bitmap may be built at reduced resolution for very large images (memory cap);
+    // these factors scale it back up to source-pixel space at draw time.
+    private float _selOverlayScaleX = 1f, _selOverlayScaleY = 1f;
+
+    /// <summary>Adopts a source-space selection mask and builds the tinted overlay shown on the canvas.
+    /// The overlay is only a translucent visual, so above ~16 MP it is built at reduced resolution and
+    /// scaled up when drawn — a full-resolution BGRA overlay of a 50 MP photo alone was ~200 MB.</summary>
     private void SetSelection(byte[]? mask, int w, int h)
     {
         _selMask = mask;
         try { _selOverlay?.Dispose(); } catch { }
         _selOverlay = null;
+        _selOverlayScaleX = _selOverlayScaleY = 1f;
 
         if (mask is not null && _editCanvas is not null)
         {
-            var px = new byte[w * h * 4];
-            for (var i = 0; i < mask.Length; i++)
+            const long maxOverlayPx = 16_000_000;
+            var step = 1;
+            while ((long)(w / step) * (h / step) > maxOverlayPx) step++;
+            var ws = Math.Max(1, w / step);
+            var hs = Math.Max(1, h / step);
+            _selOverlayScaleX = (float)w / ws;
+            _selOverlayScaleY = (float)h / hs;
+
+            var px = new byte[ws * hs * 4];
+            for (var y = 0; y < hs; y++)
             {
-                if (mask[i] == 0) continue;
-                var p = i * 4;
-                px[p] = 255; px[p + 1] = 40; px[p + 2] = 190;   // BGRA — magenta
-                px[p + 3] = 90;                                  // translucent
+                var srcRow = (long)(y * step) * w;
+                for (var x = 0; x < ws; x++)
+                {
+                    if (mask[srcRow + (long)x * step] == 0) continue;
+                    var p = (y * ws + x) * 4;
+                    px[p] = 255; px[p + 1] = 40; px[p + 2] = 190;   // BGRA — magenta
+                    px[p + 3] = 90;                                  // translucent
+                }
             }
             try
             {
-                _selOverlay = CanvasBitmap.CreateFromBytes(_editCanvas.Device, px, w, h,
+                _selOverlay = CanvasBitmap.CreateFromBytes(_editCanvas.Device, px, ws, hs,
                     Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized);
             }
             catch (Exception ex) { App.Log("SelOverlay", ex); }
@@ -409,7 +428,32 @@ public sealed partial class MainWindow
             ds.FillRectangle(new Rect(ox, disp.Y + disp.Height, dw, oy + dh - (disp.Y + disp.Height)), shade);
             ds.FillRectangle(new Rect(ox, disp.Y, disp.X - ox, disp.Height), shade);
             ds.FillRectangle(new Rect(disp.X + disp.Width, disp.Y, ox + dw - (disp.X + disp.Width), disp.Height), shade);
+
+            // Rule-of-thirds guides inside the selection.
+            var guide = Color.FromArgb(90, 255, 255, 255);
+            for (var i = 1; i <= 2; i++)
+            {
+                var gx = (float)(disp.X + disp.Width * i / 3);
+                var gy = (float)(disp.Y + disp.Height * i / 3);
+                ds.DrawLine(gx, (float)disp.Y, gx, (float)(disp.Y + disp.Height), guide, 1);
+                ds.DrawLine((float)disp.X, gy, (float)(disp.X + disp.Width), gy, guide, 1);
+            }
+
             ds.DrawRectangle(disp, Microsoft.UI.Colors.White, 2);
+
+            // Visible resize handles (corners + edge midpoints) at constant DISPLAY size, matching the
+            // grab zones CropDragMode hit-tests — resizable edges the user can't see aren't a feature.
+            void Handle(double hx, double hy)
+            {
+                var hr = new Rect(hx - 5, hy - 5, 10, 10);
+                ds.FillRectangle(hr, Microsoft.UI.Colors.White);
+                ds.DrawRectangle(hr, Color.FromArgb(200, 0, 0, 0), 1);
+            }
+            double cxm = disp.X + disp.Width / 2, cym = disp.Y + disp.Height / 2;
+            Handle(disp.X, disp.Y); Handle(disp.X + disp.Width, disp.Y);
+            Handle(disp.X, disp.Y + disp.Height); Handle(disp.X + disp.Width, disp.Y + disp.Height);
+            Handle(cxm, disp.Y); Handle(cxm, disp.Y + disp.Height);
+            Handle(disp.X, cym); Handle(disp.X + disp.Width, cym);
         }
 
         // Markup is in oriented space; map it through the currently-shown source region.
@@ -424,7 +468,7 @@ public sealed partial class MainWindow
         {
             try
             {
-                var selImg = _editor.BuildOrientedOverlay(_edit, _selOverlay, out _);
+                var selImg = _editor.BuildOrientedOverlay(_edit, _selOverlay, _selOverlayScaleX, _selOverlayScaleY, out _);
                 ds.DrawImage(selImg, new Rect(ox, oy, dw, dh), src);
             }
             catch (Exception ex) { App.Log("SelDraw", ex); }
@@ -598,6 +642,11 @@ public sealed partial class MainWindow
         // (e.g. a lost pointer-capture that never fired PointerReleased).
         _dragging = false; _pendingCrop = null; _pendingShape = null; _cropDrag = "";
         UpdateOverlayHitTest();
+        // Redraw NOW: entering crop mode switches the view from the cropped region to the full image,
+        // and the pointer mapping (_viewSrc/_editFitRect) is only refreshed by a draw — without this,
+        // the first drag after opening the crop tool mapped through the stale cropped-view geometry
+        // and the rectangle landed offset from the cursor.
+        _editCanvas?.Invalidate();
     }
 
     /// <summary>The overlay only needs pointer events when something is actually draggable: a crop, a markup
@@ -891,7 +940,9 @@ public sealed partial class MainWindow
         _dragging = false;
         if (_cropMode)
         {
-            if (_pendingCrop is Rect c && c.Width > 8 && c.Height > 8) { PushUndo(); _edit.Crop = c; }
+            // Skip the no-op commit: a plain click inside the selection ("move" that never moved)
+            // otherwise re-committed the identical rect and burned an undo step doing nothing.
+            if (_pendingCrop is Rect c && c.Width > 8 && c.Height > 8 && c != _edit.Crop) { PushUndo(); _edit.Crop = c; }
             _pendingCrop = null; _cropDrag = "";
         }
         else if (_pendingShape is MarkupItem ps)
@@ -905,13 +956,25 @@ public sealed partial class MainWindow
         _editCanvas?.Invalidate();
     }
 
+    /// <summary>Rect from the press point <paramref name="a"/> toward the cursor <paramref name="b"/>.
+    /// The rect stays ANCHORED at the press point and grows in the drag direction (dragging up/left
+    /// works). With an aspect ratio the dominant drag axis drives the size — a vertical drag grows the
+    /// box too — and hitting an image edge shrinks BOTH dimensions so the ratio always holds.</summary>
     private Rect MakeCropRect(Point a, Point b)
     {
-        double x = Math.Min(a.X, b.X), y = Math.Min(a.Y, b.Y);
-        double w = Math.Abs(b.X - a.X), h = Math.Abs(b.Y - a.Y);
-        if (_cropAspect > 0) h = w / _cropAspect;
-        w = Math.Min(w, _orientedW - x);
-        h = Math.Min(h, _orientedH - y);
+        bool right = b.X >= a.X, down = b.Y >= a.Y;
+        double maxW = right ? _orientedW - a.X : a.X;
+        double maxH = down ? _orientedH - a.Y : a.Y;
+        double w = Math.Min(Math.Abs(b.X - a.X), maxW);
+        double h = Math.Min(Math.Abs(b.Y - a.Y), maxH);
+        if (_cropAspect > 0)
+        {
+            if (w / _cropAspect >= h) h = w / _cropAspect; else w = h * _cropAspect;
+            if (w > maxW) { w = maxW; h = w / _cropAspect; }
+            if (h > maxH) { h = maxH; w = h * _cropAspect; }
+        }
+        double x = right ? a.X : a.X - w;
+        double y = down ? a.Y : a.Y - h;
         return new Rect(x, y, w, h);
     }
 
@@ -944,20 +1007,24 @@ public sealed partial class MainWindow
         return new Rect(nx, ny, orig.Width, orig.Height);
     }
 
-    /// <summary>Resizes the crop by a corner or edge. Corners keep the chosen aspect (proportionate).</summary>
+    /// <summary>Resizes the crop by a corner or edge. Corners keep the chosen aspect (proportionate).
+    /// Edges move by the pointer's DELTA from where the drag started — setting them to the absolute
+    /// cursor position made the grabbed edge visibly jump to the pointer on the first move (the
+    /// handle hit-test tolerance lets a grab land up to ~12px away from the edge).</summary>
     private Rect ResizeCrop(string mode, Rect orig, Point p)
     {
         const double min = 10;
+        double dx = p.X - _dragStart.X, dy = p.Y - _dragStart.Y;
         double l = orig.X, t = orig.Y, r = orig.X + orig.Width, b = orig.Y + orig.Height;
         bool left = mode is "nw" or "sw" or "w";
         bool right = mode is "ne" or "se" or "e";
         bool top = mode is "nw" or "ne" or "n";
         bool bottom = mode is "sw" or "se" or "s";
 
-        if (left) l = Math.Clamp(p.X, 0, r - min);
-        if (right) r = Math.Clamp(p.X, l + min, _orientedW);
-        if (top) t = Math.Clamp(p.Y, 0, b - min);
-        if (bottom) b = Math.Clamp(p.Y, t + min, _orientedH);
+        if (left) l = Math.Clamp(orig.X + dx, 0, r - min);
+        if (right) r = Math.Clamp(orig.X + orig.Width + dx, l + min, _orientedW);
+        if (top) t = Math.Clamp(orig.Y + dy, 0, b - min);
+        if (bottom) b = Math.Clamp(orig.Y + orig.Height + dy, t + min, _orientedH);
 
         if (mode is "nw" or "ne" or "sw" or "se" && _cropAspect > 0)
         {
@@ -1037,7 +1104,27 @@ public sealed partial class MainWindow
             _ => 0,
         };
         SetCanvasMode("crop");
-        StatusText.Text = "Drag on the image to set the crop.";
+        // Apply the new ratio to an existing crop immediately (reshaped around its center) — the
+        // combo used to change only FUTURE drags, which read as the control doing nothing.
+        if (_cropAspect > 0 && _edit.Crop is Rect cur && cur.Width > 8 && cur.Height > 8)
+        {
+            PushUndo();
+            _edit.Crop = ReshapeToAspect(cur, _cropAspect);
+            _editCanvas?.Invalidate();
+            StatusText.Text = "Crop reshaped to the chosen ratio — drag to adjust.";
+        }
+        else StatusText.Text = "Drag on the image to set the crop.";
+    }
+
+    /// <summary>Reshapes a rect to the given aspect around its center, kept inside the image.</summary>
+    private Rect ReshapeToAspect(Rect r, double aspect)
+    {
+        double w = r.Width, h = w / aspect;
+        if (h > _orientedH) { h = _orientedH; w = h * aspect; }
+        if (w > _orientedW) { w = _orientedW; h = w / aspect; }
+        var x = Math.Clamp(r.X + (r.Width - w) / 2, 0, Math.Max(0, _orientedW - w));
+        var y = Math.Clamp(r.Y + (r.Height - h) / 2, 0, Math.Max(0, _orientedH - h));
+        return new Rect(x, y, w, h);
     }
 
     private void CropReset_Click(object sender, RoutedEventArgs e) { PushUndo(); _edit.Crop = null; _editCanvas?.Invalidate(); }
@@ -1134,7 +1221,8 @@ public sealed partial class MainWindow
     {
         _editUndo.Add(new EditSnapshot(_edit.Clone(), MarkupSnapshot(), pixels, w, h));
         _editRedo.Clear();
-        PrunePixelSnapshots(_editUndo);
+        if (PrunePixelSnapshots(_editUndo) > 0)
+            StatusText.Text = "Oldest edit history discarded (undo memory limit).";
     }
 
     private List<MarkupItem> MarkupSnapshot() => _markup.Select(m => m.Clone()).ToList();
@@ -1153,16 +1241,26 @@ public sealed partial class MainWindow
         PushUndo(px, w, h);
     }
 
-    /// <summary>Only the newest few entries keep their bitmap; older ones degrade to parameters-only so the
-    /// history can't quietly pin hundreds of megabytes.</summary>
-    private static void PrunePixelSnapshots(List<EditSnapshot> history)
+    /// <summary>Only the newest few entries keep their bitmap so the history can't quietly pin
+    /// hundreds of megabytes. Stripping just the pixels from an older AI entry left an undo step
+    /// that restored the parameters but not the pixels — an undo that silently no longer does what
+    /// it claims. Instead the history is truncated coherently: the entry losing its pixels and
+    /// everything older go together (steps newer than it remain fully honest, since the pixel
+    /// states they land on are all still restorable). Returns how many entries were discarded.</summary>
+    private static int PrunePixelSnapshots(List<EditSnapshot> history)
     {
         var kept = 0;
         for (var i = history.Count - 1; i >= 0; i--)
         {
             if (history[i].Pixels is null) continue;
-            if (++kept > MaxPixelSnapshots) history[i] = history[i] with { Pixels = null, W = 0, H = 0 };
+            if (++kept > MaxPixelSnapshots)
+            {
+                var removed = i + 1;
+                history.RemoveRange(0, removed);
+                return removed;
+            }
         }
+        return 0;
     }
 
     private void DebounceUndo()
@@ -1306,6 +1404,13 @@ public sealed partial class MainWindow
 
     private async Task SaveOverwriteCoreAsync()
     {
+        // Extracted-archive files are temp copies wiped at startup — "overwriting" one would report
+        // success and then silently evaporate. Point the user at a save that actually persists.
+        if (IsInArchive(_editPath))
+        {
+            StatusText.Text = "This file is inside a read-only archive — use Save As to keep your edits.";
+            return;
+        }
         var confirm = new ContentDialog
         {
             Title = "Overwrite original?",
@@ -1342,8 +1447,19 @@ public sealed partial class MainWindow
         }
         else
         {
+            // The original was NOT updated — stay in the editor with the work intact so the user can
+            // retry, Save As, or Save a copy. Exiting here silently discarded the unsaved edits.
             try { if (System.IO.File.Exists(tmp)) System.IO.File.Delete(tmp); } catch { }
-            ExitEditMode(reloadViewer: true);
+            _ = LoadCurrentAsync(); // restore the viewer bitmap released above so the view behind isn't blank
+            await new ContentDialog
+            {
+                Title = "Couldn't overwrite the original",
+                Content = "The file is in use or not writable, so the original was left unchanged. "
+                        + "Your edits are still here — retry Overwrite once the file is free, or use "
+                        + "Save As / Save a copy.",
+                CloseButtonText = "OK",
+                XamlRoot = RootGrid.XamlRoot,
+            }.ShowAsync();
         }
     }
 

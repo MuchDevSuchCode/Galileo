@@ -47,7 +47,7 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 - **Archives** — double-click a **.zip** to browse it like a folder (extracted to a temp area and opened read-only; the temp copy is wiped on next launch). Right-click a `.zip` for **Extract Here** or **Extract All…**. Password-protected archives aren't supported. **Slideshow** and **Collage** buttons act on the current folder's images. Single- or double-click to open (configurable).
 - **File operations** — New folder (with immediate rename), **Cut / Copy / Paste** (move-aware), Copy path, Rename, Delete (Galileo's own Recycle Bin), **Shift+Delete** (secure erase), **drag files between folders** (drop onto a folder to copy, hold **Shift** to move) or out to other apps, and the native **Properties** dialog (right-click items or empty space).
 - **Copy/move progress** — large copies and moves (paste or drag-drop) show a clean, **Apple-style floating progress card** with the current file, a slim progress bar, amount transferred, and a live **time-remaining** estimate. **Pause / Resume** and **Cancel** any transfer mid-flight (cancelling removes the partially-copied file; a cancelled move leaves the originals untouched). Same-drive moves are instant (a rename), so the card only appears for transfers that actually take a moment.
-- **Conflict resolution** — when a copy/move would overwrite an existing file, Galileo asks what to do: **Replace**, **Keep both** (auto-renamed), **Skip**, or **Cancel** — with a **"do this for all remaining conflicts"** option. The prompt shows **both files' size and date**, and **hashes them (SHA-256)** to tell you when the contents are **identical** so you can decide with confidence. Existing folders are **merged** (each inner file conflict is resolved the same way).
+- **Conflict resolution** — when a copy/move would overwrite an existing file, Galileo asks what to do: **Replace**, **Keep both** (auto-renamed), **Skip**, or **Cancel** — with a **"do this for all remaining conflicts"** option. The prompt shows **both files' size and date**, and **compares their contents byte for byte** to tell you when they are **identical** so you can decide with confidence. Existing folders are **merged** (each inner file conflict is resolved the same way).
 - **Keyboard shortcuts** — standard Windows file-management keys: **Ctrl+C / Ctrl+X / Ctrl+V** (copy / cut / paste, move-aware and interoperable with Windows Explorer's clipboard), **Ctrl+A** (select all), **F2** (rename), **Enter** (open), **Del / Shift+Del** (recycle / secure erase).
 - **Selection count** — selecting items shows **how many are selected** (and their total size) in the status bar; with nothing selected it shows the folder's item count. Marquee-drag, Ctrl/Shift-click, and Ctrl+A all update it live.
 - **Bulk rename** — select multiple items and Rename (F2 or right-click): pick a base name and they become **`name`, `name-1`, `name-2`, …** (dash numbering), each keeping its own extension. Done collision-safe via a temp-rename pass.
@@ -61,7 +61,33 @@ Galileo opens into a **Windows-Explorer-style file manager** (Win11 layout):
 - **Show hidden items** — a command-strip toggle reveals **Windows-hidden** files and folders (the OS hidden attribute) in the explorer, like Explorer's "Hidden items" checkbox. It's **session-only** — it never gets saved and reverts to off the next time you launch.
 - **🔒 Secure vault** — right-click a folder → **Move to new vault…** to encrypt it into a hidden vault, or **Send to Vault** to add items to the vault that's currently unlocked (passphrase and/or Windows Hello). See [Secure vault](#secure-vault) below.
 
-> Planned next: an expandable folder tree in the sidebar, in-place Details column resizing, and a recents/pinned list.
+> Planned next: in-place Details column resizing and a recents/pinned list.
+
+### Filesystem fidelity (what copy/move preserves)
+
+Copies and moves are **transactional**: data streams into a hidden staging file next to the
+destination and only replaces/creates the destination once the copy fully succeeded — cancelling
+or failing mid-copy never destroys an existing destination file, and cancelling a **move** rolls
+back items that had already been renamed/copied so nothing ends up half-moved.
+
+Preserved per file: **contents, last-write time, creation time, and attributes** (read-only,
+hidden, …). Intentionally **not** preserved (documented limits, not bugs): NTFS **alternate data
+streams**, **ACLs/ownership**, **sparse/compressed flags**, and **cloud placeholder** state — a
+copied placeholder is hydrated by the OS and copied as a normal file.
+
+**Links are never traversed**: copying or deleting a folder that contains a directory junction or
+symlink never touches the link's *target* — the recursive walkers (copy planner, secure wipe,
+recycle bin, vault) treat reparse points as boundaries. Same-volume moves relocate the link itself.
+
+### For developers
+
+- **Isolated data root** — set the `GALILEO_DATA_DIR` environment variable to redirect *all* app
+  data (settings, vaults, recycle bin, caches, logs, temp roots) to another folder. The test suite
+  uses this so it never touches your real state.
+- **Tests & CI** — `dotnet test src/Galileo.Tests` runs the service-level regression suite
+  (transfer transactionality/cancellation, vault durability/recovery, recycle-bin recovery,
+  settings merging, wipe outcomes); `.github/workflows/ci.yml` runs it plus a Release build on
+  every push/PR.
 
 ---
 

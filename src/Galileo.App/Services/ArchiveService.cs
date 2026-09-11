@@ -13,7 +13,7 @@ namespace Galileo.Services;
 public static class ArchiveService
 {
     public static string ZipTempRoot =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo", ".zip");
+        Path.Combine(AppPaths.Root, ".zip");
 
     public static bool IsArchive(string path) =>
         string.Equals(Path.GetExtension(path), ".zip", StringComparison.OrdinalIgnoreCase);

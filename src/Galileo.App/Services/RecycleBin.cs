@@ -28,8 +28,7 @@ public sealed class RecycleBin
 {
     public const string Location = "bin:::"; // sentinel used as the explorer's _currentFolder
 
-    private static string Root => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo", "RecycleBin");
+    private static string Root => Path.Combine(AppPaths.Root, "RecycleBin");
     private static string StoreDir => Path.Combine(Root, "store");
     private static string IndexPath => Path.Combine(Root, "index.json");
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
@@ -194,19 +193,23 @@ public sealed class RecycleBin
         }
     }
 
-    /// <summary>Empties the bin, secure-wiping every item with the chosen method.</summary>
+    /// <summary>Empties the bin, secure-wiping every item with the chosen method. Only the entries
+    /// captured in the snapshot are wiped and dropped: an item another process bins DURING the wipe
+    /// keeps both its index record and its store file (the old blanket index-clear + store sweep
+    /// destroyed such items untracked). Entries whose wipe failed also stay listed.</summary>
     public async Task EmptyAsync(WipeMethod method, IProgress<string>? progress = null)
     {
-        List<RecycleEntry> list;
-        lock (_lock) { list = Load(); }
-        foreach (var e in list) await SecureWipe.WipePathAsync(StorePathOf(e), method, progress);
+        List<RecycleEntry> snapshot;
+        lock (_lock) { snapshot = Load(); }
+        foreach (var e in snapshot) await SecureWipe.WipePathAsync(StorePathOf(e), method, progress);
         lock (_lock)
         {
             try
             {
                 using var gate = AcquireIndexMutex();
-                Save(new List<RecycleEntry>());
-                try { foreach (var f in Directory.EnumerateFileSystemEntries(StoreDir)) TryRemove(f); } catch { }
+                var current = Load();
+                current.RemoveAll(e => { var p = StorePathOf(e); return !File.Exists(p) && !Directory.Exists(p); });
+                Save(current);
             }
             catch { }
         }
@@ -227,11 +230,24 @@ public sealed class RecycleBin
         else { File.Copy(src, dest, overwrite: true); File.Delete(src); }
     }
 
+    // Never follows directory junctions/symlinks — recycling a folder containing a junction must not
+    // pull the junction's TARGET into the bin (and then delete it from the source side).
     private static void CopyDir(string src, string dest)
     {
+        if (IsReparsePoint(src)) return;
         Directory.CreateDirectory(dest);
         foreach (var f in Directory.GetFiles(src)) File.Copy(f, Path.Combine(dest, Path.GetFileName(f)), overwrite: true);
-        foreach (var d in Directory.GetDirectories(src)) CopyDir(d, Path.Combine(dest, Path.GetFileName(d)));
+        foreach (var d in Directory.GetDirectories(src))
+        {
+            if (IsReparsePoint(d)) continue;
+            CopyDir(d, Path.Combine(dest, Path.GetFileName(d)));
+        }
+    }
+
+    private static bool IsReparsePoint(string path)
+    {
+        try { return File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint); }
+        catch { return true; }
     }
 
     private static long DirSize(string dir)
@@ -242,18 +258,23 @@ public sealed class RecycleBin
         return total;
     }
 
+    // A destination counts as taken whether a FILE or a FOLDER occupies it — checking only the
+    // restored item's own kind made a restore fail outright when the other kind sat at its path
+    // (e.g. restoring file "report" where a folder "report" now exists).
     private static string UniquePath(string path, bool isDir)
     {
-        if (isDir ? !Directory.Exists(path) : !File.Exists(path)) return path;
+        static bool Taken(string p) => File.Exists(p) || Directory.Exists(p);
+        if (!Taken(path)) return path;
         var dir = Path.GetDirectoryName(path)!;
         var stem = isDir ? Path.GetFileName(path) : Path.GetFileNameWithoutExtension(path);
         var ext = isDir ? "" : Path.GetExtension(path);
         for (var i = 2; i < 10000; i++)
         {
             var candidate = Path.Combine(dir, $"{stem} ({i}){ext}");
-            if (isDir ? !Directory.Exists(candidate) : !File.Exists(candidate)) return candidate;
+            if (!Taken(candidate)) return candidate;
         }
-        return path;
+        // Last resort: a unique suffix so we never return a colliding path.
+        return Path.Combine(dir, $"{stem} ({Guid.NewGuid():N}){ext}");
     }
 
     private static string TypeName(string ext) =>

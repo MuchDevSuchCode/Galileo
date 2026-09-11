@@ -2,25 +2,40 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <!-- xterm.js from the jsDelivr CDN (cached by WebView2 after first load). For fully-offline use,
-       drop xterm's css/js next to this file and point these tags at them. -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
-  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+  <!-- xterm.js is BUNDLED next to this file (pinned: xterm 5.3.0, fit addon 0.8.0) and served via the
+       WebView2 virtual host, so the terminal works fully offline on a fresh install — no CDN. -->
+  <link rel="stylesheet" href="xterm.min.css" />
+  <script src="xterm.min.js"></script>
+  <script src="xterm-addon-fit.min.js"></script>
   <style>
     html, body, #term { height: 100%; margin: 0; background: #0b0d12; }
     #term { padding: 6px; }
+    #err {
+      display: none; color: #e7eaf0; font: 13px 'Segoe UI', sans-serif;
+      padding: 16px; line-height: 1.5;
+    }
   </style>
 </head>
 <body>
   <div id="term"></div>
+  <div id="err"></div>
   <script>
     const enc = new TextEncoder();
     const b64FromBytes = b => { let s = ''; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s); };
     const bytesFromB64 = b => { const s = atob(b); const a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; };
 
+    let tries = 0;
     function start() {
-      if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined') { setTimeout(start, 100); return; }
+      // The bundled scripts should be parsed before this runs; retry briefly for slow first paints,
+      // then show a real error instead of a blank pane that retries forever.
+      if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined') {
+        if (++tries < 50) { setTimeout(start, 100); return; }
+        const err = document.getElementById('err');
+        err.style.display = 'block';
+        err.textContent = 'The terminal failed to initialize: its bundled scripts (xterm.min.js / '
+          + 'xterm-addon-fit.min.js) could not be loaded. Reinstall Galileo to restore the missing assets.';
+        return;
+      }
       const term = new Terminal({
         fontFamily: 'Cascadia Mono, Consolas, monospace', fontSize: 14, cursorBlink: true,
         theme: { background: '#0b0d12', foreground: '#e7eaf0' }
@@ -32,6 +47,7 @@
 
       const post = o => chrome.webview.postMessage(JSON.stringify(o));
       const sendSize = () => post({ t: 'size', cols: term.cols, rows: term.rows });
+      post({ t: 'ready' }); // handshake: the HOST must not treat the terminal as up until this arrives
 
       term.onData(d => post({ t: 'in', d: b64FromBytes(enc.encode(d)) }));
       window.addEventListener('resize', () => { fit.fit(); sendSize(); });

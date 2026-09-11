@@ -44,6 +44,10 @@ public sealed class VaultManifest
 public sealed class VaultIndex
 {
     public List<VaultEntry> Entries { get; set; } = new();
+
+    /// <summary>Relative directory paths ('/'-separated) present in the vault — recorded so EMPTY
+    /// folders survive lock/unlock instead of silently vanishing (older indexes: absent = empty).</summary>
+    public List<string> Dirs { get; set; } = new();
 }
 
 public sealed class VaultEntry
@@ -52,6 +56,11 @@ public sealed class VaultEntry
     public string BlobId { get; set; } = "";     // <BlobId>.blob in the blobs folder
     public long Size { get; set; }
     public long ModifiedUtcTicks { get; set; }
+
+    /// <summary>SHA-256 (hex) of the plaintext. Lets the lock-time commit catch an edit that kept the
+    /// same size AND had its timestamp restored — size+mtime alone called that "unchanged" and the
+    /// working-folder wipe destroyed the new content. Null on entries written by older versions.</summary>
+    public string? Sha256 { get; set; }
 }
 
 /// <summary>
@@ -75,14 +84,42 @@ public sealed class Vault
     private VaultIndex _index = new();
     private readonly SemaphoreSlim _syncGate = new(1, 1); // serialize commits (periodic flush vs lock)
 
+    /// <summary>Entries whose blob was missing when the vault was unlocked (integrity damage — e.g. a
+    /// partial restore or disk corruption). Their index entries are preserved across commits so the
+    /// evidence is never silently rewritten away; the UI should surface them.</summary>
+    public IReadOnlyList<string> MissingFilesOnUnlock => _missingOnUnlock;
+    private readonly List<string> _missingOnUnlock = new();
+
+    // Set when the app itself deleted vault plaintext (user action) — lets a commit distinguish an
+    // intentionally emptied working folder from a transiently-empty one (see FlushAsync's guard).
+    private bool _explicitDeletion;
+
+    /// <summary>Records that the app deliberately deleted file(s) from the working folder, so an
+    /// empty working folder at the next commit is a real deletion, not a transient glitch.</summary>
+    public void NoteExplicitDeletion() => _explicitDeletion = true;
+
+    /// <summary>Holds the commit gate so an external reader (e.g. cloud backup) sees a frozen,
+    /// consistent blobs+index generation for the duration. Dispose to release.</summary>
+    public async Task<IDisposable> AcquireSyncLockAsync()
+    {
+        await _syncGate.WaitAsync();
+        return new SyncLockReleaser(_syncGate);
+    }
+
+    private sealed class SyncLockReleaser : IDisposable
+    {
+        private SemaphoreSlim? _gate;
+        public SyncLockReleaser(SemaphoreSlim gate) => _gate = gate;
+        public void Dispose() { _gate?.Release(); _gate = null; }
+    }
+
     private string ManifestPath => Path.Combine(Root, "vault.json");
     private string IndexPath => Path.Combine(Root, "index.enc");
     private string BlobsDir => Path.Combine(Root, "blobs");
 
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
-    private static string AppData =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo");
+    private static string AppData => AppPaths.Root;
 
     /// <summary>Root of all unlocked working folders (one subfolder per vault id).</summary>
     public static string WorkRoot => Path.Combine(AppData, ".work");
@@ -134,7 +171,22 @@ public sealed class Vault
         }
     }
 
-    public void SaveManifest() => File.WriteAllText(ManifestPath, JsonSerializer.Serialize(Manifest, JsonOpts));
+    // The manifest holds the wrapped key — a torn in-place rewrite could make the whole vault
+    // unopenable, so it is always replaced atomically via a sibling temp file.
+    public void SaveManifest() => AtomicWrite(ManifestPath, System.Text.Encoding.UTF8.GetBytes(
+        JsonSerializer.Serialize(Manifest, JsonOpts)));
+
+    private static void AtomicWrite(string path, byte[] bytes)
+    {
+        var tmp = $"{path}.{Guid.NewGuid():N}.tmp";
+        using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            fs.Write(bytes, 0, bytes.Length);
+            fs.Flush(flushToDisk: true); // durable before it replaces the previous generation
+        }
+        if (File.Exists(path)) File.Replace(tmp, path, destinationBackupFileName: null);
+        else File.Move(tmp, path);
+    }
 
     /// <summary>Renames the vault (display name only — the on-disk store is keyed by id, so no files
     /// move). Works whether the vault is locked or unlocked.</summary>
@@ -238,27 +290,55 @@ public sealed class Vault
         return true;
     }
 
-    public async Task LockAsync()
+    /// <summary>Commits and locks. Returns TRUE when the plaintext working folder was completely
+    /// removed; FALSE when the commit succeeded but some plaintext could not be wiped (e.g. a file
+    /// held open by another program) — callers must surface that rather than claim a clean lock.</summary>
+    public async Task<bool> LockAsync()
     {
-        if (_dek is null) return;
+        if (_dek is null) return true;
         await _syncGate.WaitAsync();
         try
         {
             // Same safety net as FlushAsync: if the working folder transiently enumerates empty while
             // the index still has entries, committing would wipe every blob — skip the sync and just
             // tear down (the encrypted store already holds everything since the last flush).
-            var transientlyEmpty = _index.Entries.Count > 0 && WorkingDir is not null
+            var transientlyEmpty = _index.Entries.Count > 0 && !_explicitDeletion && WorkingDir is not null
                 && Directory.Exists(WorkingDir)
                 && !Directory.EnumerateFiles(WorkingDir, "*", SearchOption.AllDirectories).Any();
             if (transientlyEmpty)
                 App.LogInfo("Vault lock: working folder empty but index is not; skipping commit to avoid wiping the index.");
             else
-                await SyncWorkingToBlobsAsync();
+                // Last commit before the wipe — verify by content so a timestamp-fooled "unchanged"
+                // file can't be destroyed.
+                await SyncWorkingToBlobsAsync(verifyContent: true);
         }
         finally { _syncGate.Release(); }
 
         // Tear down only after a successful commit — if the sync threw, the working copy and DEK stay
         // intact so the caller can retry or warn instead of losing everything since the last flush.
+        var cleanupComplete = true;
+        if (WorkingDir is not null)
+        {
+            var wd = WorkingDir;
+            VaultCrypto.WipeDirectory(wd);
+            // WipeDirectory is best-effort (locked files survive it) — verify, and never report a
+            // clean lock while plaintext is still on disk.
+            try { cleanupComplete = !Directory.Exists(wd) || !Directory.EnumerateFiles(wd, "*", SearchOption.AllDirectories).Any(); }
+            catch { cleanupComplete = false; }
+            if (!cleanupComplete) App.LogInfo($"vault lock: plaintext residue remains under {wd} (files locked by another process?)");
+            WorkingDir = null;
+        }
+        VaultCrypto.Wipe(_dek);
+        _dek = null;
+        return cleanupComplete;
+    }
+
+    /// <summary>Locks WITHOUT committing: securely wipes the working plaintext and drops the key,
+    /// keeping the last successfully committed encrypted generation. Only for the explicit
+    /// user decision to discard changes after a failed commit — never as an automatic fallback.</summary>
+    public void DiscardWorkingAndLock()
+    {
+        if (_dek is null) return;
         if (WorkingDir is not null) { VaultCrypto.WipeDirectory(WorkingDir); WorkingDir = null; }
         VaultCrypto.Wipe(_dek);
         _dek = null;
@@ -275,8 +355,10 @@ public sealed class Vault
         {
             // Safety net: never let a commit wipe the whole index because the working folder
             // momentarily appears empty (a transient/bug is far likelier than the user deleting
-            // everything). The lock path applies the same guard.
-            if (_index.Entries.Count > 0 && Directory.Exists(WorkingDir)
+            // everything). The lock path applies the same guard. When the app itself deleted the
+            // files (NoteExplicitDeletion), the empty folder IS the user's intent — commit it, or
+            // "delete the last item" would silently resurrect on the next unlock.
+            if (_index.Entries.Count > 0 && !_explicitDeletion && Directory.Exists(WorkingDir)
                 && !Directory.EnumerateFiles(WorkingDir, "*", SearchOption.AllDirectories).Any())
                 return;
             await SyncWorkingToBlobsAsync();
@@ -295,7 +377,7 @@ public sealed class Vault
         {
             var empty = WorkingDir is null || !Directory.Exists(WorkingDir)
                         || !Directory.EnumerateFileSystemEntries(WorkingDir).Any();
-            if (empty && _index.Entries.Count > 0) await DecryptAllToWorkingAsync();
+            if (empty && (_index.Entries.Count > 0 || _index.Dirs.Count > 0)) await DecryptAllToWorkingAsync();
         }
         finally { _syncGate.Release(); }
     }
@@ -324,6 +406,7 @@ public sealed class Vault
                         await ImportSingleAsync(f, rel);
                         count++;
                     }
+                    RecordImportedDirs(p, baseName); // keep empty subfolders too
                     imported.Add(p);
                 }
                 else if (File.Exists(p))
@@ -366,7 +449,28 @@ public sealed class Vault
             BlobId = blobId,
             Size = fi.Length,
             ModifiedUtcTicks = fi.LastWriteTimeUtc.Ticks,
+            Sha256 = HashFileHex(srcFile),
         });
+    }
+
+    private static string HashFileHex(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, FileOptions.SequentialScan);
+        return Convert.ToHexString(SHA256.HashData(fs));
+    }
+
+    /// <summary>Records every directory under an imported folder (relative to the vault root under
+    /// <paramref name="baseName"/>) — including EMPTY ones, which the file walk alone would drop.</summary>
+    private void RecordImportedDirs(string dirPath, string baseName)
+    {
+        void Add(string rel)
+        {
+            if (rel.Length > 0 && !_index.Dirs.Contains(rel, StringComparer.OrdinalIgnoreCase))
+                _index.Dirs.Add(rel);
+        }
+        Add(baseName);
+        foreach (var d in Directory.EnumerateDirectories(dirPath, "*", SearchOption.AllDirectories))
+            Add(baseName + "/" + Path.GetRelativePath(dirPath, d).Replace(Path.DirectorySeparatorChar, '/'));
     }
 
     /// <summary>Adds files/folders into this <b>already-unlocked</b> vault: each is encrypted into a
@@ -394,6 +498,14 @@ public sealed class Vault
                             var rel = baseName + "/" + Path.GetRelativePath(p, f).Replace(Path.DirectorySeparatorChar, '/');
                             await AddOneToOpenAsync(f, rel);
                             added++;
+                        }
+                        RecordImportedDirs(p, baseName); // keep empty subfolders too
+                        // Mirror the (possibly empty) directory structure into the working folder.
+                        foreach (var rel in _index.Dirs.Where(d => d.Equals(baseName, StringComparison.OrdinalIgnoreCase)
+                                                               || d.StartsWith(baseName + "/", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            try { Directory.CreateDirectory(Path.Combine(WorkingDir!, rel.Replace('/', Path.DirectorySeparatorChar))); }
+                            catch { }
                         }
                         imported.Add(p);
                     }
@@ -456,6 +568,7 @@ public sealed class Vault
             BlobId = blobId,
             Size = fi.Length,
             ModifiedUtcTicks = fi.LastWriteTimeUtc.Ticks,
+            Sha256 = HashFileHex(dest),
         });
     }
 
@@ -471,12 +584,23 @@ public sealed class Vault
 
         try
         {
+            // Recreate the recorded directory structure first so EMPTY folders come back too.
+            foreach (var relDir in _index.Dirs)
+            {
+                try { Directory.CreateDirectory(Path.Combine(work, relDir.Replace('/', Path.DirectorySeparatorChar))); }
+                catch { }
+            }
+
+            _missingOnUnlock.Clear();
             foreach (var e in _index.Entries)
             {
                 var dest = Path.Combine(work, e.RelPath.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                 var blob = Path.Combine(BlobsDir, e.BlobId + ".blob");
-                if (!File.Exists(blob)) continue;
+                // A referenced blob that is gone is integrity damage (bad restore, disk corruption) —
+                // record it so the UI can report it and commits preserve the entry as evidence,
+                // instead of silently rewriting the index as if the user had deleted the file.
+                if (!File.Exists(blob)) { _missingOnUnlock.Add(e.RelPath); continue; }
                 using (var inp = File.OpenRead(blob))
                 using (var outp = File.Create(dest))
                     await VaultCrypto.DecryptStreamAsync(_dek!, inp, outp, VaultCrypto.BlobContext(e.BlobId));
@@ -498,13 +622,22 @@ public sealed class Vault
         }
     }
 
-    private async Task SyncWorkingToBlobsAsync()
+    /// <param name="verifyContent">Hash-check files whose size+mtime look unchanged. Used by the
+    /// LOCK path (the last commit before the working copy is wiped): a same-size edit with a
+    /// restored timestamp fools the fast check, and the wipe would destroy the only copy. The
+    /// periodic flush keeps the cheap fast path — a fooled flush loses nothing (the plaintext is
+    /// still there) because the lock-time verification catches it.</param>
+    private async Task SyncWorkingToBlobsAsync(bool verifyContent = false)
     {
         if (WorkingDir is null || !Directory.Exists(WorkingDir)) return;
         var work = WorkingDir;
         var existing = _index.Entries.ToDictionary(e => e.RelPath, StringComparer.OrdinalIgnoreCase);
         var newIndex = new VaultIndex();
         var keptBlobs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Directory structure (including EMPTY folders) is part of the vault's contents.
+        foreach (var dir in Directory.EnumerateDirectories(work, "*", SearchOption.AllDirectories))
+            newIndex.Dirs.Add(Path.GetRelativePath(work, dir).Replace(Path.DirectorySeparatorChar, '/'));
 
         foreach (var file in Directory.EnumerateFiles(work, "*", SearchOption.AllDirectories))
         {
@@ -514,26 +647,59 @@ public sealed class Vault
 
             if (existing.TryGetValue(rel, out var prev) && prev.Size == fi.Length && prev.ModifiedUtcTicks == ticks)
             {
-                newIndex.Entries.Add(prev);            // unchanged → keep its blob
-                keptBlobs.Add(prev.BlobId);
-                continue;
+                var unchanged = true;
+                string? hash = null;
+                if (verifyContent && prev.Sha256 is not null)
+                {
+                    hash = HashFileHex(file);
+                    unchanged = string.Equals(hash, prev.Sha256, StringComparison.OrdinalIgnoreCase);
+                }
+                if (unchanged)
+                {
+                    // Legacy entries (no stored hash) adopt one when we've computed it anyway.
+                    if (prev.Sha256 is null && hash is not null) prev.Sha256 = hash;
+                    newIndex.Entries.Add(prev);            // unchanged → keep its blob
+                    keptBlobs.Add(prev.BlobId);
+                    continue;
+                }
             }
 
             var blobId = Guid.NewGuid().ToString("N");  // new or changed → fresh blob
             using (var inp = File.OpenRead(file))
             using (var outp = File.Create(Path.Combine(BlobsDir, blobId + ".blob")))
                 await VaultCrypto.EncryptStreamAsync(_dek!, inp, outp, VaultCrypto.BlobContext(blobId));
-            newIndex.Entries.Add(new VaultEntry { RelPath = rel, BlobId = blobId, Size = fi.Length, ModifiedUtcTicks = ticks });
+            newIndex.Entries.Add(new VaultEntry
+            {
+                RelPath = rel, BlobId = blobId, Size = fi.Length, ModifiedUtcTicks = ticks,
+                Sha256 = HashFileHex(file),
+            });
             keptBlobs.Add(blobId);
         }
 
-        // Remove blobs no longer referenced (deleted or replaced files).
-        foreach (var e in _index.Entries)
+        // An entry whose blob was already missing at unlock never materialized into the working
+        // folder, so its absence there is damage evidence, not a user deletion — keep the entry
+        // (unless the user re-created a file at that path, which the loop above already indexed).
+        var indexed = new HashSet<string>(newIndex.Entries.Select(e => e.RelPath), StringComparer.OrdinalIgnoreCase);
+        foreach (var rel in _missingOnUnlock)
+            if (!indexed.Contains(rel) && existing.TryGetValue(rel, out var damaged))
+            {
+                newIndex.Entries.Add(damaged);
+                keptBlobs.Add(damaged.BlobId);
+            }
+
+        // Publish the new index FIRST (atomically), and only then garbage-collect superseded blobs.
+        // The reverse order destroyed data: a crash between blob deletion and index persistence left
+        // the old index referencing already-deleted blobs (and possibly a torn index on top).
+        var oldEntries = _index.Entries;
+        _index = newIndex;
+        try { SaveIndex(); }
+        catch { _index = new VaultIndex { Entries = oldEntries }; throw; } // commit failed → keep the old generation live
+
+        foreach (var e in oldEntries)
             if (!keptBlobs.Contains(e.BlobId))
                 VaultCrypto.OverwriteAndDelete(Path.Combine(BlobsDir, e.BlobId + ".blob"));
 
-        _index = newIndex;
-        SaveIndex();
+        _explicitDeletion = false; // committed — the deletion (if any) is now durable
     }
 
     // ---------- Index persistence ----------
@@ -541,14 +707,28 @@ public sealed class Vault
     private void SaveIndex()
     {
         var json = JsonSerializer.SerializeToUtf8Bytes(_index, JsonOpts);
-        try { File.WriteAllBytes(IndexPath, VaultCrypto.Encrypt(_dek!, json)); }
+        try { AtomicWrite(IndexPath, VaultCrypto.Encrypt(_dek!, json)); } // a torn index must never replace a good one
         finally { CryptographicOperations.ZeroMemory(json); }
     }
 
     private VaultIndex LoadIndex()
     {
-        if (!File.Exists(IndexPath)) return new VaultIndex();
-        var json = VaultCrypto.Decrypt(_dek!, File.ReadAllBytes(IndexPath));
+        if (!File.Exists(IndexPath))
+        {
+            // No index but existing blobs = a damaged vault (lost/deleted index.enc), NOT a brand-new
+            // empty one. Treating it as empty would garbage-collect every blob on the next commit.
+            var hasBlobs = Directory.Exists(BlobsDir) && Directory.EnumerateFiles(BlobsDir, "*.blob").Any();
+            if (hasBlobs)
+                throw new InvalidDataException("The vault index is missing but encrypted files exist — the vault is damaged. Restore index.enc from a backup.");
+            return new VaultIndex();
+        }
+        byte[] json;
+        // The keyslot already unwrapped the DEK, so a decrypt failure HERE is index corruption/tampering,
+        // not a wrong passphrase — surface it distinctly so it is never counted as a failed attempt
+        // (which could trigger wipe-on-failure and destroy the vault over a disk error).
+        try { json = VaultCrypto.Decrypt(_dek!, File.ReadAllBytes(IndexPath)); }
+        catch (CryptographicException ex)
+        { throw new InvalidDataException("The vault index failed to decrypt (corrupt or tampered index.enc).", ex); }
         try { return JsonSerializer.Deserialize<VaultIndex>(json, JsonOpts) ?? new VaultIndex(); }
         finally { CryptographicOperations.ZeroMemory(json); }
     }

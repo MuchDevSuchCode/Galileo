@@ -37,7 +37,10 @@ param(
     [string]$Configuration = 'Release',
     [switch]$Register,
     [switch]$NoPull,
-    [switch]$Run
+    [switch]$Run,
+    # Force-kill instances that don't close gracefully. Off by default: a force-kill can interrupt a
+    # vault commit or an unsaved edit dialog mid-save, so refusing to update is the safe default.
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,26 +49,37 @@ $repo    = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $install = Join-Path $PSScriptRoot 'install.ps1'
 $exe     = Join-Path $env:LOCALAPPDATA 'Galileo\app\Galileo.exe'
 
-# 1) Stop ALL running instances so the publish can overwrite the exe. Photo windows and background/tray
-#    instances count too — overwriting DLLs under a live process makes it crash later with a stowed
-#    exception (0xc000027b) when it lazily loads a replaced binary. Retry until none remain (a straggler
-#    can appear between the check and the copy).
-$stoppedAny = $false
-for ($try = 0; $try -lt 10; $try++) {
-    $running = Get-Process 'Galileo' -ErrorAction SilentlyContinue
-    if (-not $running) { break }
+# 1) Stop ALL running instances so the publish can overwrite the exe (overwriting DLLs under a live
+#    process makes it crash later with a stowed exception 0xc000027b). Ask each instance to close
+#    GRACEFULLY first — that runs the app's shutdown path (vault commit + lock, unsaved-edit prompts).
+#    A vault commit or a save dialog can legitimately take a while, so wait generously and then ABORT
+#    rather than force-kill: killing mid-commit is exactly how vault/editor work gets destroyed.
+$running = Get-Process 'Galileo' -ErrorAction SilentlyContinue
+if ($running) {
     foreach ($p in $running) {
-        Write-Host "Stopping running Galileo (pid $($p.Id))..." -ForegroundColor DarkGray
-        try { $p | Stop-Process -Force -ErrorAction Stop } catch {}
-        $stoppedAny = $true
+        Write-Host "Asking Galileo (pid $($p.Id)) to close..." -ForegroundColor DarkGray
+        try { $p.CloseMainWindow() | Out-Null } catch { }
     }
-    Start-Sleep -Milliseconds 400
+    for ($i = 0; $i -lt 120; $i++) {   # up to 30 s for saves/locks/dialogs
+        if (-not (Get-Process 'Galileo' -ErrorAction SilentlyContinue)) { break }
+        Start-Sleep -Milliseconds 250
+    }
 }
-if (Get-Process 'Galileo' -ErrorAction SilentlyContinue) {
-    Write-Error "A Galileo process refuses to exit - aborting so the publish can't corrupt a live instance."
-    return
+$still = Get-Process 'Galileo' -ErrorAction SilentlyContinue
+if ($still) {
+    if ($Force) {
+        foreach ($p in $still) {
+            Write-Host "Force-stopping Galileo (pid $($p.Id)) (-Force)..." -ForegroundColor Yellow
+            try { $p | Stop-Process -Force -ErrorAction Stop } catch { }
+        }
+        Start-Sleep -Milliseconds 400
+    }
+    if (Get-Process 'Galileo' -ErrorAction SilentlyContinue) {
+        Write-Error ("Galileo is still running (it may be asking about unsaved work or securing a vault). " +
+                     "Finish or close it, then re-run the update. Use -Force only if you're sure nothing is being saved.")
+        return
+    }
 }
-if (-not $stoppedAny) { Write-Host "No running Galileo instance found." -ForegroundColor DarkGray }
 
 # 2) Pull the latest code.
 if ($NoPull) {
@@ -92,6 +106,7 @@ if ($NoPull) {
 # 3) Publish a fresh self-contained exe (reuses install.ps1's publish settings).
 $installArgs = @{ Configuration = $Configuration }
 if (-not $Register) { $installArgs['SkipRegister'] = $true }
+if ($Force) { $installArgs['Force'] = $true }
 & $install @installArgs
 
 if (-not (Test-Path $exe)) { Write-Error "Publish did not produce $exe."; return }

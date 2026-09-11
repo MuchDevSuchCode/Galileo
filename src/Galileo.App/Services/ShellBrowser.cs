@@ -138,7 +138,7 @@ public sealed class ShellBrowser
 
     /// <summary>Temp area for device files streamed out for viewing.</summary>
     public static string TempRoot => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo", ".mtp");
+        AppPaths.Root, ".mtp");
 
     /// <summary>Streams a device file (by parsing name) to a temp copy and returns its path, so the
     /// existing path-based image/video/default openers can use it.</summary>

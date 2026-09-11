@@ -19,7 +19,10 @@
 param(
     [string]$Configuration = 'Release',
     [switch]$SkipRegister,
-    [switch]$NoShortcuts
+    [switch]$NoShortcuts,
+    # Force-kill instances that don't close gracefully. Off by default: a force-kill can interrupt a
+    # vault commit or an unsaved-edit dialog mid-save, so refusing to install is the safe default.
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,21 +31,32 @@ $project = Resolve-Path (Join-Path $PSScriptRoot '..\src\Galileo.App\Galileo.App
 $dest    = Join-Path $env:LOCALAPPDATA 'Galileo\app'
 $exe     = Join-Path $dest 'Galileo.exe'
 
-# 1) The exe is locked while running — stop it so publish can overwrite. Ask it to close gracefully first
-#    so it commits/locks any open vault, then force-kill stragglers.
+# 1) The exe is locked while running — ask it to close gracefully (runs the app's shutdown path:
+#    vault commit + lock, unsaved-edit prompts). A commit or a save dialog can take a while, so wait
+#    generously and then ABORT rather than force-kill — killing mid-commit destroys vault/editor work.
 Get-Process 'Galileo' -ErrorAction SilentlyContinue | ForEach-Object {
-    Write-Host "Closing running Galileo (pid $($_.Id))..." -ForegroundColor DarkGray
+    Write-Host "Asking Galileo (pid $($_.Id)) to close..." -ForegroundColor DarkGray
     try { $_.CloseMainWindow() | Out-Null } catch { }
 }
-for ($i = 0; $i -lt 20; $i++) {
+for ($i = 0; $i -lt 120; $i++) {   # up to 30 s for saves/locks/dialogs
     if (-not (Get-Process 'Galileo' -ErrorAction SilentlyContinue)) { break }
     Start-Sleep -Milliseconds 250
 }
-Get-Process 'Galileo' -ErrorAction SilentlyContinue | ForEach-Object {
-    Write-Host "Force-stopping Galileo (pid $($_.Id))..." -ForegroundColor DarkGray
-    $_ | Stop-Process -Force
+$still = Get-Process 'Galileo' -ErrorAction SilentlyContinue
+if ($still) {
+    if ($Force) {
+        foreach ($p in $still) {
+            Write-Host "Force-stopping Galileo (pid $($p.Id)) (-Force)..." -ForegroundColor Yellow
+            try { $p | Stop-Process -Force -ErrorAction Stop } catch { }
+        }
+        Start-Sleep -Milliseconds 400
+    }
+    if (Get-Process 'Galileo' -ErrorAction SilentlyContinue) {
+        Write-Error ("Galileo is still running (it may be asking about unsaved work or securing a vault). " +
+                     "Finish or close it, then re-run install. Use -Force only if you're sure nothing is being saved.")
+        return
+    }
 }
-Start-Sleep -Milliseconds 300
 
 # 2) Publish a fresh self-contained copy to the stable location.
 Write-Host "Publishing $Configuration build -> $dest" -ForegroundColor Cyan

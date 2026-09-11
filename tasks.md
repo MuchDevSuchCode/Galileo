@@ -43,16 +43,16 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - Shared XAML styles live in **`App.xaml`**, not `Window.Resources` — the WinUI 1.6 markup compiler hard-crashes on a `Style` in `Window.Resources`.
 - Close the running app before rebuilding (the `.exe` is locked while running → `MSB3021`).
 
-Still TODO from the roadmap below: editing (Phase 5), shell/default-app registration (Phase 6), video (Phase 7), MSIX packaging & DI host (Phases 0/8), `.Core`/`.Tests` split, and automated tests.
+Since this plan was written the app has grown far beyond it: the image editor (crop/straighten/adjustments/filters/markup/AI), the FFmpeg video player + editor, secure vaults with cloud backup, the custom Recycle Bin, the embedded terminal, and a service-level test suite (`src/Galileo.Tests`) with a CI workflow (`.github/workflows/ci.yml`) all exist. Still TODO: MSIX packaging & DI host (Phases 0/8) and UI-automation tests. The statuses below have been reconciled to the current code.
 
 ---
 
 ## Phase 0 — Project setup
 
-- [~] WinUI 3 (.NET 8) app project (single `Galileo.App`; `.Core`/`.Tests` split still TODO).
+- [~] WinUI 3 (.NET 8) app project (`Galileo.App` + `Galileo.Tests`; `.Core` split still TODO).
 - [~] Packages: `CommunityToolkit.Mvvm` added (DI host / Win2D / SQLite not used — JSON state instead).
 - [~] MVVM + app theme: observable models + **Mica / dark-light** done; no DI host.
-- [ ] Set up CI (build + test) and linting/formatting (`dotnet format`).
+- [x] Set up CI (build + test) — `.github/workflows/ci.yml` runs the `Galileo.Tests` suite and a Release build. _(linting/formatting: TODO)_
 - [ ] MSIX packaging project with photo file-type associations declared.
 
 ## Phase 1 — Core viewer (parity)
@@ -102,27 +102,27 @@ Still TODO from the roadmap below: editing (Phase 5), shell/default-app registra
 
 ## Phase 5 — Editing (parity)
 
-- [ ] Non-destructive edit pipeline with "Save a copy".
-- [ ] Crop & straighten; aspect-ratio presets.
-- [ ] Adjustments: brightness, contrast, exposure, saturation, warmth, auto-enhance.
-- [ ] Filters.
-- [ ] Red-eye and spot fix.
-- [ ] Markup / ink draw.
+- [x] Non-destructive edit pipeline with "Save a copy" / "Save as" / overwrite (staged + failure-safe).
+- [x] Crop & straighten; aspect-ratio presets (visible handles, thirds guides, aspect-locked drags).
+- [x] Adjustments: brightness, contrast, exposure, saturation, temperature/tint, sharpness.
+- [x] Filters.
+- [ ] Red-eye fix. _(spot fix: covered by AI inpaint/fill)_
+- [x] Markup / ink draw (pen, shapes, text) + lasso selection and AI tools.
 
 ## Phase 6 — Actions & shell integration (parity)
 
-- [ ] Print.
+- [x] Print (context menu).
 - [ ] Share via Windows share sheet.
-- [ ] Copy to clipboard.
-- [ ] Set as background / lock screen.
+- [x] Copy to clipboard (copy image / copy as file / copy path).
+- [x] Set as desktop background. _(lock screen: TODO)_
 - [x] Delete to Recycle Bin; reveal in Explorer. _(rename: TODO)_
 - [x] **File activation** — opens a file/folder passed on the command line ("Open with" / default app).
 - [x] **Register as default photo handler** — per-user registry scripts (`tools\register-default.ps1` / `unregister-default.ps1`) + publish to `%LocalAppData%\Galileo\app`. _(user sets the actual default in Settings; jump list: TODO; single-instance: TODO)_
 
 ## Phase 7 — Video (parity)
 
-- [ ] Play/pause/scrub common video formats.
-- [ ] Basic trim; export frame.
+- [x] Play/pause/scrub common video formats (embedded player; frame stepping; audio playback with album art).
+- [x] Trim/segments, rotate/flip/crop/resize, speed, codecs (CPU + GPU), GIF export; export frame. All via the FFmpeg editor with staged, cancel-safe output.
 
 ## Phase 8 — Polish & release
 

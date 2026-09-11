@@ -29,8 +29,7 @@ public sealed class GoogleDriveBackup
     private const string RootFolderName = "Galileo Vault Backups";
     private const string FolderMime = "application/vnd.google-apps.folder";
 
-    private static string AppData =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo");
+    private static string AppData => AppPaths.Root;
 
     public static string OAuthConfigPath => Path.Combine(AppData, "google-oauth.json");
     private static string TokenDir => Path.Combine(AppData, "gdrive-token");
@@ -140,18 +139,14 @@ public sealed class GoogleDriveBackup
         EnsureConnected();
         var folderId = await FindFolderAsync(v.Id, await EnsureRootAsync()) ?? await CreateFolderAsync(v.Id, await EnsureRootAsync());
 
-        // A concurrent vault flush can delete/replace blobs after we snapshot the list. If a blob
-        // vanishes mid-upload, retry the whole snapshot+upload once from scratch; and because the
-        // index is only uploaded after every blob made it up, an aborted pass never publishes an
-        // index that references blobs missing from the backup.
-        try
-        {
+        // An unlocked vault can flush at any moment, replacing blobs and the index between our reads —
+        // the uploaded index would then reference blobs that were never uploaded. Commit pending edits
+        // first, then hold the vault's commit gate for the whole pass so the blobs+index we read are
+        // one frozen, consistent generation. (For a locked vault the store is quiescent already; the
+        // gate is uncontended and cheap.)
+        if (v.IsUnlocked) await v.FlushAsync();
+        using (await v.AcquireSyncLockAsync())
             await BackupOnceAsync(v, folderId, progress);
-        }
-        catch (IOException ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-        {
-            await BackupOnceAsync(v, folderId, progress);
-        }
     }
 
     private async Task BackupOnceAsync(Vault v, string folderId, IProgress<string>? progress)
@@ -217,6 +212,7 @@ public sealed class GoogleDriveBackup
             var res = await req.ExecuteAsync();
             foreach (var f in res.Files)
             {
+                if (!IsVaultIdFormat(f.Name)) continue; // renamed/foreign folder — not a restorable vault backup
                 var count = (await ListChildrenAsync(f.Id)).Count;
                 folders.Add(new RemoteVault(f.Name, f.Id, count));
             }
@@ -225,43 +221,92 @@ public sealed class GoogleDriveBackup
         return folders;
     }
 
+    /// <summary>Downloads a backup into a staging folder, validates it, and only then swaps it into
+    /// place — the previous local vault (if any) is kept as a rollback copy until the restored store
+    /// proves loadable, so an interrupted or bad download can never leave a half-overwritten vault.</summary>
     public async Task RestoreVaultAsync(string vaultId, IProgress<string>? progress = null)
     {
         EnsureConnected();
+        // The remote folder NAME becomes a local path segment. Only the exact id format vaults are
+        // created with (32 hex chars) is accepted, so a renamed/tampered remote folder can't direct
+        // the restore outside the vaults root.
+        if (!IsVaultIdFormat(vaultId))
+            throw new InvalidOperationException("The backup folder name is not a valid vault id.");
         var folderId = await FindFolderAsync(vaultId, await EnsureRootAsync())
             ?? throw new InvalidOperationException("No backup found for this vault.");
         var children = await ListChildrenAsync(folderId);
 
+        Directory.CreateDirectory(VaultManager.VaultsRoot);
         var dest = Path.Combine(VaultManager.VaultsRoot, vaultId);
-        Directory.CreateDirectory(Path.Combine(dest, "blobs"));
+        var staging = Path.Combine(VaultManager.VaultsRoot, vaultId + ".restore-tmp");
+        var rollback = Path.Combine(VaultManager.VaultsRoot, vaultId + ".pre-restore");
+        if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+        Directory.CreateDirectory(Path.Combine(staging, "blobs"));
 
-        var i = 0;
-        foreach (var (name, id) in children)
+        try
         {
-            // Remote names come from Drive and could be tampered with — never let one escape the
-            // vault folder (path separators, drive colons, or '..' traversal are rejected).
-            if (!IsSafeRemoteName(name)) continue;
-            progress?.Report($"Downloading files… {++i}/{children.Count}");
-            var path = name.EndsWith(".blob", StringComparison.OrdinalIgnoreCase)
-                ? Path.Combine(dest, "blobs", name)
-                : Path.Combine(dest, name);
-            using var fs = File.Create(path);
-            await _service!.Files.Get(id).DownloadAsync(fs);
-        }
+            var i = 0;
+            foreach (var (name, id) in children)
+            {
+                // Remote names come from Drive and could be tampered with — never let one escape the
+                // vault folder (path separators, drive colons, or '..' traversal are rejected).
+                if (!IsSafeRemoteName(name)) continue;
+                progress?.Report($"Downloading files… {++i}/{children.Count}");
+                var path = name.EndsWith(".blob", StringComparison.OrdinalIgnoreCase)
+                    ? Path.Combine(staging, "blobs", name)
+                    : Path.Combine(staging, name);
+                using var fs = File.Create(path);
+                var dl = await _service!.Files.Get(id).DownloadAsync(fs);
+                if (dl.Status != Google.Apis.Download.DownloadStatus.Completed)
+                    throw dl.Exception ?? new IOException($"Download of {name} did not complete.");
+            }
 
-        // Restored manifests have a blank name (sanitized on upload) — give it a placeholder.
-        var manifestPath = Path.Combine(dest, "vault.json");
-        if (File.Exists(manifestPath))
-        {
-            var m = JsonSerializer.Deserialize<VaultManifest>(File.ReadAllText(manifestPath));
-            if (m is not null && string.IsNullOrWhiteSpace(m.Name))
+            // Validate the snapshot before it can replace anything local.
+            progress?.Report("Validating backup…");
+            var manifestPath = Path.Combine(staging, "vault.json");
+            if (!File.Exists(manifestPath))
+                throw new InvalidDataException("The backup contains no vault.json manifest.");
+            var m = JsonSerializer.Deserialize<VaultManifest>(File.ReadAllText(manifestPath))
+                ?? throw new InvalidDataException("The backup manifest is unreadable.");
+            if (!string.IsNullOrEmpty(m.Id) && !string.Equals(m.Id, vaultId, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The backup manifest does not belong to this vault id.");
+            if (!File.Exists(Path.Combine(staging, "index.enc")))
+                throw new InvalidDataException("The backup contains no index.enc.");
+            // Restored manifests have a blank name (sanitized on upload) — give it a placeholder.
+            if (string.IsNullOrWhiteSpace(m.Name))
             {
                 m.Name = "Restored vault";
                 File.WriteAllText(manifestPath, JsonSerializer.Serialize(m, new JsonSerializerOptions { WriteIndented = true }));
             }
         }
+        catch
+        {
+            try { if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true); } catch { }
+            throw;
+        }
+
+        // Swap the validated snapshot into place, keeping the old store as rollback until it loads.
+        if (Directory.Exists(rollback)) Directory.Delete(rollback, recursive: true);
+        var hadLocal = Directory.Exists(dest);
+        if (hadLocal) Directory.Move(dest, rollback);
+        try
+        {
+            Directory.Move(staging, dest);
+            Vault.Load(dest); // prove the restored store opens before discarding the previous one
+        }
+        catch
+        {
+            try { if (Directory.Exists(dest)) Directory.Delete(dest, recursive: true); } catch { }
+            if (hadLocal) { try { Directory.Move(rollback, dest); } catch { } }
+            throw;
+        }
+        if (hadLocal) { try { Directory.Delete(rollback, recursive: true); } catch { } }
         progress?.Report("Restore complete.");
     }
+
+    /// <summary>Vault ids are 32 lowercase hex chars (Guid "N"); anything else is not one of ours.</summary>
+    private static bool IsVaultIdFormat(string? s) =>
+        s is { Length: 32 } && s.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F');
 
     // ---------- Drive helpers ----------
 

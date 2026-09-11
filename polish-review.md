@@ -1,3 +1,10 @@
+> **Historical document.** This was a point-in-time review; treat its "fixed" claims as history,
+> not as a passing test suite. Several were later reopened and re-fixed with stronger guarantees by
+> the September 2026 review (`Galileo_Review.md`) and its fix pass — notably backup snapshotting
+> (C05), restore protection (C06/C07), settings multi-process safety (C13), and Settings keyboard
+> modality (U01). The regression suite in `src/Galileo.Tests` is the current source of truth for
+> what is verified.
+
 # Polish review — 2026-08-08 (reviewed at `034e0bc`; burn-down completed same day)
 
 **Status: 74 of 77 fixed.** Open: P2-28 (won't fix — user setting), P3-3 (deferred cosmetic), and the

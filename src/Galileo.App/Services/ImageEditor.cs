@@ -147,8 +147,16 @@ public sealed class ImageEditor : IDisposable
     /// <summary>Puts an overlay that's in raw source-pixel space (e.g. a selection mask) through the same
     /// geometry as the image, so it lines up on the rotated/flipped preview.</summary>
     public ICanvasImage BuildOrientedOverlay(EditState s, ICanvasImage overlay, out Rect orientedBounds)
+        => BuildOrientedOverlay(s, overlay, 1f, 1f, out orientedBounds);
+
+    /// <summary>Same, for an overlay bitmap built at REDUCED resolution (memory cap on huge images):
+    /// <paramref name="preScaleX"/>/<paramref name="preScaleY"/> first scale it up to source-pixel
+    /// dimensions, then the normal orientation geometry applies.</summary>
+    public ICanvasImage BuildOrientedOverlay(EditState s, ICanvasImage overlay, float preScaleX, float preScaleY, out Rect orientedBounds)
     {
         var m = OrientMatrix(s, out orientedBounds);
+        if (preScaleX != 1f || preScaleY != 1f)
+            m = Matrix3x2.CreateScale(preScaleX, preScaleY) * m;
         return new Transform2DEffect
         {
             Source = overlay,

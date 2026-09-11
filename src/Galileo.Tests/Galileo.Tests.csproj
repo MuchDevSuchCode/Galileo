@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <WindowsSdkPackageVersion>10.0.19041.38</WindowsSdkPackageVersion>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+    <IsPackable>false</IsPackable>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <RootNamespace>Galileo.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <!-- The services under test are LINKED as sources rather than referencing the WinUI app project:
+       pulling in the app would drag the whole Windows App SDK / XAML toolchain into every test run.
+       Stubs.cs provides the two tiny app-side types the linked files touch (App logging, ExplorerItem). -->
+  <ItemGroup>
+    <Compile Include="..\Galileo.App\Services\AppPaths.cs" Link="Linked\AppPaths.cs" />
+    <Compile Include="..\Galileo.App\Services\AppState.cs" Link="Linked\AppState.cs" />
+    <Compile Include="..\Galileo.App\Services\FileTransfer.cs" Link="Linked\FileTransfer.cs" />
+    <Compile Include="..\Galileo.App\Services\RecycleBin.cs" Link="Linked\RecycleBin.cs" />
+    <Compile Include="..\Galileo.App\Services\SecureWipe.cs" Link="Linked\SecureWipe.cs" />
+    <Compile Include="..\Galileo.App\Services\Vault.cs" Link="Linked\Vault.cs" />
+    <Compile Include="..\Galileo.App\Services\VaultCrypto.cs" Link="Linked\VaultCrypto.cs" />
+    <Compile Include="..\Galileo.App\Services\VaultManager.cs" Link="Linked\VaultManager.cs" />
+    <Compile Include="..\Galileo.App\Services\HelloKey.cs" Link="Linked\HelloKey.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Konscious.Security.Cryptography.Argon2" Version="1.3.1" />
+  </ItemGroup>
+
+</Project>

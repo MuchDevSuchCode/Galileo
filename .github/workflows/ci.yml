@@ -1,0 +1,25 @@
+# Regression gate: every push/PR must pass the service-level test suite (storage transactions,
+# vault recovery, transfer cancellation, state merging, wipe outcomes) and produce a clean
+# Release build of the app. See src/Galileo.Tests for what is covered.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Run service tests
+        run: dotnet test src/Galileo.Tests/Galileo.Tests.csproj -c Release --nologo
+
+      - name: Build the app (Release)
+        run: dotnet build src/Galileo.App/Galileo.App.csproj -c Release --nologo

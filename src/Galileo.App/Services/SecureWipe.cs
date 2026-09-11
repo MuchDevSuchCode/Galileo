@@ -11,6 +11,20 @@ namespace Galileo.Services;
 
 public enum WipeMethod { None, Zero, Random, Dod3, Dod7, Gutmann35 }
 
+/// <summary>What actually happened to a batch of wiped paths — "overwritten as requested" and
+/// "only plain-deleted because the overwrite failed" are very different privacy outcomes, and the
+/// UI must be able to tell the user which one they got.</summary>
+public sealed class WipeSummary
+{
+    /// <summary>Files whose bytes were overwritten (or had none to overwrite) and were removed.</summary>
+    public int Overwritten;
+    /// <summary>Files removed WITHOUT the requested overwrite (e.g. the file was locked for writing).</summary>
+    public int PlainDeleted;
+    /// <summary>Files still present afterwards.</summary>
+    public int Failed;
+    public bool Cancelled;
+}
+
 /// <summary>
 /// Best-effort secure file wipe: overwrites a file's bytes with one or more passes before deleting,
 /// then renames it to defeat name-based recovery. Methods mirror fileshredder.org (Zero / Random /
@@ -88,9 +102,10 @@ public static class SecureWipe
     /// progress (bytes overwritten across all passes, plus file counts) and honoring cancellation.
     /// Drives the floating progress card for Empty Recycle Bin / shred / Shift+Delete.
     /// </summary>
-    public static Task WipePathsAsync(IReadOnlyList<string> paths, WipeMethod method,
+    public static Task<WipeSummary> WipePathsAsync(IReadOnlyList<string> paths, WipeMethod method,
         IProgress<TransferProgress>? progress, CancellationToken ct = default) => Task.Run(() =>
     {
+        var summary = new WipeSummary();
         var files = new List<string>();
         var dirs = new List<string>();
         foreach (var p in paths)
@@ -142,30 +157,42 @@ public static class SecureWipe
         Report("", true);
         foreach (var f in files)
         {
-            if (ct.IsCancellationRequested) break;
-            if (WipeFileCore(f, method, ref bytesDone, ct, name => Report(name, false))) filesDone++;
+            if (ct.IsCancellationRequested) { summary.Cancelled = true; break; }
+            switch (WipeFileCore(f, method, ref bytesDone, ct, name => Report(name, false)))
+            {
+                case WipeOutcome.Overwritten: summary.Overwritten++; filesDone++; break;
+                case WipeOutcome.PlainDeleted: summary.PlainDeleted++; filesDone++; break;
+                case WipeOutcome.Failed: summary.Failed++; break;
+                case WipeOutcome.SkippedCancelled: summary.Cancelled = true; break;
+            }
             Report(Path.GetFileName(f), true);
         }
-        if (!ct.IsCancellationRequested)
+        if (ct.IsCancellationRequested) summary.Cancelled = true;
+        else
             foreach (var d in dirs) { try { Directory.Delete(d, recursive: true); } catch { } }
+        return summary;
     });
+
+    private enum WipeOutcome { Overwritten, PlainDeleted, Failed, SkippedCancelled }
 
     // Overwrite a single file pass-by-pass, reporting bytes and honoring cancellation, then delete it.
     // On cancellation after even one byte was overwritten the file is already destroyed, so it is still
     // renamed + deleted (leaving it with its original name/size but garbage contents would look intact);
-    // only files not yet touched survive a cancel. Returns true when the file was removed.
-    private static bool WipeFileCore(string path, WipeMethod method, ref long bytesDone, CancellationToken ct, Action<string>? tick)
+    // only files not yet touched survive a cancel. The returned outcome distinguishes a real overwrite
+    // from a plain-delete fallback (overwrite failed — e.g. locked file) from an outright failure.
+    private static WipeOutcome WipeFileCore(string path, WipeMethod method, ref long bytesDone, CancellationToken ct, Action<string>? tick)
     {
+        var overwrote = false;
         try
         {
-            if (!File.Exists(path)) return true;
+            if (!File.Exists(path)) return WipeOutcome.Overwritten; // already gone — nothing left to protect
             var fi = new FileInfo(path);
             if (fi.Attributes.HasFlag(FileAttributes.ReadOnly)) fi.Attributes = FileAttributes.Normal;
             long len = fi.Length;
 
             if (method != WipeMethod.None && len > 0)
             {
-                if (ct.IsCancellationRequested) return false; // untouched — safe to leave as-is
+                if (ct.IsCancellationRequested) return WipeOutcome.SkippedCancelled; // untouched — safe to leave as-is
                 var passes = Passes(method);
                 var touched = false;
                 using (var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None))
@@ -192,18 +219,24 @@ public static class SecureWipe
                         fs.Flush(flushToDisk: true);
                     }
                 }
-                if (ct.IsCancellationRequested && !touched) return false; // nothing overwritten — leave intact
+                if (ct.IsCancellationRequested && !touched) return WipeOutcome.SkippedCancelled; // nothing overwritten — leave intact
+                overwrote = touched;
             }
+            else overwrote = true; // plain delete requested, or an empty file — nothing to overwrite
 
             var scrambled = Path.Combine(Path.GetDirectoryName(path)!, Guid.NewGuid().ToString("N"));
             try { File.Move(path, scrambled); File.Delete(scrambled); }
             catch { File.Delete(path); }
-            return true;
+            return overwrote ? WipeOutcome.Overwritten : WipeOutcome.PlainDeleted;
         }
         catch
         {
+            // The overwrite (or the delete) blew up — fall back to a plain delete, and REPORT it as
+            // such rather than pretending the bytes were destroyed.
             try { File.Delete(path); } catch { }
-            return !File.Exists(path);
+            return File.Exists(path) ? WipeOutcome.Failed
+                 : overwrote ? WipeOutcome.Overwritten
+                 : WipeOutcome.PlainDeleted;
         }
     }
 

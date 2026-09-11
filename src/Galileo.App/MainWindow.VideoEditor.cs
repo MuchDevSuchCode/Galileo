@@ -125,6 +125,10 @@ public sealed partial class MainWindow
         UnsubscribePlayhead();
         VideoEditorPanel.Visibility = Visibility.Collapsed;
         EditTimeline.Visibility = Visibility.Collapsed;
+        // Release the filmstrip bitmaps BEFORE deleting their files — a BitmapImage can keep its
+        // source JPEG open, which makes the directory delete fail and strands the thumbnails.
+        EditFilmstrip.Children.Clear();
+        EditFilmstrip.ColumnDefinitions.Clear();
         try { if (_thumbsDir is not null && Directory.Exists(_thumbsDir)) Directory.Delete(_thumbsDir, true); } catch { }
         _thumbsDir = null;
     }
@@ -258,6 +262,12 @@ public sealed partial class MainWindow
         picker.SuggestedFileName = System.IO.Path.GetFileNameWithoutExtension(_currentVideoPath) + "-edited";
         var file = await picker.PickSaveFileAsync();
         if (file is null) return;
+        if (string.Equals(file.Path, _currentVideoPath, StringComparison.OrdinalIgnoreCase))
+        {
+            // FFmpeg reading and writing the same file destroys the source — never allow it.
+            EditorStatus.Text = "Can't export over the video being edited — pick a different name.";
+            return;
+        }
 
         await RunFfmpegExportAsync(s, file.Path, s.Container == "gif" ? "Exporting GIF" : "Exporting video");
     }
@@ -280,7 +290,11 @@ public sealed partial class MainWindow
     /// <summary>Runs an FFmpeg export behind the floating progress card (Cancel + Hide).</summary>
     private async Task RunFfmpegExportAsync(VideoEditSettings s, string outPath, string title)
     {
-        _progressCancel?.Invoke();
+        if (_activeOp is not null)
+        {
+            EditorStatus.Text = "Another operation is still running — wait for it to finish or cancel it first.";
+            return;
+        }
         var cts = new CancellationTokenSource();
         var token = new object();
         BeginProgressOp(token, title, cancel: cts.Cancel, pauseToggle: null, isPaused: null, hideable: true);
@@ -295,18 +309,34 @@ public sealed partial class MainWindow
             TransferStats.Text = $"{pct:0}%";
             TransferEta.Text = "";
         });
+        // Encode into a sibling staging file and only move it over the chosen path on success —
+        // exporting straight onto an EXISTING file (FFmpeg -y) truncated it immediately, so a
+        // cancelled or failed export destroyed the previous file with nothing to show for it.
+        // The staging name keeps the real extension last so FFmpeg still infers the container.
+        var stagingDir = System.IO.Path.GetDirectoryName(outPath)!;
+        var staging = System.IO.Path.Combine(stagingDir,
+            $".{System.IO.Path.GetFileNameWithoutExtension(outPath)}.{Guid.NewGuid():N}.galileo-partial{System.IO.Path.GetExtension(outPath)}");
         try
         {
-            await FfmpegVideo.ExportAsync(s, outPath, progress, cts.Token);
+            await FfmpegVideo.ExportAsync(s, staging, progress, cts.Token);
+            var fi = new FileInfo(staging);
+            if (!fi.Exists || fi.Length == 0) throw new IOException("FFmpeg produced no output.");
+            if (File.Exists(outPath)) File.Replace(staging, outPath, destinationBackupFileName: null);
+            else File.Move(staging, outPath);
             EditorStatus.Text = "Exported: " + outPath;
             StatusText.Text = "Video exported.";
         }
         catch (OperationCanceledException)
         {
             EditorStatus.Text = "Export canceled.";
-            try { if (File.Exists(outPath)) File.Delete(outPath); } catch { }
+            try { if (File.Exists(staging)) File.Delete(staging); } catch { }
         }
-        catch (Exception ex) { EditorStatus.Text = "Export failed: " + ex.Message; App.Log("VideoExport", ex); }
+        catch (Exception ex)
+        {
+            EditorStatus.Text = "Export failed: " + ex.Message;
+            App.Log("VideoExport", ex);
+            try { if (File.Exists(staging)) File.Delete(staging); } catch { }
+        }
         finally { EndProgressOp(token, null); }
     }
 
@@ -334,6 +364,9 @@ public sealed partial class MainWindow
                 try { if (dir is not null && Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
                 return;
             }
+            // Reopening without a close in between replaces the filmstrip — remove the previous
+            // thumbnail folder instead of orphaning it until the next app restart.
+            try { if (_thumbsDir is not null && _thumbsDir != dir && Directory.Exists(_thumbsDir)) Directory.Delete(_thumbsDir, true); } catch { }
             _thumbsDir = dir;
             for (var i = 0; i < thumbs.Count; i++)
             {
@@ -426,6 +459,10 @@ public sealed partial class MainWindow
 
     private void StartLivePreview()
     {
+        // Re-entrant opens (clicking Edit again while the editor is already up) must not subscribe
+        // VideoFrameAvailable a second time — duplicate handlers fire per FRAME, and every extra one
+        // multiplies the dispatcher load until the UI stops keeping up.
+        StopLivePreview();
         var mp = VideoPlayer.MediaPlayer;
         var w = _editVideoInfo?.Width ?? 0;
         var h = _editVideoInfo?.Height ?? 0;
@@ -505,30 +542,46 @@ public sealed partial class MainWindow
         var cw = Math.Max(2, (int)w - l - r);
         var ch = Math.Max(2, (int)h - t - b);
 
-        var img = BuildPreviewColor(frame);
-
         var device = CanvasDevice.GetSharedDevice();
-        if (_previewSource is null || _previewSrcW != cw || _previewSrcH != ch)
+        // ONE surface for the whole preview session, sized to the full frame. It used to be re-created
+        // at the crop size — every slider tick while dragging a crop allocated a fresh multi-megabyte
+        // D3D surface (a 4K frame is ~33 MB) that GC can't see as pressure, so an editing session
+        // steadily ran the process out of native memory. The cropped region is letterboxed into the
+        // fixed surface instead.
+        if (_previewSource is null || _previewSrcW != (int)w || _previewSrcH != (int)h)
         {
-            _previewSrcW = cw; _previewSrcH = ch;
-            _previewSource = new CanvasImageSource(device, cw, ch, 96);
+            _previewSrcW = (int)w; _previewSrcH = (int)h;
+            _previewSource = new CanvasImageSource(device, _previewSrcW, _previewSrcH, 96);
             EditPreviewImage.Source = _previewSource;
         }
-        using (var ds = _previewSource.CreateDrawingSession(Microsoft.UI.Colors.Black))
-            ds.DrawImage(img, new Rect(0, 0, cw, ch), new Rect(l, t, cw, ch));
+
+        // Win2D effects are native COM objects — created per frame and never disposed, they pile up
+        // faster than finalizers reclaim them at 60 fps. Track and dispose them each render.
+        var effects = new List<IDisposable>();
+        try
+        {
+            var img = BuildPreviewColor(frame, effects);
+            var fit = Math.Min((double)_previewSrcW / cw, (double)_previewSrcH / ch);
+            double dw = cw * fit, dh = ch * fit;
+            double dx = (_previewSrcW - dw) / 2, dy = (_previewSrcH - dh) / 2;
+            using var ds = _previewSource.CreateDrawingSession(Microsoft.UI.Colors.Black);
+            ds.DrawImage(img, new Rect(dx, dy, dw, dh), new Rect(l, t, cw, ch));
+        }
+        finally { foreach (var fx in effects) fx.Dispose(); }
 
         UpdatePreviewTransform();
     }
 
     // Color/sharpen only (crop is applied by the source rect, rotate/flip by the Image transform).
-    private ICanvasImage BuildPreviewColor(ICanvasImage src)
+    // Every effect created is added to <paramref name="track"/> so the caller can dispose it.
+    private ICanvasImage BuildPreviewColor(ICanvasImage src, List<IDisposable> track)
     {
         var img = src;
         double br = EditBrightness.Value, co = EditContrast.Value, sa = EditSaturation.Value;
-        if (br != 0) img = new LinearTransferEffect { Source = img, RedOffset = (float)br, GreenOffset = (float)br, BlueOffset = (float)br };
-        if (co != 1) img = new ContrastEffect { Source = img, Contrast = (float)Math.Clamp(co - 1, -1, 1) };
-        if (sa != 1) img = new ColorMatrixEffect { Source = img, ColorMatrix = SaturationMatrix((float)sa) };
-        if (EditSharpen.IsOn) img = new SharpenEffect { Source = img, Amount = 4f, Threshold = 0 };
+        if (br != 0) { var e = new LinearTransferEffect { Source = img, RedOffset = (float)br, GreenOffset = (float)br, BlueOffset = (float)br }; track.Add(e); img = e; }
+        if (co != 1) { var e = new ContrastEffect { Source = img, Contrast = (float)Math.Clamp(co - 1, -1, 1) }; track.Add(e); img = e; }
+        if (sa != 1) { var e = new ColorMatrixEffect { Source = img, ColorMatrix = SaturationMatrix((float)sa) }; track.Add(e); img = e; }
+        if (EditSharpen.IsOn) { var e = new SharpenEffect { Source = img, Amount = 4f, Threshold = 0 }; track.Add(e); img = e; }
         return img;
     }
 

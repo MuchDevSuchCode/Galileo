@@ -43,7 +43,7 @@ public sealed class ConflictInfo
     public long DestSize { get; init; }
     public DateTime SourceModified { get; init; }
     public DateTime DestModified { get; init; }
-    /// <summary>True when both files have identical contents (verified by SHA-256).</summary>
+    /// <summary>True when both files have identical contents (verified by a byte-for-byte compare).</summary>
     public bool Identical { get; init; }
     /// <summary>How many further conflicts remain after this one (for an "apply to all" option).</summary>
     public int RemainingConflicts { get; init; }
@@ -77,7 +77,7 @@ public sealed class FileTransfer
     public void TogglePause() { if (IsPaused) Resume(); else Pause(); }
     public void Cancel() { _cts.Cancel(); _gate.Set(); } // release the gate so a paused copy can observe the cancel
 
-    private sealed class CopyOp { public string Src = ""; public string Dest = ""; public long Size; }
+    private sealed class CopyOp { public string Src = ""; public string Dest = ""; public long Size; public bool Overwrite; }
 
     public Task<TransferResult> RunAsync(string destDir, IReadOnlyList<string> paths, bool move,
         IProgress<TransferProgress>? progress, Func<ConflictInfo, Task<ConflictChoice>>? onConflict = null)
@@ -91,6 +91,7 @@ public sealed class FileTransfer
         var fastMoves = new List<(string src, string dest, bool isDir)>(); // instant same-volume renames
         var moveDirSources = new List<string>(); // top-level dirs that were merged on a move (empty-dir cleanup)
         var claimedDests = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // dests taken by fast moves + resolved copies
+        var errors = 0;
 
         // ---- Plan ----
         foreach (var src in paths)
@@ -142,7 +143,7 @@ public sealed class FileTransfer
                         copies.Add(NewOp(src, destPath));
                 }
             }
-            catch { /* skip the offending item, keep planning the rest */ }
+            catch { errors++; } // planning failed for this item — count it instead of silently dropping it
         }
 
         // ---- Resolve conflicts (files whose destination already exists) ----
@@ -183,7 +184,7 @@ public sealed class FileTransfer
 
             switch (action)
             {
-                case ConflictAction.Overwrite: claimedDests.Add(op.Dest); resolved.Add(op); break; // Create truncates
+                case ConflictAction.Overwrite: op.Overwrite = true; claimedDests.Add(op.Dest); resolved.Add(op); break; // replaced atomically at commit
                 case ConflictAction.KeepBoth: op.Dest = UniquePath(op.Dest, claimedDests); claimedDests.Add(op.Dest); resolved.Add(op); break;
                 case ConflictAction.Skip: skipped++; break;                                        // drop it
                 case ConflictAction.Cancel: return new TransferResult { Canceled = true, Skipped = skipped };
@@ -197,7 +198,6 @@ public sealed class FileTransfer
         var clock = Stopwatch.StartNew();
         long bytesDone = 0;
         var filesDone = 0;
-        var errors = 0;
         var canceled = false;
 
         long lastReportMs = -1000, rateBytesMark = 0, rateMsMark = 0;
@@ -226,11 +226,12 @@ public sealed class FileTransfer
 
         // ---- Instant same-volume renames first (before the copy list is finalized, so a failed
         // rename can be demoted to a streamed copy below) ----
+        var doneFastMoves = new List<(string src, string dest, bool isDir)>(); // completed renames (for cancel rollback)
         foreach (var (src, dest, isDir) in fastMoves)
         {
             _gate.Wait();
             if (IsCanceled) { canceled = true; break; }
-            try { if (isDir) Directory.Move(src, dest); else File.Move(src, dest); filesDone++; Report(Path.GetFileName(dest), true); }
+            try { if (isDir) Directory.Move(src, dest); else File.Move(src, dest); doneFastMoves.Add((src, dest, isDir)); filesDone++; Report(Path.GetFileName(dest), true); }
             catch
             {
                 // Rename failed (locked file, sharing violation, dest appeared meanwhile…) —
@@ -256,9 +257,10 @@ public sealed class FileTransfer
         // For a move, defer deleting sources until the whole copy succeeds, so cancelling leaves the
         // originals intact (the dest may have partial copies, but no source data is lost).
         var copiedSources = new List<string>();
+        var copiedDests = new List<string>();  // completed MOVE copies (for cancel rollback — sources are intact)
         if (!canceled)
         {
-            foreach (var dir in dirsToCreate) { try { Directory.CreateDirectory(dir); } catch { } }
+            foreach (var dir in dirsToCreate) { try { Directory.CreateDirectory(dir); } catch { errors++; } }
 
             foreach (var op in copies)
             {
@@ -267,7 +269,7 @@ public sealed class FileTransfer
                 try
                 {
                     CopyFile(op, ref bytesDone, Report);
-                    if (move) copiedSources.Add(op.Src);
+                    if (move) { copiedSources.Add(op.Src); copiedDests.Add(op.Dest); }
                     filesDone++;
                     Report(Path.GetFileName(op.Dest), true);
                 }
@@ -276,10 +278,35 @@ public sealed class FileTransfer
             }
         }
 
+        // ---- Cancelled MOVE: put everything back the way it was. Same-volume renames are reversed
+        // (rename back) and completed streamed copies are removed (their sources were never deleted).
+        // Without this, "cancel" left the batch half-moved — some items relocated, some not — which
+        // contradicts what cancelling a move promises.
+        if (move && canceled)
+        {
+            foreach (var (src, dest, isDir) in Enumerable.Reverse(doneFastMoves))
+            {
+                try
+                {
+                    if (Occupied(src)) { errors++; continue; } // something took the original spot — leave the moved item where it is
+                    if (isDir) Directory.Move(dest, src); else File.Move(dest, src);
+                    filesDone--;
+                }
+                catch { errors++; } // rollback failed — the item stays moved and is reported as an error
+            }
+            foreach (var dest in copiedDests)
+            {
+                try { File.Delete(dest); filesDone--; } catch { errors++; }
+            }
+            filesDone = Math.Max(0, filesDone);
+        }
+
         // ---- Finish a move (only on a clean run): delete copied sources, then prune emptied folders ----
+        // A source that can't be deleted was only COPIED, not moved — count it as an error so the
+        // caller doesn't consume the cut clip / report a clean move while the original still exists.
         if (move && !canceled)
         {
-            foreach (var src in copiedSources) { try { File.Delete(src); } catch { } }
+            foreach (var src in copiedSources) { try { File.Delete(src); } catch { errors++; } }
             foreach (var dir in moveDirSources) RemoveEmptyDirs(dir);
         }
 
@@ -341,37 +368,61 @@ public sealed class FileTransfer
         return total;
     }
 
+    // Streams into a sibling staging file and only commits it over the destination once the copy
+    // fully succeeded — an existing destination (Replace) is never truncated up front, so cancelling
+    // or failing mid-copy leaves the previous file intact. The commit revalidates collisions: a
+    // destination that appeared AFTER planning is never silently overwritten (auto-renamed instead).
     private void CopyFile(CopyOp op, ref long bytesDone, Action<string, bool> report)
     {
         var name = Path.GetFileName(op.Dest);
         Directory.CreateDirectory(Path.GetDirectoryName(op.Dest)!);
+        var staging = Path.Combine(Path.GetDirectoryName(op.Dest)!,
+            $".{Path.GetFileName(op.Dest)}.{Guid.NewGuid():N}.galileo-partial");
         var buffer = new byte[Chunk];
-        var partial = false;
         try
         {
-            using var src = new FileStream(op.Src, FileMode.Open, FileAccess.Read, FileShare.Read, Chunk, FileOptions.SequentialScan);
-            using var dst = new FileStream(op.Dest, FileMode.Create, FileAccess.Write, FileShare.None, Chunk, FileOptions.SequentialScan);
-            partial = true;
-            int read;
-            while ((read = src.Read(buffer, 0, buffer.Length)) > 0)
+            using (var src = new FileStream(op.Src, FileMode.Open, FileAccess.Read, FileShare.Read, Chunk, FileOptions.SequentialScan))
+            using (var dst = new FileStream(staging, FileMode.CreateNew, FileAccess.Write, FileShare.None, Chunk, FileOptions.SequentialScan))
             {
-                _gate.Wait(); // pause mid-file
-                if (IsCanceled) throw new OperationCanceledException();
-                dst.Write(buffer, 0, read);
-                bytesDone += read;
-                report(name, false);
+                int read;
+                while ((read = src.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    _gate.Wait(); // pause mid-file
+                    if (IsCanceled) throw new OperationCanceledException();
+                    dst.Write(buffer, 0, read);
+                    bytesDone += read;
+                    report(name, false);
+                }
+                dst.Flush(flushToDisk: true); // the finished bytes must be durable before they replace the old file
             }
-            partial = false;
+            try { File.SetLastWriteTimeUtc(staging, File.GetLastWriteTimeUtc(op.Src)); } catch { }
+
+            // Commit.
+            var target = op.Dest;
+            if (op.Overwrite && File.Exists(op.Dest))
+                File.Replace(staging, op.Dest, destinationBackupFileName: null);
+            else
+            {
+                if (!op.Overwrite && Occupied(target)) target = UniquePath(target); // appeared after planning → keep both
+                File.Move(staging, target);
+            }
+
+            // Metadata fidelity: creation time and attributes travel with the file (Explorer parity).
+            // ADS/ACLs/sparse flags are intentionally NOT copied — documented in the README.
+            try { File.SetCreationTimeUtc(target, File.GetCreationTimeUtc(op.Src)); } catch { }
+            try { File.SetAttributes(target, File.GetAttributes(op.Src)); } catch { }
         }
-        catch (OperationCanceledException) { TryDeletePartial(op.Dest); throw; }
-        catch { if (partial) TryDeletePartial(op.Dest); throw; }
-        try { File.SetLastWriteTimeUtc(op.Dest, File.GetLastWriteTimeUtc(op.Src)); } catch { }
+        catch { TryDeletePartial(staging); throw; }
     }
 
     private static void TryDeletePartial(string path) { try { if (File.Exists(path)) File.Delete(path); } catch { } }
 
+    // Directory junctions/symlinks are never descended into: following one would copy data from
+    // OUTSIDE the selected tree (or loop forever on a cycle to an ancestor). The link itself is
+    // simply not planned — its target is not part of the selection.
     private static void PlanDirectory(string srcDir, string destDir, List<CopyOp> copies, List<string> dirsToCreate)
     {
+        if (IsReparsePoint(srcDir)) return;
         dirsToCreate.Add(destDir);
         try
         {
@@ -383,11 +434,19 @@ public sealed class FileTransfer
         catch { /* access denied etc. — copy what we can */ }
     }
 
-    /// <summary>Removes empty directories bottom-up (after a merged move; skipped files leave dirs intact).</summary>
+    private static bool IsReparsePoint(string path)
+    {
+        try { return File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint); }
+        catch { return true; } // can't inspect → treat as a link so we never traverse it
+    }
+
+    /// <summary>Removes empty directories bottom-up (after a merged move; skipped files leave dirs intact).
+    /// Junctions/symlinks are deleted as bare links, never traversed (their target is not ours to prune).</summary>
     private static void RemoveEmptyDirs(string dir)
     {
         try
         {
+            if (IsReparsePoint(dir)) return;
             foreach (var sub in Directory.EnumerateDirectories(dir)) RemoveEmptyDirs(sub);
             if (!Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir);
         }

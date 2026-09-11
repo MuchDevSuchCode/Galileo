@@ -19,16 +19,12 @@ public partial class App : Application
     /// live working folder, and let the process exit thinking no vault was unlocked.</summary>
     public static VaultManager Vaults { get; } = new();
 
-    /// <summary>Crash/error log path: %LocalAppData%\Galileo\logs\error.log.</summary>
-    public static string LogPath { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Galileo", "logs", "error.log");
+    /// <summary>Crash/error log path: &lt;data root&gt;\logs\error.log.</summary>
+    public static string LogPath { get; } = Path.Combine(AppPaths.Root, "logs", "error.log");
 
     /// <summary>Diagnostic trail of every thrown exception — the last entry before a hard crash
     /// (0xc000027b XAML failfast) is the real culprit, since those bypass the handlers above.</summary>
-    public static string FirstChancePath { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Galileo", "logs", "firstchance.log");
+    public static string FirstChancePath { get; } = Path.Combine(AppPaths.Root, "logs", "firstchance.log");
 
     private static readonly object _fcLock = new();
 
@@ -36,16 +32,52 @@ public partial class App : Application
     /// handler is wired to <see cref="OnRedirected"/> (by Program.Main or, mid-session, by the tray).</summary>
     internal static bool SingleInstanceHooked;
 
+    // Held for the whole process lifetime; lets a later launch tell "another Galileo is alive right
+    // now" apart from "a previous Galileo crashed" — startup cleanup must only run in the second case,
+    // or a second ordinary launch would wipe the first instance's live vault working folder and
+    // archive/device temp files out from under it (they share %LocalAppData%\Galileo).
+    private static System.Threading.Mutex? _aliveMutex;
+    private static bool _aliveOwned;
+
+    /// <summary>True when this process is the only running Galileo (it now owns the liveness mutex) —
+    /// the only situation in which crash-recovery cleanup of shared temp/work folders is safe.</summary>
+    public static bool IsOnlyInstance
+    {
+        get
+        {
+            if (_aliveMutex is null)
+            {
+                try
+                {
+                    _aliveMutex = new System.Threading.Mutex(initiallyOwned: true, "Galileo.ProcessAlive", out _aliveOwned);
+                    if (!_aliveOwned)
+                    {
+                        // Not first — but the holder may have died; a short wait claims an abandoned mutex.
+                        try { _aliveOwned = _aliveMutex.WaitOne(0); }
+                        catch (System.Threading.AbandonedMutexException) { _aliveOwned = true; }
+                    }
+                }
+                catch { _aliveOwned = false; }
+            }
+            return _aliveOwned;
+        }
+    }
+
     private Window? _window;
 
     public App()
     {
         InitializeComponent();
 
+        _ = IsOnlyInstance; // claim the liveness mutex up front, before any window defers file-manager init
+
         UnhandledException += (_, e) =>
         {
             Log("UI", e.Exception);
             e.Handled = true; // keep the app alive so the error is logged and visible
+            // "Handled" must not mean "invisible": tell the user something failed instead of the app
+            // silently carrying on in a possibly inconsistent state.
+            TryReportError(e.Exception);
         };
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Log("AppDomain", e.ExceptionObject as Exception);
         TaskScheduler.UnobservedTaskException += (_, e) => { Log("Task", e.Exception); e.SetObserved(); };
@@ -59,14 +91,27 @@ public partial class App : Application
             {
                 var ex = e.Exception;
                 var line = $"[{DateTimeOffset.Now:HH:mm:ss.fff}] {ex.GetType().FullName} (0x{ex.HResult:X8}): {ex.Message}{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}{Environment.NewLine}";
-                lock (_fcLock)
-                {
-                    Directory.CreateDirectory(Path.GetDirectoryName(FirstChancePath)!);
-                    File.AppendAllText(FirstChancePath, line);
-                }
+                lock (_fcLock) AppendCapped(FirstChancePath, line);
             }
             catch { /* diagnostics must never crash the app */ }
         };
+    }
+
+    /// <summary>Best-effort user-visible notice for an unexpected error (status bar of the main
+    /// window). Never throws; falls back to log-only when no window is up.</summary>
+    private void TryReportError(Exception? ex)
+    {
+        try
+        {
+            if (_window is not MainWindow mw) return;
+            var message = ex?.Message is { Length: > 0 } m ? m : "an unexpected error occurred";
+            mw.DispatcherQueue.TryEnqueue(() =>
+            {
+                try { mw.ReportBackgroundError($"Something went wrong: {message} (details in the error log)"); }
+                catch { }
+            });
+        }
+        catch { /* error reporting must never crash the app */ }
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
@@ -169,13 +214,34 @@ public partial class App : Application
         if (sb.Length > 0) yield return sb.ToString();
     }
 
+    // Logs must stay bounded: repeated I/O errors during a long session (or the first-chance trail)
+    // otherwise grow without limit. When a log passes the cap, the current file rotates to *.old
+    // (replacing the previous .old) so recent history survives while total size stays ~2×cap.
+    private const long LogCapBytes = 5 * 1024 * 1024;
+
+    private static void AppendCapped(string path, string text)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        try
+        {
+            var fi = new FileInfo(path);
+            if (fi.Exists && fi.Length > LogCapBytes)
+            {
+                var old = path + ".old";
+                if (File.Exists(old)) File.Delete(old);
+                File.Move(path, old);
+            }
+        }
+        catch { /* rotation is best-effort */ }
+        File.AppendAllText(path, text);
+    }
+
     /// <summary>Appends an exception (with stack trace) to the error log. Never throws.</summary>
     public static void Log(string source, Exception? ex)
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
-            File.AppendAllText(LogPath, $"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}] {source}: {ex}{Environment.NewLine}{Environment.NewLine}");
+            AppendCapped(LogPath, $"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}] {source}: {ex}{Environment.NewLine}{Environment.NewLine}");
         }
         catch
         {
@@ -184,15 +250,13 @@ public partial class App : Application
     }
 
     /// <summary>Diagnostic info log: %LocalAppData%\Galileo\logs\app.log (lifecycle, sharing, tray — not errors).</summary>
-    public static readonly string InfoLogPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo", "logs", "app.log");
+    public static readonly string InfoLogPath = Path.Combine(AppPaths.Root, "logs", "app.log");
 
     public static void LogInfo(string message)
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(InfoLogPath)!);
-            File.AppendAllText(InfoLogPath, $"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{Environment.NewLine}");
+            AppendCapped(InfoLogPath, $"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{Environment.NewLine}");
         }
         catch { /* logging must never crash the app */ }
     }

@@ -30,7 +30,8 @@
   <ItemGroup>
     <Content Include="Assets\galileo.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\galileo.png" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Assets\terminal\index.html" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Terminal page plus its BUNDLED xterm.js assets (pinned versions) — the terminal must work offline. -->
+    <Content Include="Assets\terminal\**" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\google-oauth.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('Assets\google-oauth.json')" />
     <!-- google-oauth.json is gitignored (holds the OAuth client secret); ship it with the build, never commit it. -->
     <None Remove="Assets\google-oauth.json" />

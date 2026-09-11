@@ -25,14 +25,12 @@ public static class ThumbDiskCache
     private const int HeaderBytes = 12; // magic, width, height
     private const int MaxDim = 4096;    // sanity bound — anything larger is a corrupt header, not a thumbnail
 
-    private static readonly string Root = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo", "thumbcache");
+    private static readonly string Root = Path.Combine(AppPaths.Root, "thumbcache");
 
     // Vault working folders decrypt under ...\Galileo\.work and the recycle-bin store lives under
     // ...\Galileo\RecycleBin — a cached thumbnail of either would leak vault plaintext / deleted-file
     // content to disk in the clear. Nothing under the app's own data folder is ever cached.
-    private static readonly string ExcludedRoot = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Galileo");
+    private static readonly string ExcludedRoot = AppPaths.Root;
 
     /// <summary>Whether a thumbnail for this path may ever touch the disk. TryGet/Store no-op when false.</summary>
     public static bool Cacheable(string path)
@@ -79,6 +77,12 @@ public static class ThumbDiskCache
         return null;
     }
 
+    // Bytes written since the last sweep. The startup sweep alone let a long browsing session
+    // overshoot the cap without limit until the next restart; re-sweeping after every ~32 MB of new
+    // thumbnails keeps the cache bounded during the session too (Store already runs off-thread).
+    private static long _bytesSinceSweep;
+    private const long SweepEveryBytes = 32L * 1024 * 1024;
+
     public static void Store(string path, DateTime mtimeUtc, int px, byte[] bgra, int width, int height)
     {
         if (!Cacheable(path) || bgra is null || width <= 0 || height <= 0) return;
@@ -117,6 +121,12 @@ public static class ThumbDiskCache
                     TryDelete(f);
         }
         catch { }
+
+        if (System.Threading.Interlocked.Add(ref _bytesSinceSweep, HeaderBytes + bgra.Length) >= SweepEveryBytes)
+        {
+            System.Threading.Interlocked.Exchange(ref _bytesSinceSweep, 0);
+            Sweep();
+        }
     }
 
     /// <summary>Drops every cached size/mtime for a path. For invalidations the mtime can't see —
