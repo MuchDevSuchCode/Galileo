@@ -142,10 +142,11 @@ public sealed partial class MainWindow
     // large photo re-renders the whole image dozens of times a second and the tool appears to freeze.
     private CanvasRenderTarget? _editCache;
     private bool _editCacheDirty = true;
+    private bool _editCacheFailed;   // last rebuild threw — don't re-attempt until something changes
 
     /// <summary>A pixel-affecting edit (adjust/filter/rotate/flip/straighten/undo/reset) changed — drop the
     /// cached render and repaint. Crop and markup don't change pixels, so they must NOT call this.</summary>
-    private void InvalidateEditImage() { _editCacheDirty = true; _editCanvas?.Invalidate(); }
+    private void InvalidateEditImage() { _editCacheDirty = true; _editCacheFailed = false; _editCanvas?.Invalidate(); }
 
     // ---- enter / exit ----
 
@@ -177,7 +178,7 @@ public sealed partial class MainWindow
         _lassoMode = false;
         ClearSelection();
         InvalidateLiveDenoise();
-        try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true; // fresh image → fresh cache
+        try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true; _editCacheFailed = false; // fresh image → fresh cache
         ResetEditSliders();
         _editLoading = true;
         if (CropAspectCombo.Items.Count > 0) CropAspectCombo.SelectedIndex = 0;
@@ -224,7 +225,9 @@ public sealed partial class MainWindow
         EditorView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Visible;
         UpdateChromeForDarkSurface();
-        try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true;
+        try { _editCache?.Dispose(); } catch { } _editCache = null; _editCacheDirty = true; _editCacheFailed = false;
+        // The deferred per-frame effect chain (see EditCanvas_Draw) — no more draws are coming to reap it.
+        if (_prevFrameFx is not null) { foreach (var fx in _prevFrameFx) { try { fx.Dispose(); } catch { } } _prevFrameFx = null; }
 
         // Stop any in-flight AI first and invalidate its result — otherwise disposing a session later would
         // pull it out from under a worker thread (a native AccessViolation, not a catchable exception), and
@@ -357,15 +360,33 @@ public sealed partial class MainWindow
 
     private void EditCanvasHost_SizeChanged(object sender, SizeChangedEventArgs e) => _editCanvas?.Invalidate();
 
+    // Last frame's effect chain, disposed at the START of the next draw: by then its drawing session
+    // has been flushed. Disposing at the END of the handler raced the control's EndDraw, which flushes
+    // the batched commands that still reference the effects.
+    private List<IDisposable>? _prevFrameFx;
+    private long _lastDrawErrorTick;
+
     private void EditCanvas_Draw(CanvasControl sender, CanvasDrawEventArgs args)
     {
         if (_editor.Source is null) return;
+
+        if (_prevFrameFx is not null) foreach (var fx in _prevFrameFx) fx.Dispose();
         // Win2D effects are native COM objects; a fresh chain is built EVERY draw (60/s during slider
-        // drags), so they're tracked and disposed at the end of the frame instead of piling up on the
-        // finalizer queue.
+        // drags), so they're tracked and disposed a frame later instead of piling up on the finalizer.
         var fxTrack = new List<IDisposable>();
+        _prevFrameFx = fxTrack;
+
+        // A paint must NEVER take the canvas down. An exception escaping Draw leaves the CanvasControl
+        // permanently wedged — nothing repaints, so moving/resetting the crop LOOKS hung, cancelling
+        // and reopening the editor re-throws on its first frame, and the whole editor stays "bugged".
+        // (The concrete trigger was an out-of-bounds crop rect making a shade Rect's constructor throw
+        // every frame; that's fixed at the source too, but no draw-time error may ever wedge us again.)
         try { EditCanvasDrawCore(sender, args, fxTrack); }
-        finally { foreach (var fx in fxTrack) fx.Dispose(); }
+        catch (Exception ex)
+        {
+            var now = Environment.TickCount64;
+            if (now - _lastDrawErrorTick > 2000) { _lastDrawErrorTick = now; App.Log("EditCanvasDraw", ex); }
+        }
     }
 
     private void EditCanvasDrawCore(CanvasControl sender, CanvasDrawEventArgs args, List<IDisposable> fxTrack)
@@ -406,7 +427,7 @@ public sealed partial class MainWindow
         {
             var sizeOk = _editCache is not null
                          && Math.Abs(_editCache.Size.Width - ow) < 0.5 && Math.Abs(_editCache.Size.Height - oh) < 0.5;
-            if (_editCacheDirty || !sizeOk)
+            if ((_editCacheDirty || !sizeOk) && !_editCacheFailed)
             {
                 try
                 {
@@ -418,7 +439,14 @@ public sealed partial class MainWindow
                     }
                     _editCacheDirty = false;
                 }
-                catch (Exception ex) { App.Log("EditCache", ex); _editCache = null; }
+                catch (Exception ex)
+                {
+                    App.Log("EditCache", ex);
+                    _editCache = null;
+                    // Latch the failure: without it the failed full-resolution render re-ran on EVERY
+                    // pointer move, making crop drags crawl. InvalidateEditImage re-arms the attempt.
+                    _editCacheFailed = true;
+                }
             }
             if (_editCache is not null) shown = _editCache;
         }
@@ -430,14 +458,20 @@ public sealed partial class MainWindow
         ds.DrawImage(shown, new Rect(ox, oy, dw, dh), src);
 
         // Crop overlay (dim outside + bright border) — only while actively cropping the whole image.
-        if (_cropMode && (_pendingCrop ?? _edit.Crop) is Rect c && c.Width > 0 && c.Height > 0)
+        // The rect is clamped to the image and every derived dimension is floored at 0: a
+        // Windows.Foundation.Rect with a negative width/height THROWS, and a throw here used to
+        // wedge the canvas permanently (see EditCanvas_Draw).
+        if (_cropMode && (_pendingCrop ?? _edit.Crop) is Rect cRaw
+            && ClampCropToImage(cRaw) is { Width: > 0, Height: > 0 } c)
         {
             var disp = new Rect(ox + c.X * scale, oy + c.Y * scale, c.Width * scale, c.Height * scale);
             var shade = Color.FromArgb(120, 0, 0, 0);
-            ds.FillRectangle(new Rect(ox, oy, dw, disp.Y - oy), shade);
-            ds.FillRectangle(new Rect(ox, disp.Y + disp.Height, dw, oy + dh - (disp.Y + disp.Height)), shade);
-            ds.FillRectangle(new Rect(ox, disp.Y, disp.X - ox, disp.Height), shade);
-            ds.FillRectangle(new Rect(disp.X + disp.Width, disp.Y, ox + dw - (disp.X + disp.Width), disp.Height), shade);
+            var belowY = disp.Y + disp.Height;
+            var rightX = disp.X + disp.Width;
+            ds.FillRectangle(new Rect(ox, oy, dw, Math.Max(0, disp.Y - oy)), shade);
+            ds.FillRectangle(new Rect(ox, belowY, dw, Math.Max(0, oy + dh - belowY)), shade);
+            ds.FillRectangle(new Rect(ox, disp.Y, Math.Max(0, disp.X - ox), disp.Height), shade);
+            ds.FillRectangle(new Rect(rightX, disp.Y, Math.Max(0, ox + dw - rightX), disp.Height), shade);
 
             // Rule-of-thirds guides inside the selection.
             var guide = Color.FromArgb(90, 255, 255, 255);
@@ -783,6 +817,20 @@ public sealed partial class MainWindow
         _editCanvas?.Invalidate();
     }
 
+    /// <summary>Intersects a crop rect with the image bounds — never negative, never NaN. The crop
+    /// pipeline clamps at every producer too, but this is the invariant the draw/commit paths rely on.</summary>
+    private Rect ClampCropToImage(Rect r)
+    {
+        if (double.IsNaN(r.X) || double.IsNaN(r.Y) || double.IsNaN(r.Width) || double.IsNaN(r.Height)
+            || _orientedW <= 0 || _orientedH <= 0)
+            return default;
+        var x1 = Math.Clamp(r.X, 0, _orientedW);
+        var y1 = Math.Clamp(r.Y, 0, _orientedH);
+        var x2 = Math.Clamp(r.X + r.Width, x1, _orientedW);
+        var y2 = Math.Clamp(r.Y + r.Height, y1, _orientedH);
+        return new Rect(x1, y1, x2 - x1, y2 - y1);
+    }
+
     private Point DisplayToOriented(Point p)
     {
         var ox = Math.Clamp(_viewSrc.X + (p.X - _editFitRect.X) / _editFitScale, 0, _orientedW);
@@ -833,6 +881,8 @@ public sealed partial class MainWindow
         if (_cropMode)
         {
             _dragging = true; _dragStart = p;
+            _prevCropDragMoved = _cropDragMoved;   // for the double-tap guard: were the last TWO presses drags?
+            _cropDragMoved = false;
             // Decide what the drag does: resize a handle/edge, move, or draw a new rectangle.
             _cropDrag = _edit.Crop is Rect ec ? CropDragMode(ec, p) : "new";
             _cropAtDragStart = _edit.Crop ?? new Rect(p.X, p.Y, 0, 0);
@@ -883,6 +933,11 @@ public sealed partial class MainWindow
         var p = DisplayToOriented(e.GetCurrentPoint(OverlayCanvas).Position);
         if (_cropMode)
         {
+            // A real drag (moved more than a few display pixels) disqualifies the gesture from the
+            // double-tap Apply — two quick drags used to register as a double-tap and silently apply
+            // + leave crop mode, which read as the crop tool going dead.
+            if (Math.Abs(p.X - _dragStart.X) + Math.Abs(p.Y - _dragStart.Y) > 4 / Math.Max(0.0001, _editFitScale))
+                _cropDragMoved = true;
             _pendingCrop = _cropDrag switch
             {
                 "new" => MakeCropRect(_dragStart, p),
@@ -953,7 +1008,9 @@ public sealed partial class MainWindow
         {
             // Skip the no-op commit: a plain click inside the selection ("move" that never moved)
             // otherwise re-committed the identical rect and burned an undo step doing nothing.
-            if (_pendingCrop is Rect c && c.Width > 8 && c.Height > 8 && c != _edit.Crop) { PushUndo(); _edit.Crop = c; }
+            // Committed rects are clamped — an out-of-bounds crop must never become durable state.
+            if (_pendingCrop is Rect pc && ClampCropToImage(pc) is { Width: > 8, Height: > 8 } c && c != _edit.Crop)
+            { PushUndo(); _edit.Crop = c; }
             _pendingCrop = null; _cropDrag = "";
         }
         else if (_pendingShape is MarkupItem ps)
@@ -983,10 +1040,13 @@ public sealed partial class MainWindow
             if (w / _cropAspect >= h) h = w / _cropAspect; else w = h * _cropAspect;
             if (w > maxW) { w = maxW; h = w / _cropAspect; }
             if (h > maxH) { h = maxH; w = h * _cropAspect; }
+            // The h-clamp can regrow w past maxW again (anchor near a corner) — settle it. After this
+            // pass h = w/aspect ≤ its clamped value, so both dimensions are inside their maxima.
+            if (w > maxW) { w = maxW; h = w / _cropAspect; }
         }
         double x = right ? a.X : a.X - w;
         double y = down ? a.Y : a.Y - h;
-        return new Rect(x, y, w, h);
+        return ClampCropToImage(new Rect(x, y, w, h));
     }
 
     /// <summary>Classifies a press over an existing crop: a corner/edge handle, inside (move), or new.</summary>
@@ -1045,12 +1105,21 @@ public sealed partial class MainWindow
             if (t < 0) { t = 0; h = b - t; w = h * _cropAspect; if (left) l = r - w; else r = l + w; }
             if (b > _orientedH) { b = _orientedH; h = b - t; w = h * _cropAspect; if (left) l = r - w; else r = l + w; }
         }
-        return new Rect(l, t, Math.Max(min, r - l), Math.Max(min, b - t));
+        // Whatever the aspect math produced, the rect must end up inside the image — an
+        // out-of-bounds rect reaching the draw path is what used to kill the canvas.
+        return ClampCropToImage(new Rect(
+            Math.Clamp(l, 0, _orientedW), Math.Clamp(t, 0, _orientedH),
+            Math.Max(min, r - l), Math.Max(min, b - t)));
     }
+
+    // Double-tap gesture guard: true when the corresponding press turned into a real drag.
+    private bool _cropDragMoved, _prevCropDragMoved;
 
     private void Overlay_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
-        if (_cropMode) CropApply_Click(sender, e);
+        // Only a genuine double-TAP applies; if either of the last two presses was a drag, the user
+        // was adjusting the crop, not committing it.
+        if (_cropMode && !_cropDragMoved && !_prevCropDragMoved) CropApply_Click(sender, e);
     }
 
     /// <summary>Keyboard path for the crop tool: arrows MOVE the selection, Shift+arrows RESIZE the
@@ -1195,7 +1264,7 @@ public sealed partial class MainWindow
     {
         if (_editCanvas is null) return;
         // Commit a still-in-progress selection so Apply works even if the pointer is mid-drag / never released.
-        if (_pendingCrop is Rect pc && pc.Width > 8 && pc.Height > 8) { PushUndo(); _edit.Crop = pc; }
+        if (_pendingCrop is Rect pc && ClampCropToImage(pc) is { Width: > 8, Height: > 8 } cc) { PushUndo(); _edit.Crop = cc; }
         _pendingCrop = null; _cropDrag = ""; _dragging = false;
         if (_edit.Crop is null) { StatusText.Text = "Drag a box on the image first, then Apply."; return; }
         SetCanvasMode("none");
