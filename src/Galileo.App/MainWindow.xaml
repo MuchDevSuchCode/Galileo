@@ -998,9 +998,12 @@
                                         ToolTipService.ToolTip="Remove noise and sharpen (Real-ESRGAN general)" />
                                 <Button x:Name="AiFacesBtn" Content="Faces" Click="AiFaces_Click"
                                         ToolTipService.ToolTip="Restore faces (CodeFormer)" />
-                                <Button x:Name="AiEyesBtn" Content="Fix eyes" Click="AiEyes_Click"
-                                        AutomationProperties.Name="Fix eyes"
-                                        ToolTipService.ToolTip="Fix a bad eye: click the eye to fix, then click the good eye to copy from. Mirrors it at full resolution, keeping gaze and lighting. Drag Strength after to dial it." />
+                                <Button x:Name="AiEyesBtn" Content="Copy eye" Click="AiEyes_Click"
+                                        AutomationProperties.Name="Fix eye by copying the good one"
+                                        ToolTipService.ToolTip="One bad eye, one good: click the eye to fix, then the good eye. Mirrors it at full resolution, keeping gaze and lighting. Drag Strength after to dial it." />
+                                <Button x:Name="AiEyesRestoreBtn" Content="AI eyes" Click="AiEyesRestore_Click"
+                                        AutomationProperties.Name="AI restore both eyes"
+                                        ToolTipService.ToolTip="Neither eye good: click the left eye, then the right. Rebuilds BOTH eyes with a high-res AI model (one-time 285 MB download), aligned from your clicks. Drag Strength after to dial it." />
                             </StackPanel>
                             <TextBlock Text="Strength (denoise · eye fix)" Foreground="White" FontSize="12" />
                             <Slider x:Name="AiStrength" Minimum="0" Maximum="100" Value="40" ValueChanged="AiStrength_Changed" AutomationProperties.Name="Strength" />

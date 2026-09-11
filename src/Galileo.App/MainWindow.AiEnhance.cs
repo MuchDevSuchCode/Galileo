@@ -107,24 +107,39 @@ public sealed partial class MainWindow
     // the good eye; each click snaps to its iris and the good eye is mirrored onto the bad one. No
     // face detector, no model download — just the two clicks and EyeFix.
     internal bool _eyeFixMode;
+    private bool _eyeFixRestore;                        // true = AI restore (GPEN); false = copy the good eye
     private (float X, float Y)? _eyeFixMarkOriented;   // first-click marker (oriented space), for drawing
-    private (float X, float Y)? _eyeFixTargetSource;   // first click mapped to source pixels (the eye to fix)
+    private (float X, float Y)? _eyeFixFirstSource;    // first click mapped to source pixels
 
-    private void AiEyes_Click(object sender, RoutedEventArgs e)
+    // "Copy eye": mirror the good eye onto the bad one (needs a good eye).
+    private void AiEyes_Click(object sender, RoutedEventArgs e) => EnterEyeFix(restore: false);
+    // "AI restore": generatively rebuild BOTH eyes (for when neither eye is good).
+    private void AiEyesRestore_Click(object sender, RoutedEventArgs e) => EnterEyeFix(restore: true);
+
+    private void EnterEyeFix(bool restore)
     {
         if (_editor.Source is null) { AiSay("Open an image to edit first."); return; }
         if (_aiBusy) return;
-        if (_eyeFixMode) { CancelEyeFix(); return; }   // toggle off
+        if (_eyeFixMode) { var wasRestore = _eyeFixRestore; CancelEyeFix(); if (wasRestore == restore) return; } // toggle off / switch
         // Leave any other tool so its pointer handling doesn't fight ours (also clears the lasso,
         // which SetCanvasMode("none") leaves alone).
         SetCanvasMode("none");
         _lassoMode = false; UpdateLassoUi();
         _eyeFixMode = true;
+        _eyeFixRestore = restore;
         _eyeFixMarkOriented = null;
-        _eyeFixTargetSource = null;
+        _eyeFixFirstSource = null;
         UpdateOverlayHitTest();
-        if (AiEyesBtn is not null) AiEyesBtn.Content = "Cancel";
-        AiSay("Fix eyes: click the eye to FIX (Esc to cancel).");
+        UpdateEyeFixButtons();
+        AiSay(restore
+            ? "AI restore: click the LEFT eye (Esc to cancel)."
+            : "Copy eye: click the eye to FIX (Esc to cancel).");
+    }
+
+    private void UpdateEyeFixButtons()
+    {
+        if (AiEyesBtn is not null) AiEyesBtn.Content = _eyeFixMode && !_eyeFixRestore ? "Cancel" : "Copy eye";
+        if (AiEyesRestoreBtn is not null) AiEyesRestoreBtn.Content = _eyeFixMode && _eyeFixRestore ? "Cancel" : "AI eyes";
     }
 
     private void CancelEyeFix()
@@ -132,8 +147,8 @@ public sealed partial class MainWindow
         if (!_eyeFixMode) return;
         _eyeFixMode = false;
         _eyeFixMarkOriented = null;
-        _eyeFixTargetSource = null;
-        if (AiEyesBtn is not null) AiEyesBtn.Content = "Fix eyes";
+        _eyeFixFirstSource = null;
+        UpdateEyeFixButtons();
         UpdateOverlayHitTest();
         _editCanvas?.Invalidate();
         AiSay(null);
@@ -148,25 +163,68 @@ public sealed partial class MainWindow
         { AiSay("Couldn't map that point — try again."); return; }
         var p = ((float)srcPt.X, (float)srcPt.Y);
 
-        if (_eyeFixTargetSource is null)
+        if (_eyeFixFirstSource is null)
         {
-            _eyeFixTargetSource = p;
+            _eyeFixFirstSource = p;
             _eyeFixMarkOriented = ((float)oriented.X, (float)oriented.Y);
             _editCanvas?.Invalidate();
-            AiSay("Now click the GOOD eye to copy from.");
+            AiSay(_eyeFixRestore ? "Now click the RIGHT eye." : "Now click the GOOD eye to copy from.");
             return;
         }
 
         // Second click — run the fix, then leave targeting mode.
-        var target = _eyeFixTargetSource.Value;
-        var source = p;
+        var first = _eyeFixFirstSource.Value;
+        var second = p;
+        var restore = _eyeFixRestore;
         _eyeFixMode = false;
         _eyeFixMarkOriented = null;
-        _eyeFixTargetSource = null;
-        if (AiEyesBtn is not null) AiEyesBtn.Content = "Fix eyes";
+        _eyeFixFirstSource = null;
+        UpdateEyeFixButtons();
         UpdateOverlayHitTest();
         _editCanvas?.Invalidate();
-        RunEyeFix(target, source);
+        if (restore) _ = RunEyeRestoreAsync(first, second);   // first=left eye, second=right eye
+        else RunEyeFix(first, second);                        // first=eye to fix, second=good eye
+    }
+
+    /// <summary>AI restore of both eyes with GPEN-BFR-1024, aligned from the two clicks. Async because it
+    /// may download a 285 MB model and the inference runs off the UI thread.</summary>
+    private async Task RunEyeRestoreAsync((float X, float Y) eyeA, (float X, float Y) eyeB)
+    {
+        if (_aiBusy || _editor.Source is null) return;
+        if (!await EnsureModelAsync(AiModel.FaceHiRes)) return;
+
+        SetAiBusy(true);
+        _aiCts = new CancellationTokenSource();
+        var gen = _aiGeneration;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var before = _editor.GetSourcePixels(0, out var w, out var h);
+            var dx = eyeB.X - eyeA.X; var dy = eyeB.Y - eyeA.Y;
+            var d = MathF.Sqrt(dx * dx + dy * dy);
+            if (d < 24) { AiSay("Those two points are too close — click the centre of each eye."); return; }
+            var irisR = MathF.Max(3f, 0.10f * d);
+            var searchR = 0.6f * irisR;
+            var a = EyeFix.SnapToIris(before, w, h, eyeA.X, eyeA.Y, searchR, irisR);
+            var b = EyeFix.SnapToIris(before, w, h, eyeB.X, eyeB.Y, searchR, irisR);
+            var (eyeL, eyeR) = a.X <= b.X ? (a, b) : (b, a);
+
+            AiSay("Restoring eyes…");
+            var engine = Ai;
+            var pix = (byte[])before.Clone();
+            var ct = _aiCts.Token;
+            var ok = await Task.Run(() => EyeFix.GpenRestore(engine, pix, w, h, eyeL, eyeR), ct);
+            if (!ok) { AiSay("Couldn't restore from there — click the centre of each eye."); return; }
+
+            if (!ApplyAiResult(gen, before, w, h, pix, w, h)) return;
+            if (AiStrength is not null) AiStrength.Value = 100;
+            _denoiseBase = before; _denoiseProcessed = pix; _denoiseW = w; _denoiseH = h;
+            sw.Stop();
+            AiSay($"Eyes restored  ·  {engine.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s — drag Strength to dial it");
+        }
+        catch (OperationCanceledException) { AiSay("Cancelled."); }
+        catch (Exception ex) { App.Log("EyeRestore", ex); await MessageAsync("AI restore", "Eye restore failed.\n\n" + ex.Message); AiSay(null); }
+        finally { _aiCts?.Dispose(); _aiCts = null; SetAiBusy(false); }
     }
 
     private void RunEyeFix((float X, float Y) target, (float X, float Y) source)
@@ -410,7 +468,7 @@ public sealed partial class MainWindow
     {
         _aiBusy = busy;
         if (busy) KeepModelsWarm();   // an idle release must not fire mid-operation
-        foreach (var b in new[] { AiEnhanceBtn, AiUpscaleBtn, AiDenoiseBtn, AiFacesBtn, AiEyesBtn, AiAutoBtn, SelectTextBtn })
+        foreach (var b in new[] { AiEnhanceBtn, AiUpscaleBtn, AiDenoiseBtn, AiFacesBtn, AiEyesBtn, AiEyesRestoreBtn, AiAutoBtn, SelectTextBtn })
             if (b is not null) b.IsEnabled = !busy;
         if (AiCancelBtn is not null) AiCancelBtn.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         UpdateLassoUi();   // Fill depends on both the busy state and whether a selection exists

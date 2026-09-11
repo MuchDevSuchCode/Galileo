@@ -19,6 +19,10 @@ public enum AiModel
     General,
     /// <summary>CodeFormer — blind face restoration, 512x512, with a fidelity weight.</summary>
     Face,
+    /// <summary>GPEN-BFR-1024 — high-resolution blind face restoration, 1024x1024, no fidelity input.
+    /// Used by the "AI restore" eye fix: native 1024 keeps close-up eyes crisp where CodeFormer's 512
+    /// frame turned them to mush.</summary>
+    FaceHiRes,
     /// <summary>YuNet — face detection with 5 landmarks (needed to align faces for CodeFormer).</summary>
     FaceDetect,
     /// <summary>LaMa — content-aware fill / inpainting, 512x512 (image + mask). CPU only: DirectML cannot
@@ -63,6 +67,11 @@ public sealed class AiEngine : IDisposable
             "https://huggingface.co/bluefoxcreation/Codeformer-ONNX/resolve/main/codeformer.onnx",
             "x", 1, 300_000_000, "CodeFormer face restoration (360 MB)",
             Sha256: "91e7e881c5001fea4a535e8f96eaeaa672d30c963a678a3e27f0429a6620f57a"),
+
+        [AiModel.FaceHiRes] = new(AiModel.FaceHiRes, "gpen-bfr-1024.onnx",
+            "https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/facerestore_models/GPEN-BFR-1024.onnx",
+            "input", 1, 280_000_000, "GPEN high-res face restoration (285 MB)",
+            Sha256: "cec8892093d7b99828acde97bf231fb0964d3fb11b43f3b0951e36ef1e192a3e"),
 
         [AiModel.FaceDetect] = new(AiModel.FaceDetect, "face_yunet.onnx",
             "https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2023mar.onnx",

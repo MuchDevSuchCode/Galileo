@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
 
 namespace Galileo.Services;
 
@@ -136,6 +139,147 @@ public static class EyeFix
             bgra[di + 1] = (byte)Math.Clamp(bgra[di + 1] + (g - bgra[di + 1]) * alpha, 0, 255);
             bgra[di + 2] = (byte)Math.Clamp(bgra[di + 2] + (r - bgra[di + 2]) * alpha, 0, 255);
         }
+        return true;
+    }
+
+    // ---------------- AI restore (GPEN-BFR-1024) — for when NEITHER eye is good ----------------
+
+    private const int GpenN = 1024;
+    // FFHQ 5-point template's eye positions, scaled to 1024 (the 512 template ×2).
+    private static readonly (float X, float Y) TplEyeL = (385.96276f, 479.89416f);
+    private static readonly (float X, float Y) TplEyeR = (637.8055f, 480.38732f);
+    private const float GpenERx = 95f, GpenERy = 62f;   // eye-window half-axes in 1024 template space
+
+    /// <summary>Generatively restores BOTH eyes with GPEN-BFR-1024 and composites only the eye
+    /// regions back — for photos where neither eye is a good enough template to mirror. The face is
+    /// aligned into GPEN's 1024 frame from the two USER-CLICKED eye positions (exact — no detector),
+    /// GPEN regenerates at native 1024 (so a close-up eye stays crisp), and each restored eye is
+    /// feathered + tone-matched back onto the original. Returns false on degenerate input.</summary>
+    public static bool GpenRestore(AiEngine engine, byte[] bgra, int w, int h,
+        (float X, float Y) eyeL, (float X, float Y) eyeR)
+    {
+        float dx = eyeR.X - eyeL.X, dy = eyeR.Y - eyeL.Y;
+        if (MathF.Sqrt(dx * dx + dy * dy) < 24) return false;
+        if (!SimilarityFit(new[] { eyeL, eyeR }, new[] { TplEyeL, TplEyeR }, out var m)) return false;
+
+        // Pull the aligned 1024 face (GPEN convention: RGB, (v/255-0.5)/0.5 → [-1,1], NCHW).
+        var input = new DenseTensor<float>(new[] { 1, 3, GpenN, GpenN });
+        var buf = input.Buffer.Span; const int plane = GpenN * GpenN;
+        for (var v = 0; v < GpenN; v++)
+        for (var u = 0; u < GpenN; u++)
+        {
+            m.Invert(u + 0.5f, v + 0.5f, out var sx, out var sy);
+            SampleBgra(bgra, w, h, sx - 0.5f, sy - 0.5f, out var r, out var g, out var b);
+            var o = v * GpenN + u;
+            buf[o] = r / 127.5f - 1f; buf[plane + o] = g / 127.5f - 1f; buf[2 * plane + o] = b / 127.5f - 1f;
+        }
+
+        var spec = AiEngine.Catalog[AiModel.FaceHiRes];
+        var face = engine.Use(AiModel.FaceHiRes, session =>
+        {
+            using var results = session.Run(new[] { NamedOnnxValue.CreateFromTensor(spec.Input, input) });
+            var t = results.First().AsTensor<float>();
+            return (t as DenseTensor<float> ?? t.ToDenseTensor()).Buffer.ToArray();
+        });
+
+        PasteGpenEye(bgra, w, h, face, m, TplEyeL);
+        PasteGpenEye(bgra, w, h, face, m, TplEyeR);
+        return true;
+    }
+
+    private static float GpenMaskAlpha(float u, float v, (float X, float Y) c)
+    {
+        var dx = (u - c.X) / GpenERx; var dy = (v - c.Y) / GpenERy;
+        var d = MathF.Sqrt(dx * dx + dy * dy);
+        if (d <= 0.62f) return 1f;
+        if (d >= 1f) return 0f;
+        var s = (d - 0.62f) / 0.38f;
+        return 1f - s * s * (3f - 2f * s);
+    }
+
+    private static void PasteGpenEye(byte[] dest, int w, int h, float[] face, in Sim m, (float X, float Y) tpl)
+    {
+        float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+        foreach (var (cu, cv) in new[] { (tpl.X - GpenERx, tpl.Y - GpenERy), (tpl.X + GpenERx, tpl.Y - GpenERy), (tpl.X - GpenERx, tpl.Y + GpenERy), (tpl.X + GpenERx, tpl.Y + GpenERy) })
+        { m.Invert(cu, cv, out var x, out var y); minX = MathF.Min(minX, x); maxX = MathF.Max(maxX, x); minY = MathF.Min(minY, y); maxY = MathF.Max(maxY, y); }
+        int x0 = Math.Max(0, (int)minX), y0 = Math.Max(0, (int)minY), x1 = Math.Min(w - 1, (int)maxX + 1), y1 = Math.Min(h - 1, (int)maxY + 1);
+
+        // Per-channel tone match to the original eye window (invented highlights / exposure shift).
+        Span<double> sO = stackalloc double[3], sO2 = stackalloc double[3], sR = stackalloc double[3], sR2 = stackalloc double[3];
+        double n = 0;
+        for (var y = y0; y <= y1; y++) for (var x = x0; x <= x1; x++)
+        {
+            m.Apply(x + 0.5f, y + 0.5f, out var u, out var v);
+            if (u < 0 || v < 0 || u >= GpenN - 1 || v >= GpenN - 1 || GpenMaskAlpha(u, v, tpl) < 0.5f) continue;
+            GpenBilinear(face, u, v, out var fr, out var fg, out var fb);
+            var d = (y * w + x) * 4;
+            sO[0] += dest[d]; sO2[0] += dest[d] * dest[d]; sR[0] += fb; sR2[0] += fb * fb;
+            sO[1] += dest[d + 1]; sO2[1] += dest[d + 1] * dest[d + 1]; sR[1] += fg; sR2[1] += fg * fg;
+            sO[2] += dest[d + 2]; sO2[2] += dest[d + 2] * dest[d + 2]; sR[2] += fr; sR2[2] += fr * fr;
+            n++;
+        }
+        Span<float> gain = stackalloc float[3], off = stackalloc float[3]; gain[0] = gain[1] = gain[2] = 1;
+        if (n > 64) for (var c = 0; c < 3; c++)
+        {
+            var mO = sO[c] / n; var mR = sR[c] / n;
+            var dO = Math.Sqrt(Math.Max(1, sO2[c] / n - mO * mO)); var dR = Math.Sqrt(Math.Max(1, sR2[c] / n - mR * mR));
+            gain[c] = (float)Math.Clamp(dO / dR, 0.6, 1.5); off[c] = (float)(mO - gain[c] * mR);
+        }
+
+        for (var y = y0; y <= y1; y++) for (var x = x0; x <= x1; x++)
+        {
+            m.Apply(x + 0.5f, y + 0.5f, out var u, out var v);
+            if (u < 0 || v < 0 || u >= GpenN - 1 || v >= GpenN - 1) continue;
+            var a = GpenMaskAlpha(u, v, tpl); if (a <= 0f) continue;
+            GpenBilinear(face, u, v, out var fr, out var fg, out var fb);
+            fb = fb * gain[0] + off[0]; fg = fg * gain[1] + off[1]; fr = fr * gain[2] + off[2];
+            var d = (y * w + x) * 4;
+            dest[d] = (byte)Math.Clamp(dest[d] + (fb - dest[d]) * a, 0, 255);
+            dest[d + 1] = (byte)Math.Clamp(dest[d + 1] + (fg - dest[d + 1]) * a, 0, 255);
+            dest[d + 2] = (byte)Math.Clamp(dest[d + 2] + (fr - dest[d + 2]) * a, 0, 255);
+        }
+    }
+
+    private static void GpenBilinear(float[] s, float u, float v, out float r, out float g, out float b)
+    {
+        const int plane = GpenN * GpenN; int xi = (int)u, yi = (int)v; float fx = u - xi, fy = v - yi;
+        float Ch(int c)
+        {
+            var o = c * plane;
+            float p00 = s[o + yi * GpenN + xi], p10 = s[o + yi * GpenN + xi + 1];
+            float p01 = s[o + (yi + 1) * GpenN + xi], p11 = s[o + (yi + 1) * GpenN + xi + 1];
+            var tp = p00 + (p10 - p00) * fx; var bt = p01 + (p11 - p01) * fx;
+            return (tp + (bt - tp) * fy + 1f) * 127.5f;   // [-1,1] → [0,255]
+        }
+        r = Ch(0); g = Ch(1); b = Ch(2);
+    }
+
+    private static void SampleBgra(byte[] bgra, int w, int h, float x, float y, out float r, out float g, out float b)
+        => Sample(bgra, w, h, x, y, out r, out g, out b);
+
+    /// <summary>A similarity transform (uniform scale + rotation + translation).</summary>
+    public readonly struct Sim
+    {
+        public readonly float C, S, Tx, Ty;
+        public Sim(float c, float s, float tx, float ty) { C = c; S = s; Tx = tx; Ty = ty; }
+        public void Apply(float x, float y, out float u, out float v) { u = C * x - S * y + Tx; v = S * x + C * y + Ty; }
+        public void Invert(float u, float v, out float x, out float y)
+        { var det = C * C + S * S; var du = u - Tx; var dv = v - Ty; x = (C * du + S * dv) / det; y = (-S * du + C * dv) / det; }
+    }
+
+    /// <summary>Least-squares similarity fit (exact for 2 point pairs) mapping src→dst.</summary>
+    private static bool SimilarityFit((float X, float Y)[] src, (float X, float Y)[] dst, out Sim m)
+    {
+        m = default; var n = Math.Min(src.Length, dst.Length); if (n < 2) return false;
+        float msx = 0, msy = 0, mdx = 0, mdy = 0;
+        for (var i = 0; i < n; i++) { msx += src[i].X; msy += src[i].Y; mdx += dst[i].X; mdy += dst[i].Y; }
+        msx /= n; msy /= n; mdx /= n; mdy /= n;
+        float a = 0, b = 0, den = 0;
+        for (var i = 0; i < n; i++)
+        { float sx = src[i].X - msx, sy = src[i].Y - msy, dx = dst[i].X - mdx, dy = dst[i].Y - mdy; a += sx * dx + sy * dy; b += sx * dy - sy * dx; den += sx * sx + sy * sy; }
+        if (den < 1e-6f) return false;
+        var c = a / den; var s = b / den;
+        m = new Sim(c, s, mdx - (c * msx - s * msy), mdy - (s * msx + c * msy));
         return true;
     }
 
