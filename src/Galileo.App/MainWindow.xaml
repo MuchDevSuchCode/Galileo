@@ -1000,7 +1000,7 @@
                                         ToolTipService.ToolTip="Restore faces (CodeFormer)" />
                                 <Button x:Name="AiEyesBtn" Content="Fix eyes" Click="AiEyes_Click"
                                         AutomationProperties.Name="Fix eyes"
-                                        ToolTipService.ToolTip="Repair a malformed or asymmetric eye by mirroring the sharper eye onto it — keeps gaze and lighting, full resolution, rest of the face untouched" />
+                                        ToolTipService.ToolTip="Fix a bad eye: click the eye to fix, then click the good eye to copy from. Mirrors it at full resolution, keeping gaze and lighting. Drag Strength after to dial it." />
                             </StackPanel>
                             <TextBlock Text="Strength (denoise · eye fix)" Foreground="White" FontSize="12" />
                             <Slider x:Name="AiStrength" Minimum="0" Maximum="100" Value="40" ValueChanged="AiStrength_Changed" AutomationProperties.Name="Strength" />

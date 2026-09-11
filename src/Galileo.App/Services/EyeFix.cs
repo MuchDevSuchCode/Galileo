@@ -17,10 +17,16 @@ namespace Galileo.Services;
 /// </summary>
 public static class EyeFix
 {
-    /// <summary>Mirrors the sharper eye onto the other, in place. <paramref name="eyeL"/> /
-    /// <paramref name="eyeR"/> are the two eye-centre landmarks (image-left first, as YuNet reports
-    /// them). Returns false when the eyes are too small/close to work on.</summary>
-    public static bool MirrorFix(byte[] bgra, int w, int h, (float X, float Y) eyeL, (float X, float Y) eyeR)
+    /// <summary>Mirrors one eye onto the other, in place. <paramref name="eyeL"/> / <paramref name="eyeR"/>
+    /// are the two eye-centre positions (image-left first). <paramref name="target"/> chooses which one
+    /// gets fixed: <c>Auto</c> = the blurrier eye (for auto-detected use); <c>Left</c>/<c>Right</c> = the
+    /// user explicitly said which eye to fix (click-to-target). <paramref name="requireIris"/> runs the
+    /// safety gate — keep it on for auto detection, off when the user clicked the spot themselves.
+    /// Returns false when the eyes are too small/close or (auto) not confidently irises.</summary>
+    public enum TargetEye { Auto, Left, Right }
+
+    public static bool MirrorFix(byte[] bgra, int w, int h, (float X, float Y) eyeL, (float X, float Y) eyeR,
+        TargetEye target = TargetEye.Auto, bool requireIris = true)
     {
         // Face-local frame: û along the eye axis, v̂ perpendicular (handles tilted heads).
         float dx = eyeR.X - eyeL.X, dy = eyeR.Y - eyeL.Y;
@@ -29,24 +35,35 @@ public static class EyeFix
         float ux = dx / d, uy = dy / d;
         float vx = -uy, vy = ux;
 
-        // SAFETY GATE. YuNet's landmarks drift badly on tilted / partially-cropped faces — a wrong
-        // pair once put a mirrored mini-eye on the subject's nose bridge. Refuse unless BOTH supplied
-        // positions actually sit on an iris (a dark disc ringed by brighter sclera/skin): the disc
-        // mean must be clearly darker than the surrounding annulus. No confident iris → do nothing.
-        var probe = 0.11f * d;
-        if (DiscContrast(bgra, w, h, eyeL.X, eyeL.Y, probe) > -8f) return false;
-        if (DiscContrast(bgra, w, h, eyeR.X, eyeR.Y, probe) > -8f) return false;
+        // SAFETY GATE (auto detection only). YuNet's landmarks drift badly on tilted / partially-cropped
+        // faces — a wrong pair once put a mirrored mini-eye on the subject's nose bridge. Refuse unless
+        // BOTH positions actually sit on an iris (dark disc ringed by brighter sclera/skin). Skipped when
+        // the user clicked the eyes themselves and each click was already snapped to its iris.
+        if (requireIris)
+        {
+            var probe = 0.11f * d;
+            if (DiscContrast(bgra, w, h, eyeL.X, eyeL.Y, probe) > -8f) return false;
+            if (DiscContrast(bgra, w, h, eyeR.X, eyeR.Y, probe) > -8f) return false;
+        }
 
         // Region ellipse (in the local frame), sized from the interocular distance.
         var rx = 0.33f * d;
         var ry = 0.24f * d;
 
-        // The SOURCE is the sharper eye — the malformed eye in damaged/AI photos is consistently
-        // the blurrier, smearier of the two (Laplacian variance).
-        var sharpL = Sharpness(bgra, w, h, eyeL, ux, uy, vx, vy, rx, ry);
-        var sharpR = Sharpness(bgra, w, h, eyeR, ux, uy, vx, vy, rx, ry);
-        var src = sharpL >= sharpR ? eyeL : eyeR;
-        var dst = sharpL >= sharpR ? eyeR : eyeL;
+        // Which eye is the TARGET (gets replaced)? Explicit when the user clicked it; otherwise the
+        // blurrier eye — the malformed one in damaged/AI photos is consistently the smearier (Laplacian
+        // variance), so the sharper one is the source template.
+        bool targetIsLeft;
+        if (target == TargetEye.Left) targetIsLeft = true;
+        else if (target == TargetEye.Right) targetIsLeft = false;
+        else
+        {
+            var sharpL = Sharpness(bgra, w, h, eyeL, ux, uy, vx, vy, rx, ry);
+            var sharpR = Sharpness(bgra, w, h, eyeR, ux, uy, vx, vy, rx, ry);
+            targetIsLeft = sharpL < sharpR;   // fix the blurrier one
+        }
+        var dst = targetIsLeft ? eyeL : eyeR;
+        var src = targetIsLeft ? eyeR : eyeL;
 
         // Iris centres (local-frame offsets from each eye landmark): centroid of the darkest pixels.
         var irisS = IrisOffset(bgra, w, h, src, ux, uy, vx, vy, rx, ry);
@@ -120,6 +137,34 @@ public static class EyeFix
             bgra[di + 2] = (byte)Math.Clamp(bgra[di + 2] + (r - bgra[di + 2]) * alpha, 0, 255);
         }
         return true;
+    }
+
+    /// <summary>Refines a clicked point onto the nearest iris centre — the darkest disc (relative to
+    /// its surround) within <paramref name="searchR"/> px of the click. <paramref name="irisR"/> is the
+    /// expected iris radius (roughly eyeWidth/4). Lets a rough click become a precise, gaze-correct
+    /// anchor without any face detector in the loop.</summary>
+    public static (float X, float Y) SnapToIris(byte[] bgra, int w, int h, float clickX, float clickY,
+        float searchR, float irisR)
+    {
+        var best = (X: clickX, Y: clickY);
+        var bestScore = float.MaxValue;
+        var step = MathF.Max(1f, irisR / 4f);
+        for (var oy = -searchR; oy <= searchR; oy += step)
+        for (var ox = -searchR; ox <= searchR; ox += step)
+        {
+            var cx = clickX + ox; var cy = clickY + oy;
+            var s = DiscContrast(bgra, w, h, cx, cy, irisR)
+                    + 4f * MathF.Sqrt(ox * ox + oy * oy) / MathF.Max(1f, searchR); // slight pull to the click
+            if (s < bestScore) { bestScore = s; best = (cx, cy); }
+        }
+        // 1px local refine.
+        for (var oy = -2f; oy <= 2f; oy += 1f)
+        for (var ox = -2f; ox <= 2f; ox += 1f)
+        {
+            var s = DiscContrast(bgra, w, h, best.X + ox, best.Y + oy, irisR);
+            if (s < bestScore) { bestScore = s; best = (best.X + ox, best.Y + oy); }
+        }
+        return best;
     }
 
     private static (float A, float B) Local(float x, float y, (float X, float Y) c, float ux, float uy, float vx, float vy)

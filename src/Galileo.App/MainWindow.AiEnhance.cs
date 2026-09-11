@@ -101,10 +101,121 @@ public sealed partial class MainWindow
     private async void AiUpscale_Click(object sender, RoutedEventArgs e) => await RunAiAsync(AiJob.Upscale);
     private async void AiDenoise_Click(object sender, RoutedEventArgs e) => await RunAiAsync(AiJob.Denoise);
     private async void AiFaces_Click(object sender, RoutedEventArgs e) => await RunAiAsync(AiJob.Faces);
-    private async void AiEyes_Click(object sender, RoutedEventArgs e) => await RunAiAsync(AiJob.Eyes);
+    // ---- Eye fix (click-to-target) ----
+    // Auto face-detection proved unreliable on the close-ups this is for (tilted / partial faces →
+    // landmarks drift, once onto the nose bridge). So the user points at it: click the bad eye, then
+    // the good eye; each click snaps to its iris and the good eye is mirrored onto the bad one. No
+    // face detector, no model download — just the two clicks and EyeFix.
+    internal bool _eyeFixMode;
+    private (float X, float Y)? _eyeFixMarkOriented;   // first-click marker (oriented space), for drawing
+    private (float X, float Y)? _eyeFixTargetSource;   // first click mapped to source pixels (the eye to fix)
+
+    private void AiEyes_Click(object sender, RoutedEventArgs e)
+    {
+        if (_editor.Source is null) { AiSay("Open an image to edit first."); return; }
+        if (_aiBusy) return;
+        if (_eyeFixMode) { CancelEyeFix(); return; }   // toggle off
+        // Leave any other tool so its pointer handling doesn't fight ours (also clears the lasso,
+        // which SetCanvasMode("none") leaves alone).
+        SetCanvasMode("none");
+        _lassoMode = false; UpdateLassoUi();
+        _eyeFixMode = true;
+        _eyeFixMarkOriented = null;
+        _eyeFixTargetSource = null;
+        UpdateOverlayHitTest();
+        if (AiEyesBtn is not null) AiEyesBtn.Content = "Cancel";
+        AiSay("Fix eyes: click the eye to FIX (Esc to cancel).");
+    }
+
+    private void CancelEyeFix()
+    {
+        if (!_eyeFixMode) return;
+        _eyeFixMode = false;
+        _eyeFixMarkOriented = null;
+        _eyeFixTargetSource = null;
+        if (AiEyesBtn is not null) AiEyesBtn.Content = "Fix eyes";
+        UpdateOverlayHitTest();
+        _editCanvas?.Invalidate();
+        AiSay(null);
+    }
+
+    /// <summary>A click at <paramref name="oriented"/> (oriented-image space) during eye-fix targeting.</summary>
+    private void OnEyeFixClick(Point oriented)
+    {
+        if (_editor.Source is null) { CancelEyeFix(); return; }
+        // Oriented → raw source pixels (the space EyeFix operates in).
+        if (!_editor.TryOrientedToSource(_edit, oriented, out var srcPt))
+        { AiSay("Couldn't map that point — try again."); return; }
+        var p = ((float)srcPt.X, (float)srcPt.Y);
+
+        if (_eyeFixTargetSource is null)
+        {
+            _eyeFixTargetSource = p;
+            _eyeFixMarkOriented = ((float)oriented.X, (float)oriented.Y);
+            _editCanvas?.Invalidate();
+            AiSay("Now click the GOOD eye to copy from.");
+            return;
+        }
+
+        // Second click — run the fix, then leave targeting mode.
+        var target = _eyeFixTargetSource.Value;
+        var source = p;
+        _eyeFixMode = false;
+        _eyeFixMarkOriented = null;
+        _eyeFixTargetSource = null;
+        if (AiEyesBtn is not null) AiEyesBtn.Content = "Fix eyes";
+        UpdateOverlayHitTest();
+        _editCanvas?.Invalidate();
+        RunEyeFix(target, source);
+    }
+
+    private void RunEyeFix((float X, float Y) target, (float X, float Y) source)
+    {
+        try
+        {
+            var gen = _aiGeneration;
+            var before = _editor.GetSourcePixels(0, out var w, out var h);
+
+            // The two clicks give the scale: iris radius ≈ 10% of the inter-eye distance.
+            var dx = source.X - target.X; var dy = source.Y - target.Y;
+            var d = MathF.Sqrt(dx * dx + dy * dy);
+            if (d < 24) { AiSay("Those two points are too close — click the centre of each eye."); return; }
+            var irisR = MathF.Max(3f, 0.10f * d);
+            // Snap only REFINES the click a few px onto the darkest micro-disc — a wide search would
+            // relocate to a brow/lash shadow. The mirror's own internal iris-alignment then recentres,
+            // so the exact click position isn't critical (validated with sloppy clicks).
+            var searchR = 0.6f * irisR;
+
+            // Snap each rough click onto its actual iris so the mirror lands gaze-correct.
+            var t = EyeFix.SnapToIris(before, w, h, target.X, target.Y, searchR, irisR);
+            var s = EyeFix.SnapToIris(before, w, h, source.X, source.Y, searchR, irisR);
+
+            // Order into (image-left, image-right) and say which one is the target.
+            var (eyeL, eyeR, which) = t.X <= s.X
+                ? (t, s, EyeFix.TargetEye.Left)
+                : (s, t, EyeFix.TargetEye.Right);
+
+            var pix = (byte[])before.Clone();
+            // requireIris:false — the user aimed at the eyes and the clicks were iris-snapped, so the
+            // auto safety gate (built for unreliable detector landmarks) would only get in the way.
+            if (!EyeFix.MirrorFix(pix, w, h, eyeL, eyeR, which, requireIris: false))
+            { AiSay("Couldn't fix from there — click directly on each pupil."); return; }
+
+            if (!ApplyAiResult(gen, before, w, h, pix, w, h)) return;
+            // Arm the live Strength slider (reuses the denoise blend pair): drag to dial the fix.
+            if (AiStrength is not null) AiStrength.Value = 100;
+            _denoiseBase = before; _denoiseProcessed = pix; _denoiseW = w; _denoiseH = h;
+            AiSay("Eye fixed — drag Strength to dial it, or Undo to revert.");
+        }
+        catch (Exception ex)
+        {
+            App.Log("EyeFix", ex);
+            AiSay("Eye fix failed: " + ex.Message);
+        }
+    }
     private async void AiAuto_Click(object sender, RoutedEventArgs e) => await RunAutopilotAsync();
 
-    private enum AiJob { Enhance, Upscale, Denoise, Faces, Eyes }
+    private enum AiJob { Enhance, Upscale, Denoise, Faces }
 
     /// <summary>Turns the drawn lasso into the source-space selection mask, combining it with any
     /// existing selection per the Photoshop-style mode captured at drag start (add/subtract/intersect).</summary>
@@ -420,7 +531,6 @@ public sealed partial class MainWindow
     {
         AiJob.Enhance or AiJob.Upscale => AiModel.Upscale,
         AiJob.Denoise => AiModel.General,
-        AiJob.Eyes => AiModel.FaceDetect,   // the eye fix only needs landmarks (0.2 MB) — no CodeFormer
         _ => AiModel.Face,
     };
 
@@ -450,7 +560,6 @@ public sealed partial class MainWindow
                 AiJob.Upscale => $"Upscaling {w}×{h} → {w * 4}×{h * 4}…",
                 AiJob.Denoise => $"Denoising {w}×{h}…",
                 AiJob.Faces => "Finding and restoring faces…",
-                AiJob.Eyes => "Finding faces and fixing eyes…",
                 _ => $"Enhancing {w}×{h}…",
             });
 
@@ -473,29 +582,13 @@ public sealed partial class MainWindow
                         // then re-blend from the original instantly without another inference pass.
                         denoisedFull = engine.Denoise(pixels, w, h, 1.0, p, ct);
                         return AiEngine.Blend(pixels, denoisedFull, strength);
-                    case AiJob.Eyes:
-                    {
-                        // Retoucher's technique: mirror the sharper eye onto the other, at native
-                        // resolution, gaze-preserving and tone-matched (see EyeFix). No 512px face
-                        // model in the loop — the earlier CodeFormer approach wrecked close-ups.
-                        var detected = FaceRestore.DetectRestorable(engine, pixels, w, h, ct);
-                        var pix = (byte[])pixels.Clone();
-                        foreach (var face in detected)
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            if (EyeFix.MirrorFix(pix, w, h, face.Landmarks[0], face.Landmarks[1])) faces++;
-                        }
-                        return pix;
-                    }
                     default: return FaceRestore.Run(engine, pixels, w, h, fidelity, out faces, p, ct);
                 }
             }, ct);
 
-            if (job is AiJob.Faces or AiJob.Eyes && faces == 0)
+            if (job == AiJob.Faces && faces == 0)
             {
-                AiSay(job == AiJob.Eyes
-                    ? "No usable face found — the eye fix needs the whole face (both eyes and mouth) in frame."
-                    : "No faces found in this image.");
+                AiSay("No faces found in this image.");
                 return;
             }
 
@@ -505,23 +598,12 @@ public sealed partial class MainWindow
                 // Arm the live slider (after ApplyAiResult, which clears any previous pair).
                 _denoiseBase = pixels; _denoiseProcessed = denoisedFull; _denoiseW = w; _denoiseH = h;
             }
-            else if (job == AiJob.Eyes)
-            {
-                // The eye fix applies at full strength; arm the SAME live-blend pair so the Strength
-                // slider dials it back instantly (the differences are confined to the eye regions,
-                // so the global blend IS an eye-strength control). Snap the slider to 100 first so
-                // its position reflects what is on screen — while the pair is unarmed the handler
-                // no-ops, so this doesn't re-render.
-                if (AiStrength is not null) AiStrength.Value = 100;
-                _denoiseBase = pixels; _denoiseProcessed = result; _denoiseW = outW; _denoiseH = outH;
-            }
             sw.Stop();
             AiSay(job switch
             {
                 AiJob.Upscale => $"Upscaled → {outW}×{outH}",
                 AiJob.Denoise => $"Denoised (strength {strength:P0}) — drag the slider to fine-tune live",
                 AiJob.Faces => $"Restored {faces} face{(faces == 1 ? "" : "s")}",
-                AiJob.Eyes => $"Fixed eyes on {faces} face{(faces == 1 ? "" : "s")} (mirrored the sharper eye) — drag Strength to dial it",
                 _ => $"Enhanced → {outW}×{outH}",
             } + $"  ·  {engine.Provider}  ·  {sw.Elapsed.TotalSeconds:0.0}s");
         }

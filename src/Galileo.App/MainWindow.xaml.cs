@@ -6542,6 +6542,8 @@ public sealed partial class MainWindow : Window
 
             case VirtualKey.D when InEditor && IsCtrlDown() && !IsTextInputFocused():
                 ClearSelection(); e.Handled = true; break;      // Photoshop's Deselect
+            case VirtualKey.Escape when InEditor && _eyeFixMode:
+                CancelEyeFix(); e.Handled = true; break;        // back out of eye-fix targeting first
             case VirtualKey.Escape when InEditor:
                 EditCancel_Click(this, new RoutedEventArgs());  // same unsaved-changes guard as Cancel
                 e.Handled = true; break;

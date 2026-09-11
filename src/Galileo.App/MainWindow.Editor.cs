@@ -222,6 +222,7 @@ public sealed partial class MainWindow
 
     private void ExitEditMode(bool reloadViewer, bool activateWindow = true)
     {
+        CancelEyeFix();   // don't carry eye-fix targeting out of the editor
         EditorView.Visibility = Visibility.Collapsed;
         ViewerView.Visibility = Visibility.Visible;
         UpdateChromeForDarkSurface();
@@ -506,6 +507,15 @@ public sealed partial class MainWindow
         foreach (var m in _markup) DrawShape(ds, m, mx, my, scale);
         if (_pendingShape is MarkupItem ps) DrawShape(ds, ps, mx, my, scale);
 
+        // Eye-fix: ring the first-clicked eye (in oriented space) while awaiting the second click.
+        if (_eyeFixMode && _eyeFixMarkOriented is { } mk)
+        {
+            var mcx = (float)(mx + mk.X * scale);
+            var mcy = (float)(my + mk.Y * scale);
+            ds.DrawCircle(mcx, mcy, 14, Color.FromArgb(255, 90, 220, 90), 2.5f);
+            ds.DrawCircle(mcx, mcy, 2, Color.FromArgb(255, 90, 220, 90), 3f);
+        }
+
         // The committed selection (from the lasso or from text detection) lives in source-pixel space, so
         // it's put through the same geometry as the image to line up on the rotated/flipped preview.
         if (_selOverlay is not null)
@@ -668,6 +678,11 @@ public sealed partial class MainWindow
 
     private void SetCanvasMode(string mode)
     {
+        // Engaging any canvas tool leaves eye-fix targeting (they both own pointer clicks). Guard on
+        // the flag so AiEyes_Click's own SetCanvasMode("none") — which runs BEFORE it sets the flag —
+        // isn't a problem.
+        if (_eyeFixMode) CancelEyeFix();
+
         // Engaging a tool leaves compare mode. While comparing, the canvas draws two images and the
         // fit-rect no longer describes where the image is — a crop or lasso drag would map to the wrong
         // place and wasn't even drawn, so you could silently crop a photo you never saw a rectangle on.
@@ -698,7 +713,8 @@ public sealed partial class MainWindow
     /// shape, the compare view (divider handle and pan/zoom inspection), or panning a zoomed-in preview.</summary>
     private void UpdateOverlayHitTest() =>
         OverlayCanvas.IsHitTestVisible =
-            _cropMode || _markupTool.Length > 0 || _lassoMode || _compareMode != "off" || _editZoom > 1.0001;
+            _cropMode || _markupTool.Length > 0 || _lassoMode || _compareMode != "off" || _editZoom > 1.0001
+            || _eyeFixMode;
 
     // ---- lasso selection ----
 
@@ -840,6 +856,9 @@ public sealed partial class MainWindow
 
     private void Overlay_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        // Eye fix targeting owns the click: first click marks the eye to fix, second the eye to copy.
+        if (_eyeFixMode) { OnEyeFixClick(DisplayToOriented(e.GetCurrentPoint(OverlayCanvas).Position)); return; }
+
         // Split mode: only a grab on the divider handle drags it — everywhere else the drag pans, so the
         // user can zoom in and inspect matching areas on both sides.
         if (_compareMode == "split" && NearSplitDivider(e.GetCurrentPoint(OverlayCanvas).Position))
