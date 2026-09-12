@@ -186,6 +186,57 @@ public sealed partial class MainWindow
         else RunEyeFix(first, second);                        // first=eye to fix, second=good eye
     }
 
+    // Diagnostic: dump exactly what the eye tools saw and produced, so failures on the real click
+    // path (which a coordinate harness can't reproduce) can be inspected. Writes to the Desktop.
+    private const bool EyeFixDebug = true;
+
+    private async Task DumpEyeDebugAsync(string tag, byte[] before, byte[] after, int w, int h,
+        (float X, float Y) snapA, (float X, float Y) snapB)
+    {
+        if (!EyeFixDebug) return;
+        try
+        {
+            var dir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Galileo eye debug");
+            System.IO.Directory.CreateDirectory(dir);
+            var stamp = DateTime.Now.ToString("HHmmss");
+
+            var marked = (byte[])before.Clone();
+            void Cross((float X, float Y) p, byte r, byte g, byte b)
+            {
+                for (var k = -8; k <= 8; k++)
+                {
+                    void Set(int x, int y)
+                    {
+                        if (x < 0 || y < 0 || x >= w || y >= h) return;
+                        var i = (y * w + x) * 4; marked[i] = b; marked[i + 1] = g; marked[i + 2] = r; marked[i + 3] = 255;
+                    }
+                    Set((int)p.X + k, (int)p.Y); Set((int)p.X, (int)p.Y + k);
+                }
+            }
+            Cross(snapA, 0, 255, 0);     // green = first click, snapped
+            Cross(snapB, 255, 0, 255);   // magenta = second click, snapped
+
+            await SaveBgraPngAsync(System.IO.Path.Combine(dir, $"{tag}-{stamp}-1-input+points.png"), marked, w, h);
+            await SaveBgraPngAsync(System.IO.Path.Combine(dir, $"{tag}-{stamp}-2-result.png"), after, w, h);
+            AiSay($"Saved eye-fix debug to Desktop\\Galileo eye debug ({tag}-{stamp}).");
+        }
+        catch (Exception ex) { App.Log("EyeDebug", ex); }
+    }
+
+    private static async Task SaveBgraPngAsync(string path, byte[] bgra, int w, int h)
+    {
+        var folder = await Windows.Storage.StorageFolder.GetFolderFromPathAsync(System.IO.Path.GetDirectoryName(path)!);
+        var file = await folder.CreateFileAsync(System.IO.Path.GetFileName(path),
+            Windows.Storage.CreationCollisionOption.ReplaceExisting);
+        using var stream = await file.OpenAsync(Windows.Storage.FileAccessMode.ReadWrite);
+        var enc = await Windows.Graphics.Imaging.BitmapEncoder.CreateAsync(
+            Windows.Graphics.Imaging.BitmapEncoder.PngEncoderId, stream);
+        enc.SetPixelData(Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8,
+            Windows.Graphics.Imaging.BitmapAlphaMode.Premultiplied, (uint)w, (uint)h, 96, 96, bgra);
+        await enc.FlushAsync();
+    }
+
     /// <summary>AI restore of both eyes with GPEN-BFR-1024, aligned from the two clicks. Async because it
     /// may download a 285 MB model and the inference runs off the UI thread.</summary>
     private async Task RunEyeRestoreAsync((float X, float Y) eyeA, (float X, float Y) eyeB)
@@ -216,6 +267,7 @@ public sealed partial class MainWindow
             var ok = await Task.Run(() => EyeFix.GpenRestore(engine, pix, w, h, eyeL, eyeR), ct);
             if (!ok) { AiSay("Couldn't restore from there — click the centre of each eye."); return; }
 
+            await DumpEyeDebugAsync("airestore", before, pix, w, h, eyeL, eyeR);
             if (!ApplyAiResult(gen, before, w, h, pix, w, h)) return;
             if (AiStrength is not null) AiStrength.Value = 100;
             _denoiseBase = before; _denoiseProcessed = pix; _denoiseW = w; _denoiseH = h;
@@ -259,6 +311,7 @@ public sealed partial class MainWindow
             if (!EyeFix.MirrorFix(pix, w, h, eyeL, eyeR, which, requireIris: false))
             { AiSay("Couldn't fix from there — click directly on each pupil."); return; }
 
+            _ = DumpEyeDebugAsync("copyeye", before, pix, w, h, eyeL, eyeR);
             if (!ApplyAiResult(gen, before, w, h, pix, w, h)) return;
             // Arm the live Strength slider (reuses the denoise blend pair): drag to dial the fix.
             if (AiStrength is not null) AiStrength.Value = 100;
