@@ -65,6 +65,13 @@ public partial class App : Application
 
     private Window? _window;
 
+    /// <summary>The single reusable media-viewer window used by "always open media in a new window".
+    /// Successive media opens load into THIS window instead of each spawning its own — one window, one
+    /// MediaPlayer, so video decode sessions can't pile up (they used to, until the GPU ran out and
+    /// playback went black). Explicit "Open in new window" (Alt+click / context menu) still makes its own
+    /// separate windows. Set by MainWindow when it creates/reuses the viewer; cleared when it closes.</summary>
+    internal MainWindow? MediaViewer { get; set; }
+
     public App()
     {
         InitializeComponent();

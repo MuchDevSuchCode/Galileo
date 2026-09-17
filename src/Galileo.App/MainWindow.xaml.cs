@@ -120,6 +120,7 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _vaultFlushTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     private readonly DispatcherTimer _vaultFlushDebounce = new() { Interval = TimeSpan.FromMilliseconds(2500) };
     private bool _closingForVaultLock;  // guards the re-entrant AppWindow.Closing lock flow
+    private bool _isClosed;             // set once real-close cleanup has run; a reused-viewer guard
     // Push: watch the unlocked vault's working folder so we can tell active viewers the instant it changes
     // (so they re-list without waiting for their poll). Debounced to coalesce bursts (e.g. multi-file adds).
 
@@ -2592,6 +2593,37 @@ public sealed partial class MainWindow : Window
         return true;
     }
 
+    /// <summary>"Always open media in a new window": show the file in the single SHARED viewer window,
+    /// reusing it if it's still open so successive opens don't each spawn a window (which each carried
+    /// their own MediaPlayer and piled up video decode sessions until playback black-screened). The first
+    /// open creates the viewer in-process — no separate-process round-trip like OpenInNewWindow. Vault
+    /// files stay in this window: a guest window has no vault session.</summary>
+    private void OpenMediaInSharedViewer(string path)
+    {
+        if (IsInCurrentVault(path)) { _ = OpenLocalFileInViewerAsync(path); return; }
+
+        var app = Application.Current as App;
+        if (app?.MediaViewer is { } viewer && viewer.TryShowMedia(path)) return; // reused a live viewer
+
+        var extra = new MainWindow(path, secondaryWindow: true);
+        if (app is not null) app.MediaViewer = extra;
+        extra.Activate();
+    }
+
+    /// <summary>Loads a media file into this (already-open) viewer window and brings it forward. Returns
+    /// false if the window is closing/closed so the caller opens a fresh one instead.</summary>
+    public bool TryShowMedia(string path)
+    {
+        if (_isClosed) return false;
+        try
+        {
+            RestoreFromBackground(); // un-hide (if tray/minimized) and bring to front
+            OpenViewerDirect(path);  // swaps the reused player's source; no new window, no new player
+            return true;
+        }
+        catch (Exception ex) { App.Log("ShowMedia", ex); return false; }
+    }
+
     /// <summary>Launches a fresh Galileo instance to open the path in its own window (works even in
     /// single-instance mode via the --new-window flag). Vault files open in-process instead — a second
     /// instance would wipe the vault working folder and read decrypted files outside the vault session.</summary>
@@ -2859,7 +2891,7 @@ public sealed partial class MainWindow : Window
             && (item.IsImage || PhotoLibrary.IsMedia(item.Path))
             && !IsInCurrentVault(item.Path))
         {
-            OpenInNewWindow(item.Path);
+            OpenMediaInSharedViewer(item.Path);
             return;
         }
 
@@ -3055,23 +3087,14 @@ public sealed partial class MainWindow : Window
 
     private void StopVideo() => ReleaseVideoSource(VideoPlayer);
 
-    /// <summary>Swaps the current video's source out of a MediaPlayerElement and forces the native Media
-    /// Foundation pipeline to release synchronously, while KEEPING the element's MediaPlayer for reuse.
-    ///
-    /// The symptom this fights: after several plays, video flickers then goes black until the app
-    /// restarts. The consistent count is the tell — it's a hardware video-decoder session limit, not
-    /// gradual GPU memory growth. MediaSource.Dispose() only *marks* the underlying MF decoder (a native
-    /// COM object) for release; the hardware decode session is actually freed on GC finalization, so
-    /// undisposed decoders pile up and eventually the next video can't get a session → black.
-    ///
-    /// Two lessons paid for in earlier attempts:
-    ///  - It takes TWO full GC passes. The object that holds the decoder is itself only collectable
-    ///    after its own finalizer runs, so a single Collect+WaitForPendingFinalizers leaves ~half of
-    ///    them pending — which is exactly why forcing one pass moved the black-out from ~4 to ~8-9 plays.
-    ///  - We reuse ONE player and only swap its Source. Recreating the MediaPlayer per open (an earlier
-    ///    attempt) churned the element's swap chain, which it doesn't promptly release — the residual
-    ///    leak. One persistent player = one swap chain for the whole session.
-    /// Runs only on a video close/switch, never per frame.</summary>
+    /// <summary>Swaps the current video's source out of a MediaPlayerElement, keeping the element's
+    /// MediaPlayer for reuse. Each video-decode session (a native Media Foundation object) is freed when
+    /// its MediaSource is disposed and the object finalizes. What used to exhaust the GPU's decode
+    /// sessions (flicker → black after a handful of videos) was NOT this swap — it was every media open
+    /// spawning its own window, each with its own player, so the sessions multiplied across windows.
+    /// With one shared viewer window reusing one player (see OpenMediaInSharedViewer), at most the current
+    /// plus one just-released decoder is ever live, which the normal GC reclaims long before the session
+    /// limit — no forced collection needed on this hot path.</summary>
     private static void ReleaseVideoSource(Microsoft.UI.Xaml.Controls.MediaPlayerElement el)
     {
         try
@@ -3081,19 +3104,15 @@ public sealed partial class MainWindow : Window
             try { mp?.Pause(); } catch { }
             el.Source = null;                     // detach from the element...
             try { if (mp is not null) mp.Source = null; } catch { } // ...and off the player itself
-            src?.Dispose();                       // marks the MF decoder for release
-
-            // Drain the two-level finalizer chain so the hardware decode session is reclaimed NOW.
-            // (Process-wide, so it also releases decoders left pending by previously-closed windows —
-            // each mp4 open spawns its own window, and that's where the sessions were piling up.)
-            GC.Collect(); GC.WaitForPendingFinalizers();
-            GC.Collect(); GC.WaitForPendingFinalizers();
+            src?.Dispose();                       // frees the MF decode session (on finalization)
         }
         catch { /* ignore */ }
     }
 
     /// <summary>Full teardown for window close: release the source AND dispose the MediaPlayer the
-    /// element auto-created (it never disposes it itself), so a closed window leaks no GPU resources.</summary>
+    /// element auto-created (it never disposes it itself), so a closed window leaks no GPU resources. One
+    /// GC pass here forces that window's decoder to finalize promptly — cheap insurance for the rare case
+    /// of several explicit "Open in new window" viewers being opened and closed in quick succession.</summary>
     private static void DisposeVideoPlayer(Microsoft.UI.Xaml.Controls.MediaPlayerElement el)
     {
         try
@@ -3105,7 +3124,6 @@ public sealed partial class MainWindow : Window
             try { if (mp is not null) mp.Source = null; } catch { }
             src?.Dispose();
             mp?.Dispose();
-            GC.Collect(); GC.WaitForPendingFinalizers();
             GC.Collect(); GC.WaitForPendingFinalizers();
         }
         catch { /* ignore */ }
@@ -7440,6 +7458,11 @@ public sealed partial class MainWindow : Window
         _chromeTimer.Stop();
         _vaultIdleTimer.Stop(); _vaultFlushTimer.Stop(); _vaultFlushDebounce.Stop();
         _watchDebounce.Stop(); _volSaveDebounce.Stop();
+        // Stop being reusable and let go of the shared-viewer slot so the next media open creates a
+        // fresh viewer instead of loading into this closing window.
+        _isClosed = true;
+        try { if (Application.Current is App a && ReferenceEquals(a.MediaViewer, this)) a.MediaViewer = null; } catch { }
+
         // The players are reused across plays (see ReleaseVideoSource), so on real close dispose them
         // outright — the element auto-creates a MediaPlayer but never disposes it, and each pins a video
         // swap chain + decoder surface that would otherwise leak when the window goes away.
