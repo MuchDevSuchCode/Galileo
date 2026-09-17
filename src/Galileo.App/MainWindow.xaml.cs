@@ -3056,12 +3056,20 @@ public sealed partial class MainWindow : Window
 
     private void StopVideo() => ResetPlayer(VideoPlayer, attachFresh: false);
 
+    private static int _videoResetCount;
+
     /// <summary>Fully tears a MediaPlayerElement's player down between videos, optionally handing it a
-    /// fresh one. Disposing only the MediaSource (what we used to do) leaves the *reused* MediaPlayer's
-    /// media engine holding its Direct3D decode surfaces; those accumulate with every video opened in a
-    /// session until the GPU can't hand out another — playback starts to flicker, then goes black, and
-    /// only an app restart clears it. The window-close disposal never helped here because the window
-    /// stays open across plays. Disposing the player itself releases the engine and its surfaces.</summary>
+    /// fresh one, and forces the native Media Foundation pipeline to release synchronously.
+    ///
+    /// The symptom this fights: after ~4 plays, video flickers then goes black until the app restarts.
+    /// The consistent count is the tell — it's a hardware video-decoder session limit, not gradual GPU
+    /// memory growth. MediaPlayer.Dispose() and MediaSource.Dispose() only *mark* the underlying MF
+    /// decoder (a native COM object) for release; the actual teardown that frees the hardware decode
+    /// session happens on GC finalization. Until then the session stays occupied, so a handful of
+    /// undisposed decoders exhausts the GPU's decode sessions and the next video can't get one → black.
+    /// Disposing the managed wrappers alone didn't help (reuse and recreate leaked identically) because
+    /// both leave the native decoder pending finalization. Forcing the finalizers here reclaims the
+    /// decode session before the next open. This runs only on a video close/switch, never per frame.</summary>
     private static void ResetPlayer(Microsoft.UI.Xaml.Controls.MediaPlayerElement el, bool attachFresh)
     {
         try
@@ -3071,8 +3079,19 @@ public sealed partial class MainWindow : Window
             var mp = el.MediaPlayer;
             el.SetMediaPlayer(null);           // detach before disposing so the element drops its refs
             try { mp?.Pause(); } catch { }
+            try { if (mp is not null) mp.Source = null; } catch { } // release the playback item off the player
             src?.Dispose();
-            mp?.Dispose();                     // releases the media engine + its D3D decode surfaces
+            mp?.Dispose();                     // marks the MF pipeline for release...
+
+            if (mp is not null)
+            {
+                // ...and this forces the native decoder's finalizer to run NOW, freeing the hardware
+                // decode session synchronously instead of whenever the GC next decides to.
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                App.LogInfo($"VideoReset: player #{System.Threading.Interlocked.Increment(ref _videoResetCount)} disposed + finalized");
+            }
             if (attachFresh) el.SetMediaPlayer(new Windows.Media.Playback.MediaPlayer());
         }
         catch { /* ignore */ }
