@@ -229,6 +229,48 @@ public partial class ExplorerItem : ObservableObject
             var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
             var appIcon = ext is ".exe" or ".lnk" or ".url" or ".msi" or ".ico" or ".scr" or ".cpl";
 
+            // Video frames: the Windows shell hands back the default-app icon (VLC's cone, etc.) for most
+            // video files, because a real frame thumbnail depends on whatever codec/thumbnail handler is
+            // installed. Since we bundle FFmpeg, decode a representative frame ourselves. Its own cache-key
+            // namespace (px + 2000) sidesteps any earlier icon entries cached under the plain-px key, and a
+            // null result (FFmpeg missing/failed) simply falls through to the generic shell path below.
+            if (PhotoLibrary.IsVideo(path) && FfmpegVideo.Available)
+            {
+                const int vKeyBase = 2000;
+                var vKey = px + vKeyBase;
+                var (vStamp, vCached) = await Task.Run(() =>
+                {
+                    var mt = CacheStampUtc(path);
+                    var hit = mt is { } m ? ThumbDiskCache.TryGet(path, m, vKey) : null;
+                    return (mt, hit);
+                });
+                if (ct.IsCancellationRequested) return;
+                if (vCached is { } vHit)
+                {
+                    var wbv = new WriteableBitmap(vHit.Width, vHit.Height);
+                    using (var s = wbv.PixelBuffer.AsStream()) s.Write(vHit.Pixels, 0, vHit.Pixels.Length);
+                    Icon = wbv;
+                    return;
+                }
+
+                var frame = await Task.Run(() => FfmpegVideo.ThumbnailPixelsAsync(path, px, ct));
+                if (ct.IsCancellationRequested) return;
+                if (frame is { } f)
+                {
+                    if (vStamp is { } vst)
+                    {
+                        var keepV = f.Pixels; // already a private BGRA array from ShellImaging.GetPixels
+                        var (w, h) = (f.Width, f.Height);
+                        _ = Task.Run(() => ThumbDiskCache.Store(path, vst, vKey, keepV, w, h));
+                    }
+                    var wbFrame = new WriteableBitmap(f.Width, f.Height);
+                    using (var s = wbFrame.PixelBuffer.AsStream()) s.Write(f.Pixels, 0, f.Pixels.Length);
+                    Icon = wbFrame;
+                    return;
+                }
+                // FFmpeg couldn't produce a frame — fall through to the shell/icon path.
+            }
+
             // Only ask the shell for the kinds of file that actually have a preview. Everything else got a
             // shell call per file whose result was then thrown away in favour of Galileo's own icon.
             if (appIcon || IsImage || PhotoLibrary.IsMedia(path) || DocThumbExts.Contains(ext))

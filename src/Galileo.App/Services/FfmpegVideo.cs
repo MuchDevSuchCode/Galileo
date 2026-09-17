@@ -318,6 +318,36 @@ public static class FfmpegVideo
         => await RunCaptureAsync(FfmpegPath,
             new[] { "-y", "-ss", N(time), "-i", input, "-frames:v", "1", outPath }, ct, captureStdErr: true);
 
+    /// <summary>Extracts a representative frame as BGRA pixels for a video thumbnail — the reliable
+    /// alternative to the Windows shell, which returns the default-app icon (VLC, etc.) whenever the
+    /// installed codec/thumbnail handler doesn't produce one. Seeks ~1s in (retries at 0 for tiny
+    /// clips), scales to fit <paramref name="px"/> keeping aspect, and returns null on any failure.</summary>
+    public static async Task<(byte[] Pixels, int Width, int Height)?> ThumbnailPixelsAsync(string videoPath, int px, CancellationToken ct = default)
+    {
+        if (!Available) return null;
+        var tmp = Path.Combine(Path.GetTempPath(), $"galileo-vthumb-{Guid.NewGuid():N}.png");
+        var vf = $"scale='min({px},iw)':'min({px},ih)':force_original_aspect_ratio=decrease";
+        try
+        {
+            // -ss before -i = fast seek to ~1s (skips the black lead-in many clips start with).
+            await RunCaptureAsync(FfmpegPath,
+                new[] { "-y", "-ss", "1", "-i", videoPath, "-frames:v", "1", "-vf", vf, tmp }, ct, captureStdErr: true);
+            if (!File.Exists(tmp) || new FileInfo(tmp).Length == 0)
+            {
+                // Clip shorter than 1s — grab the very first frame instead.
+                await RunCaptureAsync(FfmpegPath,
+                    new[] { "-y", "-i", videoPath, "-frames:v", "1", "-vf", vf, tmp }, ct, captureStdErr: true);
+            }
+            if (!File.Exists(tmp) || new FileInfo(tmp).Length == 0) return null;
+
+            // Decode the PNG to BGRA through the same shell imaging path the rest of the icon pipeline uses.
+            var (pixels, w, h) = ShellImaging.GetPixels(tmp, px, iconOnly: false);
+            return pixels is null || w <= 0 || h <= 0 ? null : (pixels, w, h);
+        }
+        catch { return null; }
+        finally { try { if (File.Exists(tmp)) File.Delete(tmp); } catch { } }
+    }
+
     private static void AddVideoCodec(List<string> args, string vcodec, string q, string preset)
     {
         if (vcodec == "h264") { args.AddRange(new[] { "-c:v", "libx264", "-preset", preset, "-crf", q }); }
