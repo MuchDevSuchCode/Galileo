@@ -429,9 +429,11 @@ public sealed partial class MainWindow
         var mp = VideoPlayer.MediaPlayer;
         if (mp?.PlaybackSession is { } ps && _playheadHooked)
         {
-            ps.PositionChanged -= OnPlaybackPositionChanged;
-            _playheadHooked = false;
+            try { ps.PositionChanged -= OnPlaybackPositionChanged; } catch { }
         }
+        // Clear the flag even if the player was already torn down (its handler died with it) — otherwise
+        // a stale 'hooked' state would stop the playhead re-subscribing the next time the editor opens.
+        _playheadHooked = false;
     }
 
     private void OnPlaybackPositionChanged(MediaPlaybackSession session, object args)

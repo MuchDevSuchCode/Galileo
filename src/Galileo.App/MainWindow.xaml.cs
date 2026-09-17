@@ -2916,12 +2916,11 @@ public sealed partial class MainWindow : Window
             VideoEditBtn.Visibility = (!isAudio && !item.IsShellItem && FfmpegVideo.Available)
                 ? Visibility.Visible : Visibility.Collapsed;
             VideoCopyFrameBtn.Visibility = isAudio ? Visibility.Collapsed : Visibility.Visible; // no frame to copy from audio
-            // Release the source of any video already open (video → video without passing through
-            // StopVideo) — each MediaSource pins a native media pipeline, and undisposed ones
-            // accumulate until the process runs out of memory.
-            var previousSource = VideoPlayer.Source as MediaSource;
+            // Tear down the previous video's player entirely (source + MediaPlayer) and start this one
+            // on a fresh player. Reusing one MediaPlayer across every video leaks its Direct3D decode
+            // surfaces until the GPU is exhausted (flicker → black); see ResetPlayer.
+            ResetPlayer(VideoPlayer, attachFresh: true);
             VideoPlayer.Source = MediaSource.CreateFromStorageFile(file);
-            previousSource?.Dispose();
             var mp = VideoPlayer.MediaPlayer;
             if (mp is not null)
             {
@@ -3039,11 +3038,13 @@ public sealed partial class MainWindow : Window
 
     private void EnterImageMode()
     {
-        StopVideo();
-        // The video editor must not survive into image mode: its panel/filmstrip would overlay the
-        // photo and its Export would run FFmpeg against a stale (possibly deleted) _currentVideoPath.
+        // Tear the editor down BEFORE the player: StopVideo now disposes the MediaPlayer, and the editor
+        // has handlers hooked on it that must be detached against the live player first. Its panel/
+        // filmstrip must not survive into image mode anyway — it would overlay the photo and its Export
+        // would run FFmpeg against a stale (possibly deleted) _currentVideoPath.
         if (VideoEditorPanel.Visibility == Visibility.Visible || EditTimeline.Visibility == Visibility.Visible)
             CloseVideoEditor();
+        StopVideo();
         _currentVideoPath = null;
         VideoPlayer.Visibility = Visibility.Collapsed;
         VideoBackBar.Visibility = Visibility.Collapsed;
@@ -3053,16 +3054,26 @@ public sealed partial class MainWindow : Window
         ViewerChrome.Visibility = Visibility.Visible;
     }
 
-    private void StopVideo()
+    private void StopVideo() => ResetPlayer(VideoPlayer, attachFresh: false);
+
+    /// <summary>Fully tears a MediaPlayerElement's player down between videos, optionally handing it a
+    /// fresh one. Disposing only the MediaSource (what we used to do) leaves the *reused* MediaPlayer's
+    /// media engine holding its Direct3D decode surfaces; those accumulate with every video opened in a
+    /// session until the GPU can't hand out another — playback starts to flicker, then goes black, and
+    /// only an app restart clears it. The window-close disposal never helped here because the window
+    /// stays open across plays. Disposing the player itself releases the engine and its surfaces.</summary>
+    private static void ResetPlayer(Microsoft.UI.Xaml.Controls.MediaPlayerElement el, bool attachFresh)
     {
         try
         {
-            VideoPlayer.MediaPlayer?.Pause();
-            // CreateFromStorageFile hands us a MediaSource we own; the element won't dispose it,
-            // so release it here or we leak one native source per video opened.
-            var previous = VideoPlayer.Source as MediaSource;
-            VideoPlayer.Source = null;
-            previous?.Dispose();
+            // CreateFromStorageFile hands us a MediaSource we own; the element won't dispose it.
+            var src = el.Source as MediaSource;
+            var mp = el.MediaPlayer;
+            el.SetMediaPlayer(null);           // detach before disposing so the element drops its refs
+            try { mp?.Pause(); } catch { }
+            src?.Dispose();
+            mp?.Dispose();                     // releases the media engine + its D3D decode surfaces
+            if (attachFresh) el.SetMediaPlayer(new Windows.Media.Playback.MediaPlayer());
         }
         catch { /* ignore */ }
     }
@@ -6760,6 +6771,9 @@ public sealed partial class MainWindow : Window
             {
                 var file = await StorageFile.GetFileFromPathAsync(item.Path);
                 if (token != _peekToken) return;
+                // Fresh player per peek for the same reason as the main player — hover-previewing a
+                // string of videos would otherwise leak decode surfaces just like playing them does.
+                ResetPlayer(PeekVideo, attachFresh: true);
                 PeekVideo.Source = MediaSource.CreateFromStorageFile(file);
                 PeekVideo.Visibility = Visibility.Visible;
                 if (PeekVideo.MediaPlayer is { } peekMp)
@@ -6832,17 +6846,7 @@ public sealed partial class MainWindow : Window
         return string.Join("   ·   ", parts);
     }
 
-    private void StopPeekVideo()
-    {
-        try
-        {
-            PeekVideo.MediaPlayer?.Pause();
-            var previous = PeekVideo.Source as MediaSource;
-            PeekVideo.Source = null;
-            previous?.Dispose();
-        }
-        catch { /* ignore */ }
-    }
+    private void StopPeekVideo() => ResetPlayer(PeekVideo, attachFresh: false);
 
     private void PeekScrim_Tapped(object sender, TappedRoutedEventArgs e) => ClosePeek();
     private void PeekCard_Tapped(object sender, TappedRoutedEventArgs e) => e.Handled = true; // keep clicks on the card from closing
@@ -7403,14 +7407,11 @@ public sealed partial class MainWindow : Window
         _chromeTimer.Stop();
         _vaultIdleTimer.Stop(); _vaultFlushTimer.Stop(); _vaultFlushDebounce.Stop();
         _watchDebounce.Stop(); _volSaveDebounce.Stop();
-        StopVideo();                                   // release the main MediaSource (native pipeline)
-        try { StopPeekVideo(); } catch { }             // and the Peek preview's, if one is open
-        // A MediaPlayerElement auto-creates a MediaPlayer but NEVER disposes it, and each one pins a
-        // video swap chain + decoder surface. On a window that played video, leaving that undisposed
-        // leaks GPU surfaces — a few "open in new window" video windows then exhaust them (playback
-        // flickers, then goes black, until the app is restarted). Detach and dispose explicitly.
-        try { if (VideoPlayer.MediaPlayer is { } mp) { VideoPlayer.SetMediaPlayer(null); mp.Dispose(); } } catch { }
-        try { if (PeekVideo.MediaPlayer is { } pmp) { PeekVideo.SetMediaPlayer(null); pmp.Dispose(); } } catch { }
+        // Both of these now dispose the element's MediaPlayer outright (see ResetPlayer), releasing its
+        // video swap chain + decoder surfaces — so a window that played video doesn't leak GPU surfaces
+        // on close either. (attachFresh:false — the window is going away, no point handing it a new player.)
+        StopVideo();                                   // main player + its MediaSource
+        try { StopPeekVideo(); } catch { }             // Peek preview's, if one is open
         try { _editor.Dispose(); } catch { }           // full-resolution edit bitmaps
         try { _aiIdleTimer?.Stop(); _ai?.Dispose(); _ai = null; } catch { } // ONNX sessions + GPU arenas
         try { _drive.Dispose(); } catch { }            // per-window Drive service + its HttpClient
