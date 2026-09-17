@@ -2915,6 +2915,7 @@ public sealed partial class MainWindow : Window
             _currentVideoPath = item.IsShellItem ? null : item.Path;
             VideoEditBtn.Visibility = (!isAudio && !item.IsShellItem && FfmpegVideo.Available)
                 ? Visibility.Visible : Visibility.Collapsed;
+            VideoCopyFrameBtn.Visibility = isAudio ? Visibility.Collapsed : Visibility.Visible; // no frame to copy from audio
             // Release the source of any video already open (video → video without passing through
             // StopVideo) — each MediaSource pins a native media pipeline, and undisposed ones
             // accumulate until the process runs out of memory.
@@ -6328,10 +6329,38 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Copies the current video frame (the on-screen video region) to the clipboard.</summary>
+    private void VideoCopyFrame_Click(object sender, RoutedEventArgs e) => _ = CopyVideoFrameAsync();
+
     private async Task CopyVideoFrameAsync()
     {
         try
         {
+            // Prefer a clean, native-resolution frame decoded from the file (no transport controls,
+            // no letterbox bars, full quality) — exactly what the "save frame" screenshot does.
+            if (InVideo && !string.IsNullOrEmpty(_currentVideoPath) && File.Exists(_currentVideoPath)
+                && !PhotoLibrary.IsAudio(_currentVideoPath) && FfmpegVideo.Available)
+            {
+                var tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"galileo-frame-{Guid.NewGuid():N}.png");
+                try
+                {
+                    await FfmpegVideo.SnapshotAsync(_currentVideoPath, CurrentVideoSeconds(), tmp);
+                    // Copy the PNG into an in-memory stream so the temp file can be deleted immediately —
+                    // the clipboard keeps the bitmap available for paste without holding the file open.
+                    var mem = new InMemoryRandomAccessStream();
+                    using (var fs = File.OpenRead(tmp))
+                    using (var outStream = mem.AsStreamForWrite())
+                        await fs.CopyToAsync(outStream);
+                    mem.Seek(0);
+                    var pkg = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+                    pkg.SetBitmap(RandomAccessStreamReference.CreateFromStream(mem));
+                    Clipboard.SetContent(pkg);
+                    StatusText.Text = "Frame copied to clipboard";
+                    return;
+                }
+                finally { try { if (File.Exists(tmp)) File.Delete(tmp); } catch { } }
+            }
+
+            // Fallback: grab the rendered player rect (e.g. FFmpeg unavailable, or an audio file).
             var scale = VideoPlayer.XamlRoot?.RasterizationScale ?? 1.0;
             var pos = VideoPlayer.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
             double w = VideoPlayer.ActualWidth, h = VideoPlayer.ActualHeight;

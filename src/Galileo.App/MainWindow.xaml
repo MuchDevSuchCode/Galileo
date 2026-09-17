@@ -552,6 +552,11 @@
                     <Slider x:Name="VideoVolumeSlider" Width="92" Minimum="0" Maximum="100" Value="100"
                             VerticalAlignment="Center" Margin="2,0,8,0" ValueChanged="VideoVolume_SliderChanged"
                             ToolTipService.ToolTip="Volume" AutomationProperties.Name="Volume" />
+                    <Button x:Name="VideoCopyFrameBtn" Style="{StaticResource GlyphButton}" Foreground="White"
+                            Click="VideoCopyFrame_Click" ToolTipService.ToolTip="Copy current frame (Ctrl+C)"
+                            AutomationProperties.Name="Copy current frame">
+                        <FontIcon Glyph="&#xE8C8;" FontFamily="Segoe Fluent Icons" />
+                    </Button>
                     <Button x:Name="VideoRepeatBtn" Style="{StaticResource GlyphButton}" Foreground="White"
                             Click="VideoRepeat_Click" ToolTipService.ToolTip="Repeat"
                             AutomationProperties.Name="Repeat">
