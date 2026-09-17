@@ -7376,6 +7376,12 @@ public sealed partial class MainWindow : Window
         _watchDebounce.Stop(); _volSaveDebounce.Stop();
         StopVideo();                                   // release the main MediaSource (native pipeline)
         try { StopPeekVideo(); } catch { }             // and the Peek preview's, if one is open
+        // A MediaPlayerElement auto-creates a MediaPlayer but NEVER disposes it, and each one pins a
+        // video swap chain + decoder surface. On a window that played video, leaving that undisposed
+        // leaks GPU surfaces — a few "open in new window" video windows then exhaust them (playback
+        // flickers, then goes black, until the app is restarted). Detach and dispose explicitly.
+        try { if (VideoPlayer.MediaPlayer is { } mp) { VideoPlayer.SetMediaPlayer(null); mp.Dispose(); } } catch { }
+        try { if (PeekVideo.MediaPlayer is { } pmp) { PeekVideo.SetMediaPlayer(null); pmp.Dispose(); } } catch { }
         try { _editor.Dispose(); } catch { }           // full-resolution edit bitmaps
         try { _aiIdleTimer?.Stop(); _ai?.Dispose(); _ai = null; } catch { } // ONNX sessions + GPU arenas
         try { _drive.Dispose(); } catch { }            // per-window Drive service + its HttpClient

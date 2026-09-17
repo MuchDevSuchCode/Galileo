@@ -188,7 +188,7 @@ public sealed partial class MainWindow
 
     // Diagnostic: dump exactly what the eye tools saw and produced, so failures on the real click
     // path (which a coordinate harness can't reproduce) can be inspected. Writes to the Desktop.
-    private const bool EyeFixDebug = true;
+    private static readonly bool EyeFixDebug = true;
 
     private async Task DumpEyeDebugAsync(string tag, byte[] before, byte[] after, int w, int h,
         (float X, float Y) snapA, (float X, float Y) snapB)
