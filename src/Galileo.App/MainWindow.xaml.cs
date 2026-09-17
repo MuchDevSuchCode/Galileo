@@ -3055,8 +3055,6 @@ public sealed partial class MainWindow : Window
 
     private void StopVideo() => ReleaseVideoSource(VideoPlayer);
 
-    private static int _videoResetCount;
-
     /// <summary>Swaps the current video's source out of a MediaPlayerElement and forces the native Media
     /// Foundation pipeline to release synchronously, while KEEPING the element's MediaPlayer for reuse.
     ///
@@ -3086,9 +3084,10 @@ public sealed partial class MainWindow : Window
             src?.Dispose();                       // marks the MF decoder for release
 
             // Drain the two-level finalizer chain so the hardware decode session is reclaimed NOW.
+            // (Process-wide, so it also releases decoders left pending by previously-closed windows —
+            // each mp4 open spawns its own window, and that's where the sessions were piling up.)
             GC.Collect(); GC.WaitForPendingFinalizers();
             GC.Collect(); GC.WaitForPendingFinalizers();
-            App.LogInfo($"VideoReset: source #{System.Threading.Interlocked.Increment(ref _videoResetCount)} released + finalized (player reused)");
         }
         catch { /* ignore */ }
     }
