@@ -2916,10 +2916,9 @@ public sealed partial class MainWindow : Window
             VideoEditBtn.Visibility = (!isAudio && !item.IsShellItem && FfmpegVideo.Available)
                 ? Visibility.Visible : Visibility.Collapsed;
             VideoCopyFrameBtn.Visibility = isAudio ? Visibility.Collapsed : Visibility.Visible; // no frame to copy from audio
-            // Tear down the previous video's player entirely (source + MediaPlayer) and start this one
-            // on a fresh player. Reusing one MediaPlayer across every video leaks its Direct3D decode
-            // surfaces until the GPU is exhausted (flicker → black); see ResetPlayer.
-            ResetPlayer(VideoPlayer, attachFresh: true);
+            // Release the previous video's source and force its decoder to finalize before opening this
+            // one on the same (reused) player. See ReleaseVideoSource for why reuse + double-GC.
+            ReleaseVideoSource(VideoPlayer);
             VideoPlayer.Source = MediaSource.CreateFromStorageFile(file);
             var mp = VideoPlayer.MediaPlayer;
             if (mp is not null)
@@ -3054,45 +3053,61 @@ public sealed partial class MainWindow : Window
         ViewerChrome.Visibility = Visibility.Visible;
     }
 
-    private void StopVideo() => ResetPlayer(VideoPlayer, attachFresh: false);
+    private void StopVideo() => ReleaseVideoSource(VideoPlayer);
 
     private static int _videoResetCount;
 
-    /// <summary>Fully tears a MediaPlayerElement's player down between videos, optionally handing it a
-    /// fresh one, and forces the native Media Foundation pipeline to release synchronously.
+    /// <summary>Swaps the current video's source out of a MediaPlayerElement and forces the native Media
+    /// Foundation pipeline to release synchronously, while KEEPING the element's MediaPlayer for reuse.
     ///
-    /// The symptom this fights: after ~4 plays, video flickers then goes black until the app restarts.
-    /// The consistent count is the tell — it's a hardware video-decoder session limit, not gradual GPU
-    /// memory growth. MediaPlayer.Dispose() and MediaSource.Dispose() only *mark* the underlying MF
-    /// decoder (a native COM object) for release; the actual teardown that frees the hardware decode
-    /// session happens on GC finalization. Until then the session stays occupied, so a handful of
-    /// undisposed decoders exhausts the GPU's decode sessions and the next video can't get one → black.
-    /// Disposing the managed wrappers alone didn't help (reuse and recreate leaked identically) because
-    /// both leave the native decoder pending finalization. Forcing the finalizers here reclaims the
-    /// decode session before the next open. This runs only on a video close/switch, never per frame.</summary>
-    private static void ResetPlayer(Microsoft.UI.Xaml.Controls.MediaPlayerElement el, bool attachFresh)
+    /// The symptom this fights: after several plays, video flickers then goes black until the app
+    /// restarts. The consistent count is the tell — it's a hardware video-decoder session limit, not
+    /// gradual GPU memory growth. MediaSource.Dispose() only *marks* the underlying MF decoder (a native
+    /// COM object) for release; the hardware decode session is actually freed on GC finalization, so
+    /// undisposed decoders pile up and eventually the next video can't get a session → black.
+    ///
+    /// Two lessons paid for in earlier attempts:
+    ///  - It takes TWO full GC passes. The object that holds the decoder is itself only collectable
+    ///    after its own finalizer runs, so a single Collect+WaitForPendingFinalizers leaves ~half of
+    ///    them pending — which is exactly why forcing one pass moved the black-out from ~4 to ~8-9 plays.
+    ///  - We reuse ONE player and only swap its Source. Recreating the MediaPlayer per open (an earlier
+    ///    attempt) churned the element's swap chain, which it doesn't promptly release — the residual
+    ///    leak. One persistent player = one swap chain for the whole session.
+    /// Runs only on a video close/switch, never per frame.</summary>
+    private static void ReleaseVideoSource(Microsoft.UI.Xaml.Controls.MediaPlayerElement el)
     {
         try
         {
-            // CreateFromStorageFile hands us a MediaSource we own; the element won't dispose it.
-            var src = el.Source as MediaSource;
             var mp = el.MediaPlayer;
-            el.SetMediaPlayer(null);           // detach before disposing so the element drops its refs
+            var src = el.Source as MediaSource;   // CreateFromStorageFile source we own; element won't dispose it
             try { mp?.Pause(); } catch { }
-            try { if (mp is not null) mp.Source = null; } catch { } // release the playback item off the player
-            src?.Dispose();
-            mp?.Dispose();                     // marks the MF pipeline for release...
+            el.Source = null;                     // detach from the element...
+            try { if (mp is not null) mp.Source = null; } catch { } // ...and off the player itself
+            src?.Dispose();                       // marks the MF decoder for release
 
-            if (mp is not null)
-            {
-                // ...and this forces the native decoder's finalizer to run NOW, freeing the hardware
-                // decode session synchronously instead of whenever the GC next decides to.
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                GC.Collect();
-                App.LogInfo($"VideoReset: player #{System.Threading.Interlocked.Increment(ref _videoResetCount)} disposed + finalized");
-            }
-            if (attachFresh) el.SetMediaPlayer(new Windows.Media.Playback.MediaPlayer());
+            // Drain the two-level finalizer chain so the hardware decode session is reclaimed NOW.
+            GC.Collect(); GC.WaitForPendingFinalizers();
+            GC.Collect(); GC.WaitForPendingFinalizers();
+            App.LogInfo($"VideoReset: source #{System.Threading.Interlocked.Increment(ref _videoResetCount)} released + finalized (player reused)");
+        }
+        catch { /* ignore */ }
+    }
+
+    /// <summary>Full teardown for window close: release the source AND dispose the MediaPlayer the
+    /// element auto-created (it never disposes it itself), so a closed window leaks no GPU resources.</summary>
+    private static void DisposeVideoPlayer(Microsoft.UI.Xaml.Controls.MediaPlayerElement el)
+    {
+        try
+        {
+            var mp = el.MediaPlayer;
+            var src = el.Source as MediaSource;
+            el.SetMediaPlayer(null);
+            try { mp?.Pause(); } catch { }
+            try { if (mp is not null) mp.Source = null; } catch { }
+            src?.Dispose();
+            mp?.Dispose();
+            GC.Collect(); GC.WaitForPendingFinalizers();
+            GC.Collect(); GC.WaitForPendingFinalizers();
         }
         catch { /* ignore */ }
     }
@@ -6790,9 +6805,9 @@ public sealed partial class MainWindow : Window
             {
                 var file = await StorageFile.GetFileFromPathAsync(item.Path);
                 if (token != _peekToken) return;
-                // Fresh player per peek for the same reason as the main player — hover-previewing a
-                // string of videos would otherwise leak decode surfaces just like playing them does.
-                ResetPlayer(PeekVideo, attachFresh: true);
+                // Release the previous peek source (+ finalize its decoder) before the next — hover-
+                // previewing a string of videos leaks decode sessions just like playing them does.
+                ReleaseVideoSource(PeekVideo);
                 PeekVideo.Source = MediaSource.CreateFromStorageFile(file);
                 PeekVideo.Visibility = Visibility.Visible;
                 if (PeekVideo.MediaPlayer is { } peekMp)
@@ -6865,7 +6880,7 @@ public sealed partial class MainWindow : Window
         return string.Join("   ·   ", parts);
     }
 
-    private void StopPeekVideo() => ResetPlayer(PeekVideo, attachFresh: false);
+    private void StopPeekVideo() => ReleaseVideoSource(PeekVideo);
 
     private void PeekScrim_Tapped(object sender, TappedRoutedEventArgs e) => ClosePeek();
     private void PeekCard_Tapped(object sender, TappedRoutedEventArgs e) => e.Handled = true; // keep clicks on the card from closing
@@ -7426,11 +7441,11 @@ public sealed partial class MainWindow : Window
         _chromeTimer.Stop();
         _vaultIdleTimer.Stop(); _vaultFlushTimer.Stop(); _vaultFlushDebounce.Stop();
         _watchDebounce.Stop(); _volSaveDebounce.Stop();
-        // Both of these now dispose the element's MediaPlayer outright (see ResetPlayer), releasing its
-        // video swap chain + decoder surfaces — so a window that played video doesn't leak GPU surfaces
-        // on close either. (attachFresh:false — the window is going away, no point handing it a new player.)
-        StopVideo();                                   // main player + its MediaSource
-        try { StopPeekVideo(); } catch { }             // Peek preview's, if one is open
+        // The players are reused across plays (see ReleaseVideoSource), so on real close dispose them
+        // outright — the element auto-creates a MediaPlayer but never disposes it, and each pins a video
+        // swap chain + decoder surface that would otherwise leak when the window goes away.
+        try { DisposeVideoPlayer(VideoPlayer); } catch { }
+        try { DisposeVideoPlayer(PeekVideo); } catch { }
         try { _editor.Dispose(); } catch { }           // full-resolution edit bitmaps
         try { _aiIdleTimer?.Stop(); _ai?.Dispose(); _ai = null; } catch { } // ONNX sessions + GPU arenas
         try { _drive.Dispose(); } catch { }            // per-window Drive service + its HttpClient
