@@ -1472,6 +1472,16 @@ public sealed partial class MainWindow : Window
         // Middle-click an image to open it in a new window (both views).
         ExplorerIconsView.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Explorer_MiddleClick), true);
         ExplorerDetailsList.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Explorer_MiddleClick), true);
+
+        // After any click on the video (esp. the transport-control timeline, whose seek Slider otherwise
+        // keeps focus and turns Left/Right into multi-second seeks), park focus on a neutral sink so the
+        // arrow keys frame-step again. handledEventsToo: the transport marks its pointer events handled.
+        VideoPlayer.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(VideoArea_PointerReleased), true);
+    }
+
+    private void VideoArea_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (InVideo) { try { VideoFocusSink.Focus(FocusState.Programmatic); } catch { } }
     }
 
     /// <summary>Last known drive list. This PC paints from this instantly (never blocking on DriveInfo)

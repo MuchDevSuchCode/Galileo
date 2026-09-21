@@ -514,6 +514,13 @@
                     <MediaTransportControls IsVolumeButtonVisible="False" IsVolumeEnabled="False" />
                 </MediaPlayerElement.TransportControls>
             </MediaPlayerElement>
+            <!-- Keyboard-focus sink. Clicking the transport-control timeline gives its seek Slider focus,
+                 which then eats Left/Right as multi-second seeks (marking them handled) before our
+                 frame-step handler runs. After a click on the video we park focus here instead, so arrow
+                 keys frame-step again. Zero-size and hit-test-invisible so it never intercepts anything. -->
+            <Button x:Name="VideoFocusSink" Padding="0" MinWidth="0" MinHeight="0" Width="1" Height="1"
+                    Opacity="0" IsTabStop="True" IsHitTestVisible="False" UseSystemFocusVisuals="False"
+                    HorizontalAlignment="Left" VerticalAlignment="Top" />
             <!-- Live edit preview (Win2D frame-server output): shown while editing, over the player. -->
             <Image x:Name="EditPreviewImage" Visibility="Collapsed" Stretch="Uniform"
                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="0,0,360,96"
