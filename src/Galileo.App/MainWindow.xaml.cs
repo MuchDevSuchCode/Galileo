@@ -297,6 +297,15 @@ public sealed partial class MainWindow : Window
         // piling up on the single shared UI thread until copy/paste and input wedge.
         Clipboard.ContentChanged += OnClipboardContentChanged;
         _appWindow.Closing += AppWindow_Closing;
+        // Window.Closed fires unconditionally once the window is really gone — unlike AppWindow.Closing,
+        // which has cancel/return-to-explorer/hide-to-tray branches that can skip its cleanup. Mark the
+        // window dead and drop the shared-viewer slot HERE so a later media open can never reuse a closed
+        // window (doing so threw on a dead _appWindow and wedged the UI thread).
+        this.Closed += (_, _) =>
+        {
+            _isClosed = true;
+            try { if (Application.Current is App a && ReferenceEquals(a.MediaViewer, this)) a.MediaViewer = null; } catch { }
+        };
 
         // Catch Ctrl+C/X/V/A even if the explorer list marks them handled first (handledEventsToo).
         RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(ExplorerClipboard_KeyDown), handledEventsToo: true);
@@ -2605,23 +2614,26 @@ public sealed partial class MainWindow : Window
         var app = Application.Current as App;
         if (app?.MediaViewer is { } viewer && viewer.TryShowMedia(path)) return; // reused a live viewer
 
+        if (app is not null) app.MediaViewer = null; // stale/closed reference — don't hold a dead window
         var extra = new MainWindow(path, secondaryWindow: true);
         if (app is not null) app.MediaViewer = extra;
         extra.Activate();
     }
 
     /// <summary>Loads a media file into this (already-open) viewer window and brings it forward. Returns
-    /// false if the window is closing/closed so the caller opens a fresh one instead.</summary>
+    /// false — so the caller opens a fresh window instead — if this one is closed or otherwise unusable.
+    /// Guards against reusing a dead window: doing so threw on the destroyed _appWindow and froze the UI.</summary>
     public bool TryShowMedia(string path)
     {
         if (_isClosed) return false;
         try
         {
-            RestoreFromBackground(); // un-hide (if tray/minimized) and bring to front
-            OpenViewerDirect(path);  // swaps the reused player's source; no new window, no new player
+            _ = _appWindow.IsVisible;   // a closed/destroyed AppWindow throws here — treat as unusable
+            RestoreFromBackground();    // un-hide (if tray/minimized) and bring to front
+            OpenViewerDirect(path);     // swaps the reused player's source; no new window, no new player
             return true;
         }
-        catch (Exception ex) { App.Log("ShowMedia", ex); return false; }
+        catch (Exception ex) { App.Log("ShowMedia", ex); _isClosed = true; return false; }
     }
 
     /// <summary>Launches a fresh Galileo instance to open the path in its own window (works even in
