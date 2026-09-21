@@ -511,7 +511,8 @@
             <MediaPlayerElement x:Name="VideoPlayer" Visibility="Collapsed"
                                 AreTransportControlsEnabled="True" AutoPlay="True" Stretch="Uniform">
                 <MediaPlayerElement.TransportControls>
-                    <MediaTransportControls IsVolumeButtonVisible="False" IsVolumeEnabled="False" />
+                    <MediaTransportControls x:Name="VideoTransport" Loaded="VideoTransport_Loaded"
+                                            IsVolumeButtonVisible="False" IsVolumeEnabled="False" />
                 </MediaPlayerElement.TransportControls>
             </MediaPlayerElement>
             <!-- Keyboard-focus sink. Clicking the transport-control timeline gives its seek Slider focus,

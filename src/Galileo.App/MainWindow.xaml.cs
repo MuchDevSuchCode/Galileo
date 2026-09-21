@@ -1484,6 +1484,35 @@ public sealed partial class MainWindow : Window
         if (InVideo) { try { VideoFocusSink.Focus(FocusState.Programmatic); } catch { } }
     }
 
+    // The transport-control seek Slider grabs keyboard focus on click and then eats Left/Right as
+    // multi-second seeks. Focus-stealing after the click proved unreliable (it re-grabs), so stop it
+    // taking focus in the first place: AllowFocusOnInteraction=false means a click still seeks (pointer
+    // manipulation) but never moves keyboard focus, and IsTabStop=false keeps Tab off it too.
+    private void VideoTransport_Loaded(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (FindDescendantByName(VideoTransport, "ProgressSlider") is Control slider)
+            {
+                slider.AllowFocusOnInteraction = false;
+                slider.IsTabStop = false;
+            }
+        }
+        catch (Exception ex) { App.Log("TransportFocus", ex); }
+    }
+
+    private static DependencyObject? FindDescendantByName(DependencyObject root, string name)
+    {
+        var count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is FrameworkElement fe && fe.Name == name) return child;
+            if (FindDescendantByName(child, name) is { } found) return found;
+        }
+        return null;
+    }
+
     /// <summary>Last known drive list. This PC paints from this instantly (never blocking on DriveInfo)
     /// while <see cref="RefreshDrivesAsync"/> fetches fresh data in the background.</summary>
     private List<ExplorerItem> _driveCache = new();
@@ -3087,6 +3116,9 @@ public sealed partial class MainWindow : Window
         VideoBackBar.Visibility = Visibility.Visible;
         VideoControlsBar.Visibility = Visibility.Visible;
         AudioOverlay.Visibility = Visibility.Collapsed; // set by the caller when the file is audio
+        // Park keyboard focus on the neutral sink so arrow keys frame-step (via RootGrid_KeyDown) from
+        // the start, rather than on some control that consumes them.
+        try { VideoFocusSink.Focus(FocusState.Programmatic); } catch { }
     }
 
     private void EnterImageMode()
