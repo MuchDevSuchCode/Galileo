@@ -3075,6 +3075,7 @@ public sealed partial class MainWindow : Window
         // would run FFmpeg against a stale (possibly deleted) _currentVideoPath.
         if (VideoEditorPanel.Visibility == Visibility.Visible || EditTimeline.Visibility == Visibility.Visible)
             CloseVideoEditor();
+        StopFrameScrub();
         StopVideo();
         _currentVideoPath = null;
         VideoPlayer.Visibility = Visibility.Collapsed;
@@ -6406,6 +6407,43 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { App.Log("StepFrame", ex); }
     }
 
+    // Hold-to-scrub: one immediate frame on the press, then a steady cadence while the key stays down.
+    // ~14 fps reads as smooth frame-by-frame without outrunning the decoder on a held key.
+    private readonly DispatcherTimer _frameScrubTimer = new() { Interval = TimeSpan.FromMilliseconds(70) };
+    private bool _frameScrubForward;
+    private bool _frameScrubHooked;
+
+    private void BeginFrameScrub(bool forward)
+    {
+        _frameScrubForward = forward;
+        if (!_frameScrubHooked)
+        {
+            _frameScrubTimer.Tick += FrameScrub_Tick;
+            _frameScrubHooked = true;
+        }
+        StepVideoFrame(forward);      // first frame lands instantly, so a quick tap still = one frame
+        _frameScrubTimer.Stop();      // restart the interval (also handles Left→Right without releasing)
+        _frameScrubTimer.Start();
+    }
+
+    private void FrameScrub_Tick(object? sender, object e)
+    {
+        // Belt-and-braces: stop if we somehow missed the key-up (focus lost, left video mode).
+        if (!InVideo) { StopFrameScrub(); return; }
+        StepVideoFrame(_frameScrubForward);
+    }
+
+    private void StopFrameScrub() => _frameScrubTimer.Stop();
+
+    private void RootGrid_KeyUp(object sender, KeyRoutedEventArgs e)
+    {
+        if ((e.Key == VirtualKey.Left || e.Key == VirtualKey.Right) && _frameScrubTimer.IsEnabled)
+        {
+            StopFrameScrub();
+            e.Handled = true;
+        }
+    }
+
     /// <summary>Copies the current video frame (the on-screen video region) to the clipboard.</summary>
     private void VideoCopyFrame_Click(object sender, RoutedEventArgs e) => _ = CopyVideoFrameAsync();
 
@@ -6612,14 +6650,15 @@ public sealed partial class MainWindow : Window
                 _ = CopyVideoFrameAsync(); e.Handled = true; break;
             case VirtualKey.Space when InVideo:
                 ToggleVideoPlayPause(); e.Handled = true; break;
-            // One physical press = one frame. WasKeyDown is true on Windows' auto-repeat events, which a
-            // held (or even briefly-held) key fires several of — without this guard each one stepped
-            // again, so a single tap skipped multiple frames. Still mark repeats Handled so the arrow
-            // never falls through to viewer navigation.
+            // A tap steps one frame; holding scrubs frame-by-frame. WasKeyDown is true on Windows'
+            // auto-repeat events — we ignore those (their rate is the OS key-repeat setting, not ours)
+            // and instead drive the hold from our own timer via BeginFrameScrub, so the very first press
+            // steps immediately and each subsequent frame comes at a steady, controllable cadence. Repeats
+            // are still marked Handled so the arrow never falls through to viewer navigation.
             case VirtualKey.Left when InVideo:
-                if (!e.KeyStatus.WasKeyDown) StepVideoFrame(forward: false); e.Handled = true; break;
+                if (!e.KeyStatus.WasKeyDown) BeginFrameScrub(forward: false); e.Handled = true; break;
             case VirtualKey.Right when InVideo:
-                if (!e.KeyStatus.WasKeyDown) StepVideoFrame(forward: true); e.Handled = true; break;
+                if (!e.KeyStatus.WasKeyDown) BeginFrameScrub(forward: true); e.Handled = true; break;
             case VirtualKey.Delete when ExplorerView.Visibility == Visibility.Visible:
                 _ = DeleteSelectedExplorerAsync(); e.Handled = true; break;
 
@@ -7477,7 +7516,7 @@ public sealed partial class MainWindow : Window
         try { Clipboard.ContentChanged -= OnClipboardContentChanged; } catch { }
         _chromeTimer.Stop();
         _vaultIdleTimer.Stop(); _vaultFlushTimer.Stop(); _vaultFlushDebounce.Stop();
-        _watchDebounce.Stop(); _volSaveDebounce.Stop();
+        _watchDebounce.Stop(); _volSaveDebounce.Stop(); _frameScrubTimer.Stop();
         // Stop being reusable and let go of the shared-viewer slot so the next media open creates a
         // fresh viewer instead of loading into this closing window.
         _isClosed = true;

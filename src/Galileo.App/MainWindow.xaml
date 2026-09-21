@@ -4,7 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <Grid x:Name="RootGrid" KeyDown="RootGrid_KeyDown"
+    <Grid x:Name="RootGrid" KeyDown="RootGrid_KeyDown" KeyUp="RootGrid_KeyUp"
           AllowDrop="True" DragOver="RootGrid_DragOver" Drop="RootGrid_Drop">
 
         <!-- ===================== File Explorer (home) ===================== -->
