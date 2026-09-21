@@ -6390,6 +6390,22 @@ public sealed partial class MainWindow : Window
         else mp.Play();
     }
 
+    /// <summary>Steps exactly one frame. Frame stepping is only meaningful while paused — if the video is
+    /// still playing, live playback races the step and it looks like it jumped many frames, so pause
+    /// first (this press pauses AND steps one). StepForward/BackwardOneFrame need CanPause support.</summary>
+    private void StepVideoFrame(bool forward)
+    {
+        var mp = VideoPlayer.MediaPlayer;
+        if (mp?.PlaybackSession is not { } ps) return;
+        try
+        {
+            if (ps.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing) mp.Pause();
+            if (forward) mp.StepForwardOneFrame();
+            else mp.StepBackwardOneFrame();
+        }
+        catch (Exception ex) { App.Log("StepFrame", ex); }
+    }
+
     /// <summary>Copies the current video frame (the on-screen video region) to the clipboard.</summary>
     private void VideoCopyFrame_Click(object sender, RoutedEventArgs e) => _ = CopyVideoFrameAsync();
 
@@ -6596,10 +6612,14 @@ public sealed partial class MainWindow : Window
                 _ = CopyVideoFrameAsync(); e.Handled = true; break;
             case VirtualKey.Space when InVideo:
                 ToggleVideoPlayPause(); e.Handled = true; break;
+            // One physical press = one frame. WasKeyDown is true on Windows' auto-repeat events, which a
+            // held (or even briefly-held) key fires several of — without this guard each one stepped
+            // again, so a single tap skipped multiple frames. Still mark repeats Handled so the arrow
+            // never falls through to viewer navigation.
             case VirtualKey.Left when InVideo:
-                VideoPlayer.MediaPlayer?.StepBackwardOneFrame(); e.Handled = true; break;
+                if (!e.KeyStatus.WasKeyDown) StepVideoFrame(forward: false); e.Handled = true; break;
             case VirtualKey.Right when InVideo:
-                VideoPlayer.MediaPlayer?.StepForwardOneFrame(); e.Handled = true; break;
+                if (!e.KeyStatus.WasKeyDown) StepVideoFrame(forward: true); e.Handled = true; break;
             case VirtualKey.Delete when ExplorerView.Visibility == Visibility.Visible:
                 _ = DeleteSelectedExplorerAsync(); e.Handled = true; break;
 
