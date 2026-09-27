@@ -6461,6 +6461,23 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { App.Log("StepFrame", ex); }
     }
 
+    /// <summary>Skips the playback position by <paramref name="seconds"/> (negative = back), clamped to the
+    /// clip. Playback state is left as-is — seeking while playing just resumes from the new spot.</summary>
+    private void SeekVideoBy(double seconds)
+    {
+        var mp = VideoPlayer.MediaPlayer;
+        if (mp?.PlaybackSession is not { } ps || !ps.CanSeek) return;
+        try
+        {
+            var target = ps.Position + TimeSpan.FromSeconds(seconds);
+            if (target < TimeSpan.Zero) target = TimeSpan.Zero;
+            var dur = ps.NaturalDuration;
+            if (dur > TimeSpan.Zero && target > dur) target = dur;
+            ps.Position = target;
+        }
+        catch (Exception ex) { App.Log("SeekVideo", ex); }
+    }
+
     // Hold-to-scrub: one immediate frame on the press, then a steady cadence while the key stays down.
     // ~14 fps reads as smooth frame-by-frame without outrunning the decoder on a held key.
     private readonly DispatcherTimer _frameScrubTimer = new() { Interval = TimeSpan.FromMilliseconds(70) };
@@ -6713,6 +6730,12 @@ public sealed partial class MainWindow : Window
                 if (!e.KeyStatus.WasKeyDown) BeginFrameScrub(forward: false); e.Handled = true; break;
             case VirtualKey.Right when InVideo:
                 if (!e.KeyStatus.WasKeyDown) BeginFrameScrub(forward: true); e.Handled = true; break;
+            // Up/Down = skip one second (up back, down forward). WasKeyDown-guarded so one press = one
+            // second; repeats stay Handled so the arrow doesn't fall through to anything else.
+            case VirtualKey.Up when InVideo:
+                if (!e.KeyStatus.WasKeyDown) SeekVideoBy(-1.0); e.Handled = true; break;
+            case VirtualKey.Down when InVideo:
+                if (!e.KeyStatus.WasKeyDown) SeekVideoBy(1.0); e.Handled = true; break;
             case VirtualKey.Delete when ExplorerView.Visibility == Visibility.Visible:
                 _ = DeleteSelectedExplorerAsync(); e.Handled = true; break;
 
