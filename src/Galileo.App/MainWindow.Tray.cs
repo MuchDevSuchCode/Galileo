@@ -94,6 +94,30 @@ public sealed partial class MainWindow
         catch (Exception ex) { App.Log("TrayShow", ex); }
     }
 
+    /// <summary>Brings this window to the very front and gives it the actual OS foreground. Used when a new
+    /// video opens in the shared viewer: Activate()/MoveInZOrderAtTop alone left it behind the file manager,
+    /// because the calling window re-asserts itself as this returns. We're already the foreground process
+    /// (the user just clicked), so SetForegroundWindow is permitted; AllowForeground makes it robust.</summary>
+    public void BringToFront()
+    {
+        try
+        {
+            _appWindow.Show();
+            _appWindow.MoveInZOrderAtTop();
+            Activate();
+            try
+            {
+                Galileo.Services.ShellOps.AllowForeground();
+                SetForegroundWindow(WinRT.Interop.WindowNative.GetWindowHandle(this));
+            }
+            catch { /* foreground is best-effort; the window is at least shown and top of z-order */ }
+        }
+        catch (Exception ex) { App.Log("BringToFront", ex); }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
     private void ExitFromTray()
     {
         _exitingFromTray = true;

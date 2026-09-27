@@ -288,6 +288,11 @@ public sealed partial class MainWindow : Window
                 _pendingWatchRefresh = false;
                 RefreshFolderIncremental();
             }
+            // Coming back from another window (alt-tab), focus is restored to whatever last had it — often
+            // a control-bar button, where Left/Right then move between buttons instead of stepping frames.
+            // Re-park focus on the neutral sink so the arrow keys drive the video again.
+            if (_windowActive && InVideo && VideoEditorPanel.Visibility != Visibility.Visible && !IsTextInputFocused())
+                try { VideoFocusSink.Focus(FocusState.Programmatic); } catch { }
             if (!_windowActive) ReHideOnBackground();
         };
         // When the clipboard changes from OUTSIDE Galileo (another app, or a text/image copy), drop our
@@ -2656,7 +2661,7 @@ public sealed partial class MainWindow : Window
         if (app is not null) app.MediaViewer = null; // stale/closed reference — don't hold a dead window
         var extra = new MainWindow(path, secondaryWindow: true);
         if (app is not null) app.MediaViewer = extra;
-        extra.Activate();
+        extra.BringToFront(); // Activate() alone left it behind the file manager
     }
 
     /// <summary>Loads a media file into this (already-open) viewer window and brings it forward. Returns
@@ -2668,7 +2673,7 @@ public sealed partial class MainWindow : Window
         try
         {
             _ = _appWindow.IsVisible;   // a closed/destroyed AppWindow throws here — treat as unusable
-            RestoreFromBackground();    // un-hide (if tray/minimized) and bring to front
+            BringToFront();             // un-hide (if tray/minimized) and pull in front of the file manager
             OpenViewerDirect(path);     // swaps the reused player's source; no new window, no new player
             return true;
         }
