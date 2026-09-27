@@ -1092,8 +1092,11 @@ public sealed partial class MainWindow
 
     private Rect MoveCrop(Rect orig, Point p)
     {
-        var nx = Math.Clamp(orig.X + (p.X - _dragStart.X), 0, _orientedW - orig.Width);
-        var ny = Math.Clamp(orig.Y + (p.Y - _dragStart.Y), 0, _orientedH - orig.Height);
+        // Floor the Clamp maxes at 0: if the crop is somehow wider/taller than the image (e.g. after an
+        // orientation change), _orientedW - orig.Width goes negative and Math.Clamp throws when min>max —
+        // and this runs in Overlay_PointerMoved, which isn't wrapped, so it would crash the process.
+        var nx = Math.Clamp(orig.X + (p.X - _dragStart.X), 0, Math.Max(0, _orientedW - orig.Width));
+        var ny = Math.Clamp(orig.Y + (p.Y - _dragStart.Y), 0, Math.Max(0, _orientedH - orig.Height));
         return new Rect(nx, ny, orig.Width, orig.Height);
     }
 
@@ -1111,10 +1114,13 @@ public sealed partial class MainWindow
         bool top = mode is "nw" or "ne" or "n";
         bool bottom = mode is "sw" or "se" or "s";
 
-        if (left) l = Math.Clamp(orig.X + dx, 0, r - min);
-        if (right) r = Math.Clamp(orig.X + orig.Width + dx, l + min, _orientedW);
-        if (top) t = Math.Clamp(orig.Y + dy, 0, b - min);
-        if (bottom) b = Math.Clamp(orig.Y + orig.Height + dy, t + min, _orientedH);
+        // Every Clamp bound is ordered so min<=max even for a tiny crop hard against an edge — otherwise
+        // (e.g. a ~9px crop at the left, r-min<0) Math.Clamp throws min>max and, since this runs in the
+        // un-wrapped Overlay_PointerMoved, crashes the process. The keyboard crop path already floors these.
+        if (left) l = Math.Clamp(orig.X + dx, 0, Math.Max(0, r - min));
+        if (right) r = Math.Clamp(orig.X + orig.Width + dx, Math.Min(l + min, _orientedW), _orientedW);
+        if (top) t = Math.Clamp(orig.Y + dy, 0, Math.Max(0, b - min));
+        if (bottom) b = Math.Clamp(orig.Y + orig.Height + dy, Math.Min(t + min, _orientedH), _orientedH);
 
         if (mode is "nw" or "ne" or "sw" or "se" && _cropAspect > 0)
         {

@@ -293,6 +293,9 @@ public sealed partial class MainWindow : Window
             // Re-park focus on the neutral sink so the arrow keys drive the video again.
             if (_windowActive && InVideo && VideoEditorPanel.Visibility != Visibility.Visible && !IsTextInputFocused())
                 try { VideoFocusSink.Focus(FocusState.Programmatic); } catch { }
+            // Losing focus mid-hold (alt-tab while holding an arrow) delivers no KEY-UP, so the frame-scrub
+            // timer would otherwise run forever in the background. Stop it whenever we go inactive.
+            if (!_windowActive) StopFrameScrub();
             if (!_windowActive) ReHideOnBackground();
         };
         // When the clipboard changes from OUTSIDE Galileo (another app, or a text/image copy), drop our
@@ -309,6 +312,12 @@ public sealed partial class MainWindow : Window
         this.Closed += (_, _) =>
         {
             _isClosed = true;
+            // Detach the process-wide Clipboard handler HERE too, not only in AppWindow_Closing's tail:
+            // that tail is skipped by every cancel/return-to-explorer/hide-to-tray branch, and a handler
+            // left attached roots this whole window (its timers + decoded image) on the shared UI thread.
+            // The -= is idempotent, so doing it in both places is safe.
+            try { Clipboard.ContentChanged -= OnClipboardContentChanged; } catch { }
+            try { StopFrameScrub(); } catch { }
             try
             {
                 if (Application.Current is App a)

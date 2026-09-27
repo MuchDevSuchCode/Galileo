@@ -188,7 +188,9 @@ public sealed partial class MainWindow
 
     // Diagnostic: dump exactly what the eye tools saw and produced, so failures on the real click
     // path (which a coordinate harness can't reproduce) can be inspected. Writes to the Desktop.
-    private static readonly bool EyeFixDebug = true;
+    // MUST stay false in shipping builds — when true it writes full-resolution copies of the user's
+    // photo to the Desktop on every eye-fix, which is a privacy leak.
+    private static readonly bool EyeFixDebug = false;
 
     private async Task DumpEyeDebugAsync(string tag, byte[] before, byte[] after, int w, int h,
         (float X, float Y) snapA, (float X, float Y) snapB)
@@ -758,9 +760,10 @@ public sealed partial class MainWindow
             AiSay("Analysing…");
 
             var engine = Ai;
+            var ct = _aiCts.Token; // capture before Task.Run: the field can be swapped/disposed mid-op
             var (blur, noise) = await Task.Run(() => AiEngine.Analyze(probe, pw, ph));
             var faceCount = allowFaces
-                ? await Task.Run(() => FaceRestore.DetectRestorable(engine, probe, pw, ph, _aiCts.Token).Count)
+                ? await Task.Run(() => FaceRestore.DetectRestorable(engine, probe, pw, ph, ct).Count)
                 : 0;
 
             var wantDenoise = noise > 2.0;
@@ -787,7 +790,6 @@ public sealed partial class MainWindow
             AiSay($"Autopilot: {string.Join(" + ", plan)}…");
 
             var p = AiProgressReporter();
-            var ct = _aiCts.Token;
             // Scale denoise with how noisy it actually is, rather than using a fixed amount.
             var denoiseStrength = Math.Clamp((noise - 1.5) / 6.0, 0.35, 1.0);
             var fidelity = Fidelity;

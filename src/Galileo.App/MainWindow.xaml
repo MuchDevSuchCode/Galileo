@@ -545,6 +545,7 @@
                     HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,48,0,0"
                     CornerRadius="22" Padding="4" Background="{StaticResource PillBrush}">
                 <Button Style="{StaticResource GlyphButton}" Foreground="White" Click="BackToGallery_Click"
+                        AllowFocusOnInteraction="False"
                         ToolTipService.ToolTip="Back (Esc)" AutomationProperties.Name="Back">
                     <FontIcon Glyph="&#xE72B;" FontFamily="Segoe Fluent Icons" />
                 </Button>
@@ -552,29 +553,49 @@
             <Border x:Name="VideoControlsBar" Visibility="Collapsed"
                     HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,48,16,0"
                     CornerRadius="24" Padding="4" Background="{StaticResource PillBrush}">
+                <!-- AllowFocusOnInteraction="False" on every control: a mouse click does its action but does
+                     NOT move keyboard focus off the video, so Space (play/pause) and the arrow keys keep
+                     driving playback instead of the clicked button. -->
                 <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
                     <Button x:Name="VideoVolumeBtn" Style="{StaticResource GlyphButton}" Foreground="White"
-                            Click="VideoVolume_Click" ToolTipService.ToolTip="Mute / unmute"
+                            Click="VideoVolume_Click" AllowFocusOnInteraction="False" ToolTipService.ToolTip="Mute / unmute"
                             AutomationProperties.Name="Mute / unmute">
                         <FontIcon x:Name="VideoVolumeIcon" Glyph="&#xE995;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                     <Slider x:Name="VideoVolumeSlider" Width="92" Minimum="0" Maximum="100" Value="100"
                             VerticalAlignment="Center" Margin="2,0,8,0" ValueChanged="VideoVolume_SliderChanged"
+                            AllowFocusOnInteraction="False"
                             ToolTipService.ToolTip="Volume" AutomationProperties.Name="Volume" />
                     <Button x:Name="VideoCopyFrameBtn" Style="{StaticResource GlyphButton}" Foreground="White"
-                            Click="VideoCopyFrame_Click" ToolTipService.ToolTip="Copy current frame (Ctrl+C)"
+                            Click="VideoCopyFrame_Click" AllowFocusOnInteraction="False" ToolTipService.ToolTip="Copy current frame (Ctrl+C)"
                             AutomationProperties.Name="Copy current frame">
                         <FontIcon Glyph="&#xE8C8;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                     <Button x:Name="VideoRepeatBtn" Style="{StaticResource GlyphButton}" Foreground="White"
-                            Click="VideoRepeat_Click" ToolTipService.ToolTip="Repeat"
+                            Click="VideoRepeat_Click" AllowFocusOnInteraction="False" ToolTipService.ToolTip="Repeat"
                             AutomationProperties.Name="Repeat">
                         <FontIcon x:Name="VideoRepeatIcon" Glyph="&#xE8EE;" FontFamily="Segoe Fluent Icons" />
                     </Button>
                     <Button x:Name="VideoEditBtn" Style="{StaticResource GlyphButton}" Foreground="White"
-                            Click="VideoEdit_Click" ToolTipService.ToolTip="Edit / export video"
+                            Click="VideoEdit_Click" AllowFocusOnInteraction="False" ToolTipService.ToolTip="Edit / export video"
                             AutomationProperties.Name="Edit video">
                         <FontIcon Glyph="&#xE70F;" FontFamily="Segoe Fluent Icons" />
+                    </Button>
+                    <Button x:Name="VideoHelpBtn" Style="{StaticResource GlyphButton}" Foreground="White"
+                            AllowFocusOnInteraction="False" AutomationProperties.Name="Keyboard shortcuts">
+                        <Button.Content>
+                            <FontIcon Glyph="&#xE897;" FontFamily="Segoe Fluent Icons" />
+                        </Button.Content>
+                        <ToolTipService.ToolTip>
+                            <TextBlock>
+                                <Run Text="Keyboard shortcuts" FontWeight="SemiBold" /><LineBreak />
+                                <Run Text="Space — play / pause" /><LineBreak />
+                                <Run Text="← / → — previous / next frame (hold to scrub)" /><LineBreak />
+                                <Run Text="↑ / ↓ — back / forward 1 second" /><LineBreak />
+                                <Run Text="Ctrl+C — copy current frame" /><LineBreak />
+                                <Run Text="Esc — back to gallery" />
+                            </TextBlock>
+                        </ToolTipService.ToolTip>
                     </Button>
                 </StackPanel>
             </Border>

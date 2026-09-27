@@ -289,8 +289,11 @@ public static class FfmpegVideo
                 parts.Add(partPath);
             }
             var listPath = Path.Combine(partDir, "concat.txt");
+            // In the concat demuxer's single-quoted paths, a literal ' is written as '\'' — without this a
+            // temp path containing an apostrophe (e.g. C:\Users\O'Brien\...) mis-parses and the export fails.
+            static string ConcatEscape(string p) => p.Replace('\\', '/').Replace("'", "'\\''");
             await File.WriteAllTextAsync(listPath,
-                string.Join("\n", parts.Select(p => $"file '{p.Replace('\\', '/')}'")), ct);
+                string.Join("\n", parts.Select(p => $"file '{ConcatEscape(p)}'")), ct);
             await RunCaptureAsync(FfmpegPath,
                 new[] { "-y", "-hide_banner", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", outPath },
                 ct, captureStdErr: true);
