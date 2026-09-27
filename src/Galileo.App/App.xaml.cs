@@ -149,7 +149,7 @@ public partial class App : Application
                     // separate process paying a full cold start of the self-contained app each time.
                     // secondaryWindow: it's a guest of this process — no tray icon, no crash recovery.
                     var extra = new MainWindow(path, secondaryWindow: true);
-                    extra.Activate();
+                    extra.BringToFront(); // Activate() alone can leave it behind the launching window
                     return;
                 }
                 if (window is MainWindow mw)

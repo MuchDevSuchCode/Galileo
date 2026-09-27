@@ -95,22 +95,33 @@ public sealed partial class MainWindow
     }
 
     /// <summary>Brings this window to the very front and gives it the actual OS foreground. Used when a new
-    /// video opens in the shared viewer: Activate()/MoveInZOrderAtTop alone left it behind the file manager,
-    /// because the calling window re-asserts itself as this returns. We're already the foreground process
-    /// (the user just clicked), so SetForegroundWindow is permitted; AllowForeground makes it robust.</summary>
+    /// pic/video opens in the shared viewer. An IMMEDIATE SetForegroundWindow loses: all our windows share
+    /// one UI thread, and the file-manager window that launched this one re-activates itself as the click
+    /// finishes, ending up on top. So we show + raise now, then assert foreground again on a short timer,
+    /// after that activation has settled — this is what actually keeps the new window in front.</summary>
     public void BringToFront()
     {
-        try
+        void Raise()
         {
-            _appWindow.Show();
-            _appWindow.MoveInZOrderAtTop();
-            Activate();
             try
             {
+                if (_isClosed) return;
+                _appWindow.Show();
+                _appWindow.MoveInZOrderAtTop();
+                Activate();
                 Galileo.Services.ShellOps.AllowForeground();
                 SetForegroundWindow(WinRT.Interop.WindowNative.GetWindowHandle(this));
             }
-            catch { /* foreground is best-effort; the window is at least shown and top of z-order */ }
+            catch { /* best-effort */ }
+        }
+
+        try
+        {
+            Raise(); // show it right away
+            // ...then re-assert foreground after the launching click's own re-activation lands.
+            var t = new Microsoft.UI.Xaml.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+            t.Tick += (_, _) => { t.Stop(); Raise(); };
+            t.Start();
         }
         catch (Exception ex) { App.Log("BringToFront", ex); }
     }
