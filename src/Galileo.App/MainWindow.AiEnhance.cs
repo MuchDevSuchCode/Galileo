@@ -568,7 +568,12 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootGrid.XamlRoot,
         };
-        if (await confirm.ShowAsync() != ContentDialogResult.Primary) return false;
+        if (_modalDialogOpen) return false; // another modal (e.g. the leave-editor prompt on close) is up
+        _modalDialogOpen = true;
+        ContentDialogResult confirmResult;
+        try { confirmResult = await confirm.ShowAsync(); }
+        finally { _modalDialogOpen = false; }
+        if (confirmResult != ContentDialogResult.Primary) return false;
 
         SetAiBusy(true);
         AiSay($"Downloading {spec.Label}…");

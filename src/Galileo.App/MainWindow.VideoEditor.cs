@@ -251,39 +251,49 @@ public sealed partial class MainWindow
 
     private async void EditExport_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrEmpty(_currentVideoPath)) return;
-        var s = BuildEditSettings();
-        var ext = "." + s.Container;
-
-        var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.VideosLibrary };
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-        var typeName = s.Container switch { "gif" => "Animated GIF", "mkv" => "Matroska", "ts" => "MPEG-TS", _ => "MP4 video" };
-        picker.FileTypeChoices.Add(typeName, new List<string> { ext });
-        picker.SuggestedFileName = System.IO.Path.GetFileNameWithoutExtension(_currentVideoPath) + "-edited";
-        var file = await picker.PickSaveFileAsync();
-        if (file is null) return;
-        if (string.Equals(file.Path, _currentVideoPath, StringComparison.OrdinalIgnoreCase))
+        // async void: any exception (incl. from the picker/COM) that escapes crashes the process — guard all of it.
+        try
         {
-            // FFmpeg reading and writing the same file destroys the source — never allow it.
-            EditorStatus.Text = "Can't export over the video being edited — pick a different name.";
-            return;
-        }
+            if (string.IsNullOrEmpty(_currentVideoPath)) return;
+            var s = BuildEditSettings();
+            var ext = "." + s.Container;
 
-        await RunFfmpegExportAsync(s, file.Path, s.Container == "gif" ? "Exporting GIF" : "Exporting video");
+            var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.VideosLibrary };
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+            var typeName = s.Container switch { "gif" => "Animated GIF", "mkv" => "Matroska", "ts" => "MPEG-TS", _ => "MP4 video" };
+            picker.FileTypeChoices.Add(typeName, new List<string> { ext });
+            picker.SuggestedFileName = System.IO.Path.GetFileNameWithoutExtension(_currentVideoPath) + "-edited";
+            var file = await picker.PickSaveFileAsync();
+            if (file is null) return;
+            if (string.Equals(file.Path, _currentVideoPath, StringComparison.OrdinalIgnoreCase))
+            {
+                // FFmpeg reading and writing the same file destroys the source — never allow it.
+                EditorStatus.Text = "Can't export over the video being edited — pick a different name.";
+                return;
+            }
+
+            await RunFfmpegExportAsync(s, file.Path, s.Container == "gif" ? "Exporting GIF" : "Exporting video");
+        }
+        catch (Exception ex) { EditorStatus.Text = "Export failed: " + ex.Message; App.Log("VideoExport", ex); }
     }
 
     private async void EditSaveFrame_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrEmpty(_currentVideoPath)) return;
-        var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.PicturesLibrary };
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-        picker.FileTypeChoices.Add("PNG image", new List<string> { ".png" });
-        picker.SuggestedFileName = System.IO.Path.GetFileNameWithoutExtension(_currentVideoPath) + "-frame";
-        var file = await picker.PickSaveFileAsync();
-        if (file is null) return;
+        // async void: guard the whole body (the picker can throw before the FFmpeg try below).
+        try
+        {
+            if (string.IsNullOrEmpty(_currentVideoPath)) return;
+            var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.PicturesLibrary };
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+            picker.FileTypeChoices.Add("PNG image", new List<string> { ".png" });
+            picker.SuggestedFileName = System.IO.Path.GetFileNameWithoutExtension(_currentVideoPath) + "-frame";
+            var file = await picker.PickSaveFileAsync();
+            if (file is null) return;
 
-        EditorStatus.Text = "Saving frame…";
-        try { await FfmpegVideo.SnapshotAsync(_currentVideoPath, CurrentVideoSeconds(), file.Path); EditorStatus.Text = "Saved frame: " + file.Path; }
+            EditorStatus.Text = "Saving frame…";
+            await FfmpegVideo.SnapshotAsync(_currentVideoPath, CurrentVideoSeconds(), file.Path);
+            EditorStatus.Text = "Saved frame: " + file.Path;
+        }
         catch (Exception ex) { EditorStatus.Text = "Save frame failed: " + ex.Message; App.Log("VideoSnapshot", ex); }
     }
 

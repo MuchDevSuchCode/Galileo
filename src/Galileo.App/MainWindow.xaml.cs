@@ -3194,10 +3194,11 @@ public sealed partial class MainWindow : Window
         catch { /* ignore */ }
     }
 
-    /// <summary>Full teardown for window close: release the source AND dispose the MediaPlayer the
-    /// element auto-created (it never disposes it itself), so a closed window leaks no GPU resources. One
-    /// GC pass here forces that window's decoder to finalize promptly — cheap insurance for the rare case
-    /// of several explicit "Open in new window" viewers being opened and closed in quick succession.</summary>
+    /// <summary>Full teardown for window close: release the source AND dispose the MediaPlayer the element
+    /// auto-created (it never disposes it itself), so a closed window leaks no GPU resources. No forced GC:
+    /// with one shared video viewer window (see OpenMediaInSharedViewer) only a bounded number of decoders
+    /// is ever live, so a synchronous GC.Collect/WaitForPendingFinalizers hitch on the close path is no
+    /// longer needed — the normal GC reclaims the disposed player's decoder in time.</summary>
     private static void DisposeVideoPlayer(Microsoft.UI.Xaml.Controls.MediaPlayerElement el)
     {
         try
@@ -3209,7 +3210,6 @@ public sealed partial class MainWindow : Window
             try { if (mp is not null) mp.Source = null; } catch { }
             src?.Dispose();
             mp?.Dispose();
-            GC.Collect(); GC.WaitForPendingFinalizers();
         }
         catch { /* ignore */ }
     }
@@ -4389,6 +4389,7 @@ public sealed partial class MainWindow : Window
             var data = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
             data.SetBitmap(RandomAccessStreamReference.CreateFromFile(file));
             Clipboard.SetContent(data);
+            try { Clipboard.Flush(); } catch { } // render to standard formats so it survives app exit
             StatusText.Text = "Image copied to clipboard";
         }
         catch (Exception ex) { StatusText.Text = $"Copy failed: {ex.Message}"; App.Log("CopyImage", ex); }
@@ -4402,6 +4403,7 @@ public sealed partial class MainWindow : Window
             var data = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
             data.SetStorageItems(new IStorageItem[] { file });
             Clipboard.SetContent(data);
+            try { Clipboard.Flush(); } catch { } // survive app exit
             StatusText.Text = "File copied to clipboard";
         }
         catch (Exception ex) { StatusText.Text = $"Copy failed: {ex.Message}"; }
@@ -6586,7 +6588,10 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            await SetClipboardFrameAsync(tmp);
+            // If putting it on the clipboard fails, the temp file we just wrote is never adopted by
+            // _lastFrameClipTemp — delete it here so failed copies don't orphan PNGs in %TEMP%.
+            try { await SetClipboardFrameAsync(tmp); }
+            catch { try { if (File.Exists(tmp)) File.Delete(tmp); } catch { } throw; }
             StatusText.Text = "Frame copied to clipboard";
             ShowToast("Frame copied to clipboard");
         }
@@ -7674,86 +7679,97 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (_closingForVaultLock) return;       // second pass: cleanup already ran; let the close proceed
-        try { _term?.Dispose(); _term = null; } catch { } // kill any terminal shell on close
-        try { VideoPlayer.MediaPlayer?.Pause(); } catch { } // don't keep audio playing during a deferred close
-        StopFolderWatch();
-        RemoveTray();
-        _backupTimer.Stop(); _driveWatcher.Stop();
+        // Second pass — the vault has already been secured below. NOW run the window teardown and let the
+        // close proceed. Teardown must never run on the first pass ahead of securing the vault: otherwise
+        // choosing "Stay open" on a vault-lock failure would leave the window open but gutted (player
+        // disposed, clipboard/watch/backup/tray all dead).
+        if (_closingForVaultLock) { RunCloseTeardown(); return; }
 
-        // Release everything that would otherwise keep this window alive after it closes. The static
-        // Clipboard handler is the critical one — left attached it ROOTS the window forever, so every
-        // opened photo window leaks onto the shared UI thread (with its timers + decoded image) until
-        // the app goes unresponsive. This runs only on the real-close pass (the cancel-and-defer guards
-        // above returned early), so a window that stays open keeps working.
-        try { Clipboard.ContentChanged -= OnClipboardContentChanged; } catch { }
-        _chromeTimer.Stop();
-        _vaultIdleTimer.Stop(); _vaultFlushTimer.Stop(); _vaultFlushDebounce.Stop();
-        _watchDebounce.Stop(); _volSaveDebounce.Stop(); _frameScrubTimer.Stop();
-        try { if (_lastFrameClipTemp is not null && File.Exists(_lastFrameClipTemp)) File.Delete(_lastFrameClipTemp); } catch { }
-        // Stop being reusable and let go of the shared-viewer slot so the next media open creates a
-        // fresh viewer instead of loading into this closing window.
-        _isClosed = true;
-        try
+        try { VideoPlayer.MediaPlayer?.Pause(); } catch { } // stop audio right away, even if we defer below
+
+        // Primary window with an unlocked vault: SECURE IT FIRST, before any destructive teardown. If the
+        // user picks "Stay open," we return with nothing torn down and a fully working window.
+        if (!_secondaryWindow && !LaunchedNewWindow() && _vaults.IsAnyUnlocked)
         {
-            if (Application.Current is App a)
+            args.Cancel = true;                      // defer close until the vault is secured
+            while (true)
             {
-                if (ReferenceEquals(a.MediaViewer, this)) a.MediaViewer = null;
-                if (ReferenceEquals(a.ImageViewer, this)) a.ImageViewer = null;
-            }
-        }
-        catch { }
-
-        // The players are reused across plays (see ReleaseVideoSource), so on real close dispose them
-        // outright — the element auto-creates a MediaPlayer but never disposes it, and each pins a video
-        // swap chain + decoder surface that would otherwise leak when the window goes away.
-        try { DisposeVideoPlayer(VideoPlayer); } catch { }
-        try { DisposeVideoPlayer(PeekVideo); } catch { }
-        try { _editor.Dispose(); } catch { }           // full-resolution edit bitmaps
-        try { _aiIdleTimer?.Stop(); _ai?.Dispose(); _ai = null; } catch { } // ONNX sessions + GPU arenas
-        try { _drive.Dispose(); } catch { }            // per-window Drive service + its HttpClient
-
-        // Everything above is this window's own state. What follows is process-wide, and a guest window
-        // ("open in new window", in-process OR spawned via --new-window) closing is not the app exiting —
-        // the primary is still running. Wiping the shared temp root or locking the vault here would pull
-        // them out from under it.
-        if (_secondaryWindow || LaunchedNewWindow()) return;
-        if (!_vaults.IsAnyUnlocked) return;
-        args.Cancel = true;                      // defer close until the vault is secured
-        while (true)
-        {
-            try { await _vaults.LockCurrentAsync(); break; }
-            catch (Exception ex)
-            {
-                // A failed commit means plaintext (and unsaved changes) are still on disk. Exiting
-                // anyway would leave them behind for the next launch's crash cleanup to destroy —
-                // so stay open and let the user retry, keep working, or explicitly discard.
-                App.Log("VaultCloseLock", ex);
-                if (_exitingFromTray) { try { RestoreFromBackground(); } catch { } } // never show a modal on a hidden window
-                var dlg = new ContentDialog
+                try { await _vaults.LockCurrentAsync(); break; }
+                catch (Exception ex)
                 {
-                    Title = "Vault couldn't be secured",
-                    Content = "Saving the vault's changes failed:\n" + ex.Message +
-                              "\n\nRetry, stay open to fix the problem (e.g. free up disk space), " +
-                              "or close anyway and discard the changes made since the last successful save.",
-                    PrimaryButtonText = "Retry",
-                    SecondaryButtonText = "Discard changes and close",
-                    CloseButtonText = "Stay open",
-                    DefaultButton = ContentDialogButton.Primary,
-                    XamlRoot = RootGrid.XamlRoot,
-                };
-                var res = await dlg.ShowAsync();
-                if (res == ContentDialogResult.Primary) continue;   // retry the commit
-                if (res == ContentDialogResult.Secondary)
-                {
-                    // Explicit discard: wipe the plaintext and keep the last committed generation.
-                    try { _vaults.DiscardCurrentWorkingAndLock(); } catch (Exception ex2) { App.Log("VaultDiscard", ex2); }
-                    break;
+                    // A failed commit means plaintext (and unsaved changes) are still on disk. Exiting
+                    // anyway would leave them behind for the next launch's crash cleanup to destroy —
+                    // so stay open and let the user retry, keep working, or explicitly discard.
+                    App.Log("VaultCloseLock", ex);
+                    if (_exitingFromTray) { try { RestoreFromBackground(); } catch { } } // never show a modal on a hidden window
+                    var dlg = new ContentDialog
+                    {
+                        Title = "Vault couldn't be secured",
+                        Content = "Saving the vault's changes failed:\n" + ex.Message +
+                                  "\n\nRetry, stay open to fix the problem (e.g. free up disk space), " +
+                                  "or close anyway and discard the changes made since the last successful save.",
+                        PrimaryButtonText = "Retry",
+                        SecondaryButtonText = "Discard changes and close",
+                        CloseButtonText = "Stay open",
+                        DefaultButton = ContentDialogButton.Primary,
+                        XamlRoot = RootGrid.XamlRoot,
+                    };
+                    var res = await dlg.ShowAsync();
+                    if (res == ContentDialogResult.Primary) continue;   // retry the commit
+                    if (res == ContentDialogResult.Secondary)
+                    {
+                        // Explicit discard: wipe the plaintext and keep the last committed generation.
+                        try { _vaults.DiscardCurrentWorkingAndLock(); } catch (Exception ex2) { App.Log("VaultDiscard", ex2); }
+                        break;
+                    }
+                    return; // stay open — the close was cancelled and NOTHING has been torn down
                 }
-                return; // stay open — the close was already cancelled
             }
+            _closingForVaultLock = true;
+            Close();                                 // re-close → the _closingForVaultLock branch tears down
+            return;
         }
-        _closingForVaultLock = true;
-        Close();
+
+        // No vault to secure (guest window, or nothing unlocked): tear down and let the close proceed.
+        RunCloseTeardown();
+
+        // This window's own teardown. Runs exactly once, only when the close is actually going through.
+        void RunCloseTeardown()
+        {
+            try { _term?.Dispose(); _term = null; } catch { } // kill any terminal shell on close
+            StopFolderWatch();
+            RemoveTray();
+            _backupTimer.Stop(); _driveWatcher.Stop();
+
+            // The static Clipboard handler is the critical one — left attached it ROOTS the window forever,
+            // so every opened photo window leaks onto the shared UI thread (with its timers + decoded
+            // image) until the app goes unresponsive.
+            try { Clipboard.ContentChanged -= OnClipboardContentChanged; } catch { }
+            _chromeTimer.Stop();
+            _vaultIdleTimer.Stop(); _vaultFlushTimer.Stop(); _vaultFlushDebounce.Stop();
+            _watchDebounce.Stop(); _volSaveDebounce.Stop(); _frameScrubTimer.Stop();
+            try { if (_lastFrameClipTemp is not null && File.Exists(_lastFrameClipTemp)) File.Delete(_lastFrameClipTemp); } catch { }
+
+            // Stop being reusable and let go of the shared-viewer slot so the next media open creates a
+            // fresh viewer instead of loading into this closing window.
+            _isClosed = true;
+            try
+            {
+                if (Application.Current is App a)
+                {
+                    if (ReferenceEquals(a.MediaViewer, this)) a.MediaViewer = null;
+                    if (ReferenceEquals(a.ImageViewer, this)) a.ImageViewer = null;
+                }
+            }
+            catch { }
+
+            // Dispose the reused MediaPlayers (the element never disposes them; each pins a swap chain +
+            // decoder surface) and the rest of this window's heavy state.
+            try { DisposeVideoPlayer(VideoPlayer); } catch { }
+            try { DisposeVideoPlayer(PeekVideo); } catch { }
+            try { _editor.Dispose(); } catch { }           // full-resolution edit bitmaps
+            try { _aiIdleTimer?.Stop(); _ai?.Dispose(); _ai = null; } catch { } // ONNX sessions + GPU arenas
+            try { _drive.Dispose(); } catch { }            // per-window Drive service + its HttpClient
+        }
     }
 }

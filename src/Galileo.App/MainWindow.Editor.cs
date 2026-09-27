@@ -311,12 +311,15 @@ public sealed partial class MainWindow
     /// <summary>Guards against a second ContentDialog while one is already up — showing two throws
     /// InvalidOperationException out of an async void handler, which takes the process down. Reachable by
     /// pressing Esc twice quickly, since Esc and the Cancel button share this path.</summary>
-    private bool _leaveDialogOpen;
+    // Shared across the dialogs that can be triggered while another is already up (window close vs. a
+    // background AI model-download prompt): WinUI throws if two ContentDialogs open at once, out of an
+    // async-void handler, which crashes the process. All such sites check/set this one flag.
+    private bool _modalDialogOpen;
 
     private async Task<bool> ConfirmLeaveEditorAsync()
     {
         if (!InEditor || !HasUnsavedEdits) return true;
-        if (_leaveDialogOpen) return false;   // already asking
+        if (_modalDialogOpen) return false;   // already asking
 
         // Don't ask on top of a running job — cancel it first so the answer can't be raced by a late result.
         if (_aiBusy) AbortAiWork();
@@ -338,7 +341,7 @@ public sealed partial class MainWindow
             XamlRoot = RootGrid.XamlRoot,
         };
 
-        _leaveDialogOpen = true;
+        _modalDialogOpen = true;
         try
         {
             return await dialog.ShowAsync() switch
@@ -349,7 +352,7 @@ public sealed partial class MainWindow
                 _ => false,                              // keep editing
             };
         }
-        finally { _leaveDialogOpen = false; }
+        finally { _modalDialogOpen = false; }
     }
 
     private async void EditCancel_Click(object sender, RoutedEventArgs e)
