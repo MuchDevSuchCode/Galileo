@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <Grid x:Name="RootGrid" KeyDown="RootGrid_KeyDown" KeyUp="RootGrid_KeyUp"
+          XYFocusKeyboardNavigation="Disabled"
           AllowDrop="True" DragOver="RootGrid_DragOver" Drop="RootGrid_Drop">
 
         <!-- ===================== File Explorer (home) ===================== -->
@@ -1760,5 +1761,21 @@
         <!-- Camera-style edge flash to confirm a screenshot was captured (animated in code). -->
         <Border x:Name="ScreenshotFlash" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"
                 BorderBrush="White" BorderThickness="14" />
+
+        <!-- Transient confirmation toast (e.g. "Frame copied to clipboard"), animated in code. -->
+        <Border x:Name="ToastHost" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"
+                HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,64,0,0"
+                Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}" BorderThickness="1"
+                CornerRadius="20" Padding="18,10" Translation="0,0,32">
+            <Border.Shadow>
+                <ThemeShadow />
+            </Border.Shadow>
+            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <FontIcon x:Name="ToastIcon" Glyph="&#xE73E;" FontFamily="Segoe Fluent Icons" FontSize="15" />
+                <TextBlock x:Name="ToastText" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"
+                           AutomationProperties.LiveSetting="Assertive" />
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

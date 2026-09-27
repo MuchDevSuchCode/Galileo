@@ -6518,68 +6518,86 @@ public sealed partial class MainWindow : Window
     /// <summary>Copies the current video frame (the on-screen video region) to the clipboard.</summary>
     private void VideoCopyFrame_Click(object sender, RoutedEventArgs e) => _ = CopyVideoFrameAsync();
 
+    // The clipboard reads a SetBitmap file lazily when the user pastes, so the PNG must outlive the copy.
+    // We keep the most recent frame temp file and delete the previous one on the next copy / window close.
+    private string? _lastFrameClipTemp;
+
     private async Task CopyVideoFrameAsync()
     {
         try
         {
-            // Prefer a clean, native-resolution frame decoded from the file (no transport controls,
-            // no letterbox bars, full quality) — exactly what the "save frame" screenshot does.
+            var tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"galileo-frame-{Guid.NewGuid():N}.png");
+
             if (InVideo && !string.IsNullOrEmpty(_currentVideoPath) && File.Exists(_currentVideoPath)
                 && !PhotoLibrary.IsAudio(_currentVideoPath) && FfmpegVideo.Available)
             {
-                var tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"galileo-frame-{Guid.NewGuid():N}.png");
-                try
-                {
-                    await FfmpegVideo.SnapshotAsync(_currentVideoPath, CurrentVideoSeconds(), tmp);
-                    // Copy the PNG into an in-memory stream so the temp file can be deleted immediately —
-                    // the clipboard keeps the bitmap available for paste without holding the file open.
-                    var mem = new InMemoryRandomAccessStream();
-                    using (var fs = File.OpenRead(tmp))
-                    using (var outStream = mem.AsStreamForWrite())
-                        await fs.CopyToAsync(outStream);
-                    mem.Seek(0);
-                    await SetClipboardBitmapAsync(mem);
-                    StatusText.Text = "Frame copied to clipboard";
-                    return;
-                }
-                finally { try { if (File.Exists(tmp)) File.Delete(tmp); } catch { } }
+                // Clean, native-resolution frame decoded from the file (no transport controls, no
+                // letterbox bars) — exactly what the "save frame" screenshot does.
+                await FfmpegVideo.SnapshotAsync(_currentVideoPath, CurrentVideoSeconds(), tmp);
+            }
+            else
+            {
+                // Fallback: grab the rendered player rect (FFmpeg unavailable, or an audio file).
+                var scale = VideoPlayer.XamlRoot?.RasterizationScale ?? 1.0;
+                var pos = VideoPlayer.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+                double w = VideoPlayer.ActualWidth, h = VideoPlayer.ActualHeight;
+                if (w < 1 || h < 1) { ShowToast("Nothing to copy", ""); return; }
+                var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                using var stream = await ScreenCapture.CaptureClientRectToPngStreamAsync(hwnd, pos.X, pos.Y, w, h, scale);
+                stream.Seek(0);
+                using var fsOut = File.Create(tmp);
+                await stream.AsStreamForRead().CopyToAsync(fsOut);
             }
 
-            // Fallback: grab the rendered player rect (e.g. FFmpeg unavailable, or an audio file).
-            var scale = VideoPlayer.XamlRoot?.RasterizationScale ?? 1.0;
-            var pos = VideoPlayer.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
-            double w = VideoPlayer.ActualWidth, h = VideoPlayer.ActualHeight;
-            if (w < 1 || h < 1) return;
+            if (!File.Exists(tmp) || new FileInfo(tmp).Length == 0)
+            {
+                StatusText.Text = "Copy frame failed: no frame produced";
+                ShowToast("Copy failed", "");
+                return;
+            }
 
-            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-            var stream = await ScreenCapture.CaptureClientRectToPngStreamAsync(hwnd, pos.X, pos.Y, w, h, scale);
-            await SetClipboardBitmapAsync(stream);
+            await SetClipboardFrameAsync(tmp);
             StatusText.Text = "Frame copied to clipboard";
+            ShowToast("Frame copied to clipboard");
         }
-        catch (Exception ex) { StatusText.Text = "Copy frame failed: " + ex.Message; App.Log("CopyFrame", ex); }
+        catch (Exception ex)
+        {
+            StatusText.Text = "Copy frame failed: " + ex.Message;
+            App.Log("CopyFrame", ex);
+            ShowToast("Copy failed", "");
+        }
     }
 
-    /// <summary>Puts a PNG-stream bitmap on the clipboard reliably. The clipboard is a shared single-owner
-    /// resource, so SetContent throws transiently (CLIPBRD_E_CANT_OPEN) whenever another app has it open —
-    /// retry a few times. Flush() then renders the image into the standard bitmap formats immediately, so
-    /// it pastes into classic apps and survives after Galileo closes; Flush is best-effort (the content is
-    /// already set) so its failure never fails the copy.</summary>
-    private static async Task SetClipboardBitmapAsync(IRandomAccessStream stream)
+    /// <summary>Puts a PNG file's bitmap on the clipboard reliably, matching CopyImageAsync's proven path:
+    /// SetBitmap(CreateFromFile(..)). A memory stream (the old approach) is read lazily on paste and often
+    /// comes back empty; a file is not. The clipboard is a shared single-owner resource, so SetContent
+    /// throws transiently (CLIPBRD_E_CANT_OPEN) when another app has it open — retry a few times. Flush()
+    /// then renders it into the standard formats so it survives after Galileo closes (best-effort — the
+    /// file-backed package already serves in-session paste). The temp file is kept for that lazy read.</summary>
+    private async Task SetClipboardFrameAsync(string path)
     {
+        var file = await StorageFile.GetFileFromPathAsync(path);
         var pkg = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
-        pkg.SetBitmap(RandomAccessStreamReference.CreateFromStream(stream));
+        pkg.SetBitmap(RandomAccessStreamReference.CreateFromFile(file));
+
         Exception? last = null;
         for (var attempt = 0; attempt < 5; attempt++)
         {
-            try
-            {
-                Clipboard.SetContent(pkg);
-                try { Clipboard.Flush(); } catch { /* content is already on the clipboard */ }
-                return;
-            }
+            try { Clipboard.SetContent(pkg); last = null; break; }
             catch (Exception ex) { last = ex; await Task.Delay(60); }
         }
         if (last is not null) throw last;
+        try { Clipboard.Flush(); } catch { /* best-effort; the file-backed package still serves paste */ }
+
+        try
+        {
+            if (_lastFrameClipTemp is not null
+                && !string.Equals(_lastFrameClipTemp, path, StringComparison.OrdinalIgnoreCase)
+                && File.Exists(_lastFrameClipTemp))
+                File.Delete(_lastFrameClipTemp);
+        }
+        catch { }
+        _lastFrameClipTemp = path;
     }
 
     /// <summary>Saves a screenshot to %USERPROFILE%\Pictures\Galileo. In the viewer it captures just the
@@ -6625,6 +6643,35 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>A quick white edge flash confirming a screenshot was captured (like a camera).</summary>
+    private Storyboard? _toastStoryboard;
+
+    /// <summary>Shows a brief centered confirmation toast (fades in, holds, fades out). Re-entrant: a new
+    /// toast restarts the animation. <paramref name="glyph"/> is a Segoe Fluent Icons glyph (default: check).</summary>
+    private void ShowToast(string message, string glyph = "")
+    {
+        try
+        {
+            ToastText.Text = message;
+            ToastIcon.Glyph = glyph;
+            ToastHost.Visibility = Visibility.Visible;
+
+            _toastStoryboard?.Stop();
+            var anim = new DoubleAnimationUsingKeyFrames();
+            anim.KeyFrames.Add(new DiscreteDoubleKeyFrame { KeyTime = TimeSpan.Zero, Value = 0 });
+            anim.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = TimeSpan.FromMilliseconds(150), Value = 1 });
+            anim.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = TimeSpan.FromMilliseconds(1700), Value = 1 });
+            anim.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = TimeSpan.FromMilliseconds(2050), Value = 0 });
+            Storyboard.SetTarget(anim, ToastHost);
+            Storyboard.SetTargetProperty(anim, "Opacity");
+            var sb = new Storyboard();
+            sb.Children.Add(anim);
+            sb.Completed += (_, _) => ToastHost.Visibility = Visibility.Collapsed;
+            _toastStoryboard = sb;
+            sb.Begin();
+        }
+        catch { try { ToastHost.Visibility = Visibility.Collapsed; } catch { } }
+    }
+
     private void FlashScreenshot()
     {
         try
@@ -7613,6 +7660,7 @@ public sealed partial class MainWindow : Window
         _chromeTimer.Stop();
         _vaultIdleTimer.Stop(); _vaultFlushTimer.Stop(); _vaultFlushDebounce.Stop();
         _watchDebounce.Stop(); _volSaveDebounce.Stop(); _frameScrubTimer.Stop();
+        try { if (_lastFrameClipTemp is not null && File.Exists(_lastFrameClipTemp)) File.Delete(_lastFrameClipTemp); } catch { }
         // Stop being reusable and let go of the shared-viewer slot so the next media open creates a
         // fresh viewer instead of loading into this closing window.
         _isClosed = true;
