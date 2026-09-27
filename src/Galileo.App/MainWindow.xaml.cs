@@ -309,7 +309,15 @@ public sealed partial class MainWindow : Window
         this.Closed += (_, _) =>
         {
             _isClosed = true;
-            try { if (Application.Current is App a && ReferenceEquals(a.MediaViewer, this)) a.MediaViewer = null; } catch { }
+            try
+            {
+                if (Application.Current is App a)
+                {
+                    if (ReferenceEquals(a.MediaViewer, this)) a.MediaViewer = null;
+                    if (ReferenceEquals(a.ImageViewer, this)) a.ImageViewer = null;
+                }
+            }
+            catch { }
         };
 
         // Catch Ctrl+C/X/V/A even if the explorer list marks them handled first (handledEventsToo).
@@ -2656,11 +2664,19 @@ public sealed partial class MainWindow : Window
         if (IsInCurrentVault(path)) { _ = OpenLocalFileInViewerAsync(path); return; }
 
         var app = Application.Current as App;
-        if (app?.MediaViewer is { } viewer && viewer.TryShowMedia(path)) return; // reused a live viewer
+        // Stills and video/audio get their OWN shared viewer, so a picture and a video can be open at once
+        // (one no longer replaces the other). Videos still share ONE window to bound decode sessions.
+        var isVideoLike = PhotoLibrary.IsMedia(path); // video or audio (images are not)
 
-        if (app is not null) app.MediaViewer = null; // stale/closed reference — don't hold a dead window
+        if (app is not null)
+        {
+            var existing = isVideoLike ? app.MediaViewer : app.ImageViewer;
+            if (existing is { } viewer && viewer.TryShowMedia(path)) return; // reused a live viewer
+            if (isVideoLike) app.MediaViewer = null; else app.ImageViewer = null; // stale/closed — drop it
+        }
+
         var extra = new MainWindow(path, secondaryWindow: true);
-        if (app is not null) app.MediaViewer = extra;
+        if (app is not null) { if (isVideoLike) app.MediaViewer = extra; else app.ImageViewer = extra; }
         extra.BringToFront(); // Activate() alone left it behind the file manager
     }
 
@@ -7669,7 +7685,15 @@ public sealed partial class MainWindow : Window
         // Stop being reusable and let go of the shared-viewer slot so the next media open creates a
         // fresh viewer instead of loading into this closing window.
         _isClosed = true;
-        try { if (Application.Current is App a && ReferenceEquals(a.MediaViewer, this)) a.MediaViewer = null; } catch { }
+        try
+        {
+            if (Application.Current is App a)
+            {
+                if (ReferenceEquals(a.MediaViewer, this)) a.MediaViewer = null;
+                if (ReferenceEquals(a.ImageViewer, this)) a.ImageViewer = null;
+            }
+        }
+        catch { }
 
         // The players are reused across plays (see ReleaseVideoSource), so on real close dispose them
         // outright — the element auto-creates a MediaPlayer but never disposes it, and each pins a video
