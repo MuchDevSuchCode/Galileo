@@ -97,16 +97,25 @@ public partial class App : Application
         // Capture every first-chance exception. WinUI render/dispatcher failfasts (0xc000027b)
         // skip the handlers above, but the underlying managed exception is still thrown first —
         // so the tail of this file pinpoints the crash. Best-effort; must never throw.
-        AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
+        //
+        // Gated behind Developer mode (off by default): the handler fires for EVERY thrown exception
+        // process-wide, including the many routine control-flow throws this app relies on (wrong
+        // passphrase, corrupt-blob probes, IO checks). Writing each to disk under a lock adds contention
+        // and disk churn on hot paths and persists exception detail all session — cost that only someone
+        // actively diagnosing a crash should pay.
+        if (State.DeveloperMode)
         {
-            try
+            AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
             {
-                var ex = e.Exception;
-                var line = $"[{DateTimeOffset.Now:HH:mm:ss.fff}] {ex.GetType().FullName} (0x{ex.HResult:X8}): {ex.Message}{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}{Environment.NewLine}";
-                lock (_fcLock) AppendCapped(FirstChancePath, line);
-            }
-            catch { /* diagnostics must never crash the app */ }
-        };
+                try
+                {
+                    var ex = e.Exception;
+                    var line = $"[{DateTimeOffset.Now:HH:mm:ss.fff}] {ex.GetType().FullName} (0x{ex.HResult:X8}): {ex.Message}{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}{Environment.NewLine}";
+                    lock (_fcLock) AppendCapped(FirstChancePath, line);
+                }
+                catch { /* diagnostics must never crash the app */ }
+            };
+        }
     }
 
     /// <summary>Best-effort user-visible notice for an unexpected error (status bar of the main

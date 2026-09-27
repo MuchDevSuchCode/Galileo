@@ -112,6 +112,11 @@ public sealed class TerminalSession : IDisposable
         catch { }
         ClosePipe(ref _inputWrite);
         ClosePipe(ref _outputRead);
+        // On a successful Start these were handed to the child and zeroed at lines 58-59; but if
+        // CreatePseudoConsole/CreateProcess threw before that, they're still open — close them too so a
+        // failed shell start doesn't leak two pipe handles. ClosePipe no-ops on an already-zeroed handle.
+        ClosePipe(ref _inputRead);
+        ClosePipe(ref _outputWrite);
     }
 
     private static void ClosePipe(ref IntPtr h) { if (h != IntPtr.Zero) { CloseHandle(h); h = IntPtr.Zero; } }

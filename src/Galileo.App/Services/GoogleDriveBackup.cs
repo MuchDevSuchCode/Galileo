@@ -103,12 +103,38 @@ public sealed class GoogleDriveBackup : IDisposable
     }
 
     /// <summary>Silently reconnects from a previously stored token (refreshing it) without opening a
-    /// browser — used at startup so the user stays signed in across launches.</summary>
-    public async Task<bool> TryReconnectAsync()
+    /// browser — used at startup so the user stays signed in across launches. Uses a NON-interactive token
+    /// refresh directly (not GoogleWebAuthorizationBroker.AuthorizeAsync, which falls through to an
+    /// interactive browser prompt if the stored token can't be refreshed — a "silent" reconnect must never
+    /// pop a browser). If the refresh fails (revoked/expired), we simply stay signed out.</summary>
+    public async Task<bool> TryReconnectAsync(CancellationToken ct = default)
     {
         if (_service is not null) return true;
         if (!IsConfigured || !HasStoredToken) return false;
-        try { return await ConnectAsync(); }
+        try
+        {
+            var flow = new Google.Apis.Auth.OAuth2.Flows.GoogleAuthorizationCodeFlow(
+                new Google.Apis.Auth.OAuth2.Flows.GoogleAuthorizationCodeFlow.Initializer
+                {
+                    ClientSecrets = await GetClientSecretsAsync(),
+                    Scopes = new[] { DriveService.Scope.DriveFile },
+                    DataStore = new DpapiDataStore(TokenDir),
+                });
+            var token = await flow.LoadTokenAsync("user", ct);
+            if (token is null || string.IsNullOrEmpty(token.RefreshToken)) return false;
+
+            var credential = new UserCredential(flow, "user", token);
+            if (!await credential.RefreshTokenAsync(ct)) return false; // non-interactive; no browser
+
+            _service = new DriveService(new BaseClientService.Initializer
+            {
+                HttpClientInitializer = credential,
+                ApplicationName = "Galileo",
+            });
+            _rootId = null;
+            await FetchAccountAsync();
+            return true;
+        }
         catch { return false; }
     }
 

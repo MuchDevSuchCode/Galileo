@@ -65,7 +65,8 @@ public sealed class VaultEntry
 
 /// <summary>
 /// A single secure vault: an app-managed store of AES-256-GCM-encrypted blobs with an encrypted
-/// index. While unlocked it decrypts its contents into an ACL-restricted working folder so the rest
+/// index. While unlocked it decrypts its contents into a hidden per-user working folder (under
+/// %LocalAppData%, protected by the profile's inherited ACL) so the rest
 /// of the app can use them as ordinary files; locking re-encrypts changes and securely wipes that
 /// folder.
 /// </summary>
@@ -579,7 +580,7 @@ public sealed class Vault
         var work = Path.Combine(WorkRoot, Id);
         VaultCrypto.WipeDirectory(work); // clear any stale copy first
         Directory.CreateDirectory(work);
-        SetRestrictiveAcl(work);
+        MarkWorkingDirHidden(work);
         WorkingDir = work; // own the folder immediately so a mid-decrypt failure can't orphan plaintext
 
         try
@@ -763,16 +764,12 @@ public sealed class Vault
     }
 
     /// <summary>The working folder lives under %LocalAppData%\Galileo\.work, which Windows already
-    /// restricts to the current user account via the profile's inherited ACL. We mark it Hidden so it
-    /// doesn't show up casually; it is securely wiped on lock.</summary>
-    private static void SetRestrictiveAcl(string dir)
+    /// restricts to the current user account via the profile's inherited ACL. We just mark it Hidden so it
+    /// doesn't show up casually; it is securely wiped on lock. (No extra ACL is applied — the name reflects
+    /// that. Same-user code already has access regardless, so tightening the ACL would add nothing.)</summary>
+    private static void MarkWorkingDirHidden(string dir)
     {
         try { new DirectoryInfo(dir).Attributes |= FileAttributes.Hidden; }
         catch { /* best effort */ }
     }
-
-    // ---------- Hello keyslot support (used in Phase B) ----------
-
-    /// <summary>Returns a copy of the live DEK so a Hello keyslot can be added while unlocked.</summary>
-    internal byte[]? ExportDekForKeyslot() => _dek is null ? null : (byte[])_dek.Clone();
 }
