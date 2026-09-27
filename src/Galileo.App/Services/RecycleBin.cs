@@ -179,18 +179,29 @@ public sealed class RecycleBin
         }
     }
 
-    /// <summary>Permanently removes one entry, secure-wiping its bytes first.</summary>
+    /// <summary>Permanently removes one entry, secure-wiping its bytes.</summary>
     public async Task DeleteEntryAsync(string storePath, WipeMethod method)
     {
-        RecycleEntry? e;
-        lock (_lock) { e = Load().FirstOrDefault(x => string.Equals(StorePathOf(x), storePath, StringComparison.OrdinalIgnoreCase)); }
-        if (e is null) return;
-        await SecureWipe.WipePathAsync(storePath, method);
+        // CLAIM the entry first — remove it from the index under the cross-process mutex BEFORE wiping — so
+        // another Galileo instance can't Restore it (move the store file out) while the wipe is running and
+        // race the two operations on the same file. The index update is fully synchronous (safe to hold the
+        // thread-affine mutex); the wipe then runs on a file nothing can restore. (Was: wipe, then remove.)
+        RecycleEntry? e = null;
         lock (_lock)
         {
-            try { using var gate = AcquireIndexMutex(); var list = Load(); list.RemoveAll(x => x.Id == e.Id); Save(list); }
-            catch { }
+            try
+            {
+                using var gate = AcquireIndexMutex();
+                var list = Load();
+                e = list.FirstOrDefault(x => string.Equals(StorePathOf(x), storePath, StringComparison.OrdinalIgnoreCase));
+                if (e is null) return;
+                list.RemoveAll(x => x.Id == e.Id);
+                Save(list);
+            }
+            catch { e = null; }
         }
+        if (e is null) return;
+        await SecureWipe.WipePathAsync(storePath, method);
     }
 
     /// <summary>Empties the bin, secure-wiping every item with the chosen method. Only the entries
@@ -226,8 +237,26 @@ public sealed class RecycleBin
     {
         try { if (isDir) Directory.Move(src, dest); else File.Move(src, dest); return; }
         catch (IOException) { /* cross-volume → copy + delete */ }
-        if (isDir) { CopyDir(src, dest); Directory.Delete(src, true); }
+        // Cross-volume: CopyDir does NOT copy directory junctions/symlinks into the bin (following them
+        // would pull in their target). So the source delete must PRESERVE them too — a blanket
+        // Directory.Delete(src, true) removed the junction from the source as well, losing it from both
+        // sides unrecoverably. DeleteTreePreservingLinks leaves any reparse point (and the dirs that still
+        // contain one) in place, so a folder-with-junction is recycled except for the junction, never lost.
+        if (isDir) { CopyDir(src, dest); DeleteTreePreservingLinks(src); }
         else { File.Copy(src, dest, overwrite: true); File.Delete(src); }
+    }
+
+    // Recursively deletes a tree but never deletes (or descends into) a directory reparse point, and never
+    // removes a directory that still contains one — the mirror of CopyDir's junction-skipping on the copy side.
+    private static void DeleteTreePreservingLinks(string dir)
+    {
+        foreach (var f in Directory.GetFiles(dir)) { try { File.Delete(f); } catch { } }
+        foreach (var d in Directory.GetDirectories(dir))
+        {
+            if (IsReparsePoint(d)) continue;         // leave the junction in place; it wasn't copied to the bin
+            DeleteTreePreservingLinks(d);
+        }
+        try { if (!Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir, false); } catch { }
     }
 
     // Never follows directory junctions/symlinks — recycling a folder containing a junction must not

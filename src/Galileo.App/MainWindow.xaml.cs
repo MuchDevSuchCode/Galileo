@@ -3784,16 +3784,24 @@ public sealed partial class MainWindow : Window
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         var newName = box.Text.Trim();
         if (string.IsNullOrEmpty(newName) || newName == item.Name) return;
+        // A case-only change ("Report" -> "report") is a valid rename Explorer allows, but on
+        // case-insensitive NTFS the target "already exists" so FailIfExists would throw. Go through a
+        // unique temp name first (RenameAsync mutates the StorageItem's path in place, so the second
+        // rename operates on the same object).
+        var caseOnly = !string.Equals(newName, item.Name, StringComparison.Ordinal)
+                       && string.Equals(newName, item.Name, StringComparison.OrdinalIgnoreCase);
         try
         {
             if (item.IsFolder)
             {
                 var folder = await StorageFolder.GetFolderFromPathAsync(item.Path);
+                if (caseOnly) await folder.RenameAsync(newName + ".galileo-casetmp", NameCollisionOption.GenerateUniqueName);
                 await folder.RenameAsync(newName, NameCollisionOption.FailIfExists);
             }
             else
             {
                 var file = await StorageFile.GetFileFromPathAsync(item.Path);
+                if (caseOnly) await file.RenameAsync(newName + ".galileo-casetmp", NameCollisionOption.GenerateUniqueName);
                 await file.RenameAsync(newName, NameCollisionOption.FailIfExists);
             }
             // No folder reload: adopt the new name on the SAME item (loaded thumbnails, scroll and

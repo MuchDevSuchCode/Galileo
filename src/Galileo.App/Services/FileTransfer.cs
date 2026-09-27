@@ -263,6 +263,8 @@ public sealed class FileTransfer : IDisposable
         // originals intact (the dest may have partial copies, but no source data is lost).
         var copiedSources = new List<string>();
         var copiedDests = new List<string>();  // completed MOVE copies (for cancel rollback — sources are intact)
+        // dest -> backup of the file that was overwritten there (so a cancel can put the original back).
+        var destToBackup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (!canceled)
         {
             foreach (var dir in dirsToCreate) { try { Directory.CreateDirectory(dir); } catch { errors++; } }
@@ -273,7 +275,8 @@ public sealed class FileTransfer : IDisposable
                 if (IsCanceled) { canceled = true; break; }
                 try
                 {
-                    CopyFile(op, ref bytesDone, Report);
+                    var backup = CopyFile(op, ref bytesDone, Report);
+                    if (backup is not null) destToBackup[op.Dest] = backup;
                     if (move) { copiedSources.Add(op.Src); copiedDests.Add(op.Dest); }
                     filesDone++;
                     Report(Path.GetFileName(op.Dest), true);
@@ -301,7 +304,20 @@ public sealed class FileTransfer : IDisposable
             }
             foreach (var dest in copiedDests)
             {
-                try { File.Delete(dest); filesDone--; } catch { errors++; }
+                try
+                {
+                    if (destToBackup.TryGetValue(dest, out var bak))
+                    {
+                        // This dest pre-existed and was overwritten — put the original file back, don't
+                        // leave a hole. Restoring the backup replaces the just-written copy.
+                        if (File.Exists(dest)) File.Delete(dest);
+                        File.Move(bak, dest);
+                        destToBackup.Remove(dest);
+                    }
+                    else File.Delete(dest); // dest was newly created by this move — removing it is correct
+                    filesDone--;
+                }
+                catch { errors++; }
             }
             filesDone = Math.Max(0, filesDone);
         }
@@ -314,6 +330,10 @@ public sealed class FileTransfer : IDisposable
             foreach (var src in copiedSources) { try { File.Delete(src); } catch { errors++; } }
             foreach (var dir in moveDirSources) RemoveEmptyDirs(dir);
         }
+
+        // Discard any overwrite backups we didn't restore (a successful overwrite keeps the new file; a
+        // cancelled copy keeps what already completed). Leftover backups are just old copies to clean up.
+        foreach (var bak in destToBackup.Values) { try { if (File.Exists(bak)) File.Delete(bak); } catch { } }
 
         return new TransferResult { FilesCompleted = filesDone, Skipped = skipped, Canceled = canceled, Errors = errors };
     }
@@ -377,7 +397,10 @@ public sealed class FileTransfer : IDisposable
     // fully succeeded — an existing destination (Replace) is never truncated up front, so cancelling
     // or failing mid-copy leaves the previous file intact. The commit revalidates collisions: a
     // destination that appeared AFTER planning is never silently overwritten (auto-renamed instead).
-    private void CopyFile(CopyOp op, ref long bytesDone, Action<string, bool> report)
+    /// <summary>Copies one file. Returns the path of the backup holding the OVERWRITTEN destination's
+    /// original bytes (when this was an overwrite of a pre-existing file), else null. The caller keeps it so
+    /// a later cancel can restore the original instead of leaving a hole; on success it's deleted.</summary>
+    private string? CopyFile(CopyOp op, ref long bytesDone, Action<string, bool> report)
     {
         var name = Path.GetFileName(op.Dest);
         Directory.CreateDirectory(Path.GetDirectoryName(op.Dest)!);
@@ -404,8 +427,15 @@ public sealed class FileTransfer : IDisposable
 
             // Commit.
             var target = op.Dest;
+            string? backup = null;
             if (op.Overwrite && File.Exists(op.Dest))
-                File.Replace(staging, op.Dest, destinationBackupFileName: null);
+            {
+                // Keep the file we're about to overwrite in a backup, not null: if the batch is a MOVE and
+                // later cancels, rollback restores this instead of deleting the copy and leaving a hole
+                // where a different file used to be (data loss on a cancelled overwrite-move).
+                backup = op.Dest + $".{Guid.NewGuid():N}.galileo-bak";
+                File.Replace(staging, op.Dest, backup);
+            }
             else
             {
                 if (!op.Overwrite && Occupied(target)) target = UniquePath(target); // appeared after planning → keep both
@@ -416,6 +446,7 @@ public sealed class FileTransfer : IDisposable
             // ADS/ACLs/sparse flags are intentionally NOT copied — documented in the README.
             try { File.SetCreationTimeUtc(target, File.GetCreationTimeUtc(op.Src)); } catch { }
             try { File.SetAttributes(target, File.GetAttributes(op.Src)); } catch { }
+            return backup;
         }
         catch { TryDeletePartial(staging); throw; }
     }

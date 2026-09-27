@@ -158,6 +158,28 @@ public class FileTransferTests : IDisposable
     }
 
     [Fact]
+    public async Task CancelledOverwriteMove_RestoresPreExistingDestination()
+    {
+        // Two files moved with Overwrite; cancel AFTER the first has committed its File.Replace. The
+        // first destination pre-existed, so its original content must be RESTORED on rollback — the bug
+        // was that rollback deleted the copy and left a hole where a different file used to be.
+        var srcDir = Dir("omsrc"); var dstDir = Dir("omdst");
+        var a = Path.Combine(srcDir, "a.txt"); File.WriteAllText(a, "NEW A");
+        var b = Path.Combine(srcDir, "b.txt"); File.WriteAllText(b, "NEW B");
+        File.WriteAllText(Path.Combine(dstDir, "a.txt"), "OLD A");
+        File.WriteAllText(Path.Combine(dstDir, "b.txt"), "OLD B");
+
+        var t = new FileTransfer();
+        var cancelAfterFirst = new ProgressAction(p => { if (p.FilesDone >= 1) t.Cancel(); });
+        var res = await t.RunAsync(dstDir, new[] { a, b }, move: true, cancelAfterFirst, Overwrite);
+
+        Assert.True(res.Canceled);
+        Assert.True(File.Exists(a), "source must survive a cancelled move");
+        Assert.Equal("OLD A", File.ReadAllText(Path.Combine(dstDir, "a.txt"))); // restored, not deleted
+        Assert.Empty(Directory.GetFiles(dstDir, "*.galileo-bak"));              // backup cleaned up
+    }
+
+    [Fact]
     public async Task SkippedConflicts_AreCounted()
     {
         var srcDir = Dir("skip-src"); var dstDir = Dir("skip-dst");
