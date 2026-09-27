@@ -313,10 +313,31 @@ public static class FfmpegVideo
         return files.ToList();
     }
 
-    /// <summary>Save a single frame to a PNG.</summary>
+    /// <summary>Saves a single frame at <paramref name="time"/> to a PNG. Tries in order until one yields a
+    /// non-empty file: fast (accurate) seek at the time; fast seek slightly earlier (covers a position at/past
+    /// the last keyframe or the very end, where a seek exactly at <paramref name="time"/> decodes nothing);
+    /// then the first frame. Throws only if every attempt fails, so callers never read a missing/empty file.</summary>
     public static async Task SnapshotAsync(string input, double time, string outPath, CancellationToken ct = default)
-        => await RunCaptureAsync(FfmpegPath,
-            new[] { "-y", "-ss", N(time), "-i", input, "-frames:v", "1", outPath }, ct, captureStdErr: true);
+    {
+        if (time < 0 || double.IsNaN(time)) time = 0;
+
+        static bool HasContent(string p)
+        {
+            try { return File.Exists(p) && new FileInfo(p).Length > 0; } catch { return false; }
+        }
+
+        async Task<bool> TryAsync(string[] args)
+        {
+            try { await RunCaptureAsync(FfmpegPath, args, ct, captureStdErr: true); }
+            catch { /* nonzero exit — fall through to the next strategy */ }
+            return HasContent(outPath);
+        }
+
+        if (await TryAsync(new[] { "-y", "-ss", N(time), "-i", input, "-frames:v", "1", outPath })) return;
+        if (time > 0.5 && await TryAsync(new[] { "-y", "-ss", N(time - 0.5), "-i", input, "-frames:v", "1", outPath })) return;
+        if (await TryAsync(new[] { "-y", "-i", input, "-frames:v", "1", outPath })) return;
+        throw new InvalidOperationException("FFmpeg produced no frame for the snapshot.");
+    }
 
     /// <summary>Extracts a representative frame as BGRA pixels for a video thumbnail — the reliable
     /// alternative to the Windows shell, which returns the default-app icon (VLC, etc.) whenever the

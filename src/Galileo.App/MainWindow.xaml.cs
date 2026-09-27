@@ -6538,9 +6538,7 @@ public sealed partial class MainWindow : Window
                     using (var outStream = mem.AsStreamForWrite())
                         await fs.CopyToAsync(outStream);
                     mem.Seek(0);
-                    var pkg = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
-                    pkg.SetBitmap(RandomAccessStreamReference.CreateFromStream(mem));
-                    Clipboard.SetContent(pkg);
+                    await SetClipboardBitmapAsync(mem);
                     StatusText.Text = "Frame copied to clipboard";
                     return;
                 }
@@ -6555,12 +6553,33 @@ public sealed partial class MainWindow : Window
 
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
             var stream = await ScreenCapture.CaptureClientRectToPngStreamAsync(hwnd, pos.X, pos.Y, w, h, scale);
-            var data = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
-            data.SetBitmap(RandomAccessStreamReference.CreateFromStream(stream));
-            Clipboard.SetContent(data);
+            await SetClipboardBitmapAsync(stream);
             StatusText.Text = "Frame copied to clipboard";
         }
         catch (Exception ex) { StatusText.Text = "Copy frame failed: " + ex.Message; App.Log("CopyFrame", ex); }
+    }
+
+    /// <summary>Puts a PNG-stream bitmap on the clipboard reliably. The clipboard is a shared single-owner
+    /// resource, so SetContent throws transiently (CLIPBRD_E_CANT_OPEN) whenever another app has it open —
+    /// retry a few times. Flush() then renders the image into the standard bitmap formats immediately, so
+    /// it pastes into classic apps and survives after Galileo closes; Flush is best-effort (the content is
+    /// already set) so its failure never fails the copy.</summary>
+    private static async Task SetClipboardBitmapAsync(IRandomAccessStream stream)
+    {
+        var pkg = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+        pkg.SetBitmap(RandomAccessStreamReference.CreateFromStream(stream));
+        Exception? last = null;
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                Clipboard.SetContent(pkg);
+                try { Clipboard.Flush(); } catch { /* content is already on the clipboard */ }
+                return;
+            }
+            catch (Exception ex) { last = ex; await Task.Delay(60); }
+        }
+        if (last is not null) throw last;
     }
 
     /// <summary>Saves a screenshot to %USERPROFILE%\Pictures\Galileo. In the viewer it captures just the
