@@ -108,7 +108,13 @@ public sealed partial class SlideshowWindow : Window
         var photo = _photos[_order[pos]];
         var bmp = await LoadAsync(photo);
         if (t != _slideToken) return; // a newer slide won the race — installing this one would flash backwards
-        if (bmp is null) return;
+        if (bmp is null)
+        {
+            // Couldn't decode this one (corrupt/unsupported). Say so instead of a silent blank frame; the
+            // advance timer still moves on to the next image.
+            try { Caption.Text = "Couldn't load " + System.IO.Path.GetFileName(photo.Path); } catch { }
+            return;
+        }
 
         // Incoming goes to the back element; we then crossfade roles.
         var incoming = _showingA ? ImageB : ImageA;
@@ -236,7 +242,7 @@ public sealed partial class SlideshowWindow : Window
         var label = _paused ? "Play (Space)" : "Pause (Space)";
         ToolTipService.SetToolTip(PlayBtn, label);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PlayBtn, label);
-        PlayIcon.Glyph = _paused ? "" : "";  // Play / Pause
+        PlayIcon.Glyph = _paused ? "\uE768" : "\uE769";  // Play / Pause (Segoe Fluent hex escapes, not raw PUA literals)
     }
 
     private void Prev_Click(object sender, RoutedEventArgs e) => Advance(-1);

@@ -474,6 +474,7 @@
                 </Grid.RowDefinitions>
                 <Grid Grid.Row="0" Padding="8,6" ColumnDefinitions="*,Auto">
                     <ComboBox x:Name="ShellCombo" MinWidth="150" SelectionChanged="ShellCombo_SelectionChanged"
+                              AutomationProperties.Name="Location"
                               ToolTipService.ToolTip="Shell" />
                     <Button Grid.Column="1" Style="{StaticResource GlyphButton}" Click="TerminalClose_Click"
                             ToolTipService.ToolTip="Close terminal" AutomationProperties.Name="Close terminal">
@@ -736,7 +737,8 @@
                                 </Grid>
                                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
                                     <TextBlock Text="Audio" VerticalAlignment="Center" />
-                                    <ComboBox x:Name="EditAudioCombo" Grid.Column="1" HorizontalAlignment="Stretch" SelectedIndex="0">
+                                    <ComboBox x:Name="EditAudioCombo" Grid.Column="1" HorizontalAlignment="Stretch" SelectedIndex="0"
+                                              AutomationProperties.Name="Audio">
                                         <ComboBoxItem Content="Keep" />
                                         <ComboBoxItem Content="Re-encode AAC" />
                                         <ComboBoxItem Content="Re-encode MP3" />
@@ -751,6 +753,7 @@
                                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
                                     <TextBlock Text="Format" VerticalAlignment="Center" />
                                     <ComboBox x:Name="EditContainerCombo" Grid.Column="1" HorizontalAlignment="Stretch"
+                                              AutomationProperties.Name="Container format"
                                               SelectedIndex="0" SelectionChanged="EditContainer_SelectionChanged">
                                         <ComboBoxItem Content="MP4" />
                                         <ComboBoxItem Content="MKV" />
@@ -760,13 +763,15 @@
                                 </Grid>
                                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
                                     <TextBlock Text="Codec" VerticalAlignment="Center" />
-                                    <ComboBox x:Name="EditCodecCombo" Grid.Column="1" HorizontalAlignment="Stretch" SelectedIndex="0" />
+                                    <ComboBox x:Name="EditCodecCombo" Grid.Column="1" HorizontalAlignment="Stretch" SelectedIndex="0"
+                                              AutomationProperties.Name="Video codec" />
                                 </Grid>
                                 <TextBlock Text="Quality (CRF — lower is better)" FontSize="12" Opacity="0.7" />
                                 <Slider x:Name="EditCrf" Minimum="0" Maximum="51" StepFrequency="1" Value="21" AutomationProperties.Name="Quality (CRF)" />
                                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
                                     <TextBlock Text="Preset" VerticalAlignment="Center" />
-                                    <ComboBox x:Name="EditPresetCombo" Grid.Column="1" HorizontalAlignment="Stretch" SelectedIndex="2">
+                                    <ComboBox x:Name="EditPresetCombo" Grid.Column="1" HorizontalAlignment="Stretch" SelectedIndex="2"
+                                              AutomationProperties.Name="Encoding preset">
                                         <ComboBoxItem Content="ultrafast" />
                                         <ComboBoxItem Content="veryfast" />
                                         <ComboBoxItem Content="medium" />
@@ -958,7 +963,8 @@
                             </StackPanel>
                             <TextBlock Text="Crop" Foreground="White" FontSize="13" />
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <ComboBox x:Name="CropAspectCombo" MinWidth="118" SelectionChanged="CropAspect_Changed">
+                                <ComboBox x:Name="CropAspectCombo" MinWidth="118" SelectionChanged="CropAspect_Changed"
+                                          AutomationProperties.Name="Crop aspect ratio">
                                     <ComboBoxItem Content="Free" />
                                     <ComboBoxItem Content="Original" IsSelected="True" />
                                     <ComboBoxItem Content="1:1" />
@@ -1098,7 +1104,8 @@
                                 <Button Content="Done" Click="MarkupNone_Click" ToolTipService.ToolTip="Stop drawing shapes" />
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <ComboBox x:Name="MarkupColorCombo" MinWidth="110" SelectedIndex="0">
+                                <ComboBox x:Name="MarkupColorCombo" MinWidth="110" SelectedIndex="0"
+                                          AutomationProperties.Name="Markup color">
                                     <ComboBoxItem Content="Red" />
                                     <ComboBoxItem Content="Yellow" />
                                     <ComboBoxItem Content="Lime" />

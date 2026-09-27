@@ -4399,6 +4399,7 @@ public sealed partial class MainWindow : Window
             Clipboard.SetContent(data);
             try { Clipboard.Flush(); } catch { } // render to standard formats so it survives app exit
             StatusText.Text = "Image copied to clipboard";
+            ShowToast("Image copied to clipboard");
         }
         catch (Exception ex) { StatusText.Text = $"Copy failed: {ex.Message}"; App.Log("CopyImage", ex); }
     }
@@ -4413,6 +4414,7 @@ public sealed partial class MainWindow : Window
             Clipboard.SetContent(data);
             try { Clipboard.Flush(); } catch { } // survive app exit
             StatusText.Text = "File copied to clipboard";
+            ShowToast("File copied to clipboard");
         }
         catch (Exception ex) { StatusText.Text = $"Copy failed: {ex.Message}"; }
     }
@@ -4423,6 +4425,7 @@ public sealed partial class MainWindow : Window
         data.SetText(item.Path);
         Clipboard.SetContent(data);
         StatusText.Text = "Path copied";
+        ShowToast("Path copied");
     }
 
     private void RunVerb(PhotoItem item, string verb)
@@ -6200,10 +6203,10 @@ public sealed partial class MainWindow : Window
                 SetElementTheme(ElementTheme.Dark);
                 break;
             case "Terminal":
-                ApplyCustomTheme(Rgb(255, 4, 10, 4), Rgb(255, 13, 24, 13), Rgb(255, 90, 255, 130), Rgb(130, 60, 210, 110));
+                ApplyCustomTheme(Rgb(255, 4, 10, 4), Rgb(255, 13, 24, 13), Rgb(255, 90, 255, 130), Rgb(130, 60, 210, 110), Rgb(255, 46, 200, 100));
                 break;
             case "Gray":
-                ApplyCustomTheme(Rgb(255, 46, 48, 50), Rgb(255, 64, 66, 68), Rgb(255, 230, 230, 232), Rgb(120, 150, 154, 158));
+                ApplyCustomTheme(Rgb(255, 46, 48, 50), Rgb(255, 64, 66, 68), Rgb(255, 230, 230, 232), Rgb(120, 150, 154, 158), Rgb(255, 120, 144, 168));
                 break;
             default:
                 EnsureMica();
@@ -6249,13 +6252,25 @@ public sealed partial class MainWindow : Window
         tb.ButtonHoverBackgroundColor = fg.HasValue ? Rgb(40, fg.Value.R, fg.Value.G, fg.Value.B) : null;
     }
 
-    private void ApplyCustomTheme(Windows.UI.Color bg, Windows.UI.Color panel, Windows.UI.Color fg, Windows.UI.Color stroke)
+    private void ApplyCustomTheme(Windows.UI.Color bg, Windows.UI.Color panel, Windows.UI.Color fg, Windows.UI.Color stroke, Windows.UI.Color accent)
     {
         SystemBackdrop = null;
         RootGrid.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(bg);
 
         var res = Application.Current.Resources;
         Microsoft.UI.Xaml.Media.SolidColorBrush B(Windows.UI.Color c) => new(c);
+
+        // Remap the accent brushes too, or accent-tinted elements (AccentButton Save/Export, ProgressBars,
+        // the selection marquee) stay system-blue and clash under the Terminal/Gray themes. On-accent text
+        // is derived from the accent's luminance so it stays legible on either a bright or a muted accent.
+        res["AccentFillColorDefaultBrush"] = B(accent);
+        res["AccentFillColorSecondaryBrush"] = B(Rgb(220, accent.R, accent.G, accent.B));
+        res["AccentFillColorTertiaryBrush"] = B(Rgb(190, accent.R, accent.G, accent.B));
+        var onAccent = (0.299 * accent.R + 0.587 * accent.G + 0.114 * accent.B) > 150
+            ? Rgb(255, 10, 14, 10) : Rgb(255, 245, 246, 248);
+        res["TextOnAccentFillColorPrimaryBrush"] = B(onAccent);
+        res["TextOnAccentFillColorSecondaryBrush"] = B(onAccent);
+
         res["TextFillColorPrimaryBrush"] = B(fg);
         res["TextFillColorSecondaryBrush"] = B(Rgb(200, fg.R, fg.G, fg.B));
         res["TextFillColorTertiaryBrush"] = B(Rgb(150, fg.R, fg.G, fg.B));
@@ -7000,7 +7015,10 @@ public sealed partial class MainWindow : Window
         // list (onto the overlay) so arrows drive Peek rather than moving the list underneath.
         ActiveExplorerList().SelectedItem = item;
         PeekOverlay.Visibility = Visibility.Visible;
-        PeekOverlay.Focus(FocusState.Programmatic); // + TabFocusNavigation=Cycle keeps Tab inside
+        // Focus a control INSIDE the card (not the outer overlay): with TabFocusNavigation=Cycle on the
+        // card, Tab only stays trapped once focus is already inside it — focusing the overlay let Tab walk
+        // out into the dimmed explorer behind the scrim. Mirrors how Settings focuses a control in its card.
+        PeekOpenBtn.Focus(FocusState.Programmatic);
         ShowPeekFor(item);
     }
 
